@@ -40,3 +40,6 @@ chrono = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
+
+# Environment
+dotenvy = "0.15"

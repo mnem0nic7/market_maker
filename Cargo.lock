@@ -3973,6 +3973,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "config",
+ "dotenvy",
  "mm-core",
  "mm-data-pipeline",
  "mm-execution",

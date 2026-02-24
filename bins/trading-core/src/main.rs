@@ -82,7 +82,10 @@ async fn main() -> Result<()> {
 
     info!("trading-core starting");
 
-    // ----- (b) Load configuration -----
+    // ----- (b) Load .env file (if present) into process environment -----
+    let _ = dotenvy::dotenv();
+
+    // ----- (c) Load configuration -----
     let cfg = config::load_config().context("failed to load configuration")?;
     info!(?cfg.trading_loop, "configuration loaded");
 
