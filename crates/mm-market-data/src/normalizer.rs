@@ -139,10 +139,15 @@ static KRAKEN_TO_CANONICAL: LazyLock<HashMap<&'static str, &'static str>> = Lazy
     m
 });
 
-/// Reverse mapping: canonical -> Kraken legacy prefix.
+/// Reverse mapping: canonical -> Kraken v2 symbol.
+///
+/// Kraken's v2 WebSocket API and modern REST endpoints accept canonical names
+/// (BTC, ETH, USD, etc.) directly — no XBT/ZUSD legacy prefixes needed.
+/// We keep this map so unknown assets pass through unchanged, but BTC is NOT
+/// mapped to XBT.
 static CANONICAL_TO_KRAKEN: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut m = HashMap::new();
-    m.insert("BTC", "XBT");
+    m.insert("BTC", "BTC");
     m.insert("ETH", "ETH");
     m.insert("LTC", "LTC");
     m.insert("XRP", "XRP");
@@ -353,7 +358,7 @@ mod tests {
     fn kraken_to_exchange_btc_usd() {
         let sym = Symbol::new("BTC", "USD");
         let raw = to_exchange_symbol(Exchange::Kraken, &sym);
-        assert_eq!(raw, "XBT/USD");
+        assert_eq!(raw, "BTC/USD");
     }
 
     #[test]

@@ -125,12 +125,22 @@ impl KrakenExecutionConnector {
     /// API-Sign = Base64(HMAC-SHA512(Base64Decode(secret), path + SHA256(nonce + post_data)))
     /// ```
     fn sign(&self, path: &str, nonce: u64, post_data: &str) -> MmResult<String> {
-        let secret_bytes =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &self.config.secret_key)
-                .map_err(|e| MmError::AuthenticationFailed {
-                    exchange: Exchange::Kraken,
-                    message: format!("invalid base64 secret key: {}", e),
-                })?;
+        // Kraken secrets may be standard OR URL-safe base64 depending on how
+        // they were generated. Try standard first, then URL-safe.
+        let secret_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &self.config.secret_key,
+        )
+        .or_else(|_| {
+            base64::Engine::decode(
+                &base64::engine::general_purpose::URL_SAFE,
+                &self.config.secret_key,
+            )
+        })
+        .map_err(|e| MmError::AuthenticationFailed {
+            exchange: Exchange::Kraken,
+            message: format!("invalid base64 secret key: {}", e),
+        })?;
 
         // SHA256(nonce + post_data)
         let mut sha = Sha256::new();

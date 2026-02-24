@@ -446,6 +446,38 @@ pub fn load_config() -> anyhow::Result<TradingConfig> {
         )
         .build()?;
 
-    let config: TradingConfig = settings.try_deserialize()?;
+    let mut config: TradingConfig = settings.try_deserialize()?;
+
+    // The `config` crate's Environment source doesn't reliably override
+    // fields inside HashMap entries. Manually apply env var overrides for
+    // exchange credentials (the most important case).
+    apply_exchange_env_overrides(&mut config);
+
     Ok(config)
+}
+
+/// Scan for `MM_EXCHANGES__<NAME>__API_KEY` / `SECRET_KEY` / `ENABLED` env
+/// vars and apply them to the corresponding exchange config entries.
+fn apply_exchange_env_overrides(config: &mut TradingConfig) {
+    let exchange_names: Vec<String> = config.exchanges.keys().cloned().collect();
+
+    for name in exchange_names {
+        let upper = name.to_uppercase();
+
+        if let Ok(val) = std::env::var(format!("MM_EXCHANGES__{upper}__API_KEY")) {
+            if let Some(ec) = config.exchanges.get_mut(&name) {
+                ec.api_key = val;
+            }
+        }
+        if let Ok(val) = std::env::var(format!("MM_EXCHANGES__{upper}__SECRET_KEY")) {
+            if let Some(ec) = config.exchanges.get_mut(&name) {
+                ec.secret_key = val;
+            }
+        }
+        if let Ok(val) = std::env::var(format!("MM_EXCHANGES__{upper}__ENABLED")) {
+            if let Some(ec) = config.exchanges.get_mut(&name) {
+                ec.enabled = val.eq_ignore_ascii_case("true") || val == "1";
+            }
+        }
+    }
 }

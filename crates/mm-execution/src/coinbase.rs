@@ -115,6 +115,19 @@ impl CoinbaseExecutionConnector {
         // instead of real newlines. Normalize for parsing.
         let secret_pem = secret_pem.replace("\\n", "\n");
 
+        // If the PEM looks empty or doesn't resemble a key, fail fast with a
+        // helpful message rather than a cryptic "InvalidKeyFormat".
+        if !secret_pem.contains("-----") {
+            return Err(MmError::Exchange {
+                exchange: Exchange::Coinbase,
+                message: format!(
+                    "secret_key does not look like a PEM key (len={}, first_chars={:?})",
+                    secret_pem.len(),
+                    &secret_pem[..secret_pem.len().min(40)]
+                ),
+            });
+        }
+
         // Coinbase issues SEC1 EC keys ("BEGIN EC PRIVATE KEY") but
         // jsonwebtoken only accepts PKCS#8 ("BEGIN PRIVATE KEY").
         // Detect and convert if necessary.

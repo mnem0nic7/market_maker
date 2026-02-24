@@ -74,9 +74,15 @@ impl OrderRouter {
     /// Connect every registered connector and spawn the background update
     /// receiver task.
     pub async fn connect_all(&mut self) -> MmResult<()> {
+        let mut first_error: Option<mm_core::MmError> = None;
         for (exchange, connector) in self.connectors.iter_mut() {
             info!(%exchange, "Router: connecting execution connector");
-            connector.connect(self.update_tx.clone()).await?;
+            if let Err(e) = connector.connect(self.update_tx.clone()).await {
+                error!(%exchange, error = %e, "Router: failed to connect execution connector");
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
         }
 
         // Take the receiver out — it can only be consumed once.
