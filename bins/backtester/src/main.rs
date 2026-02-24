@@ -33,6 +33,22 @@ struct CliConfig {
     #[serde(default)]
     data_file: String,
 
+    /// Data source: "synthetic" (default), "csv", "binance", or "jsonl".
+    /// - "synthetic": generate random walk data
+    /// - "csv": load OHLCV from data_file
+    /// - "binance": download klines from Binance API
+    /// - "jsonl": load MarketEvent JSON lines from data_file (legacy)
+    #[serde(default = "default_source")]
+    source: String,
+
+    /// Binance symbol for download (e.g. "BTCUSDT"). Only used with source=binance.
+    #[serde(default)]
+    binance_symbol: String,
+
+    /// Kline interval for Binance download (e.g. "1m", "5m", "1h").
+    #[serde(default = "default_interval")]
+    interval: String,
+
     /// Strategy type: "spread", "grid", or "avellaneda".
     #[serde(default = "default_strategy_type")]
     strategy_type: String,
@@ -80,6 +96,12 @@ struct CliConfig {
     sigma: Decimal,
 }
 
+fn default_source() -> String {
+    "synthetic".to_string()
+}
+fn default_interval() -> String {
+    "1m".to_string()
+}
 fn default_strategy_type() -> String {
     "spread".to_string()
 }
@@ -115,6 +137,9 @@ impl Default for CliConfig {
     fn default() -> Self {
         Self {
             data_file: String::new(),
+            source: default_source(),
+            binance_symbol: String::new(),
+            interval: default_interval(),
             strategy_type: default_strategy_type(),
             initial_capital: default_initial_capital(),
             fee_rate: default_fee_rate(),
@@ -160,16 +185,63 @@ async fn main() -> Result<()> {
     // ------------------------------------------------------------------
     // 1. Load or generate market events
     // ------------------------------------------------------------------
-    let events = if cfg.data_file.is_empty() {
-        info!(
-            num_events = cfg.num_events,
-            "no data file specified, generating synthetic market data"
-        );
-        generate_sample_data(cfg.num_events)
-    } else {
-        let path = PathBuf::from(&cfg.data_file);
-        info!(path = %path.display(), "loading market events from file");
-        load_events_from_file(&path).context("failed to load market events")?
+    let events = match cfg.source.to_lowercase().as_str() {
+        "csv" => {
+            let path = PathBuf::from(&cfg.data_file);
+            info!(path = %path.display(), "loading CSV OHLCV data");
+            mm_backtest::load_csv(
+                &path,
+                Exchange::Simulated,
+                Symbol::new("BTC", "USDT"),
+                cfg.spread_bps,
+            )
+            .context("failed to load CSV data")?
+        }
+        "binance" => {
+            let binance_sym = if cfg.binance_symbol.is_empty() {
+                "BTCUSDT".to_string()
+            } else {
+                cfg.binance_symbol.clone()
+            };
+            let end = Utc::now().timestamp_millis();
+            // Default to last 24 hours of data.
+            let start = end - 24 * 60 * 60 * 1000;
+            info!(
+                symbol = %binance_sym,
+                interval = %cfg.interval,
+                "downloading Binance klines"
+            );
+            mm_backtest::download_binance_klines(
+                &binance_sym,
+                &cfg.interval,
+                start,
+                end,
+                Symbol::new("BTC", "USDT"),
+                cfg.spread_bps,
+            )
+            .await
+            .context("failed to download Binance klines")?
+        }
+        "jsonl" => {
+            let path = PathBuf::from(&cfg.data_file);
+            info!(path = %path.display(), "loading market events from JSONL file");
+            load_events_from_file(&path).context("failed to load market events")?
+        }
+        _ => {
+            // "synthetic" or empty/unknown -> generate
+            if !cfg.data_file.is_empty() {
+                // Legacy behavior: if data_file is set but source is synthetic, try JSONL
+                let path = PathBuf::from(&cfg.data_file);
+                info!(path = %path.display(), "loading market events from file");
+                load_events_from_file(&path).context("failed to load market events")?
+            } else {
+                info!(
+                    num_events = cfg.num_events,
+                    "generating synthetic market data"
+                );
+                generate_sample_data(cfg.num_events)
+            }
+        }
     };
 
     info!(total_events = events.len(), "market events ready");
@@ -443,6 +515,9 @@ fn load_config() -> Result<CliConfig> {
     let settings = config::Config::builder()
         // Defaults
         .set_default("data_file", "")?
+        .set_default("source", "synthetic")?
+        .set_default("binance_symbol", "")?
+        .set_default("interval", "1m")?
         .set_default("strategy_type", "spread")?
         .set_default("initial_capital", "100000")?
         .set_default("fee_rate", "0.001")?

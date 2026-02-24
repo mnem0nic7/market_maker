@@ -15,3 +15,4 @@ async-trait = { workspace = true }
 strum = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
+prometheus = { workspace = true }

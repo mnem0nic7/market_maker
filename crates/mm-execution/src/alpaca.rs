@@ -1,0 +1,690 @@
+//! Alpaca execution connector.
+//!
+//! Implements [`ExecutionConnector`] for the Alpaca Trading API (v2).
+//!
+//! ## REST API
+//!
+//! | Endpoint            | Method   | Description            |
+//! |---------------------|----------|------------------------|
+//! | `/v2/orders`        | `POST`   | Place a new order      |
+//! | `/v2/orders/{id}`   | `DELETE`  | Cancel an order        |
+//! | `/v2/orders`        | `DELETE`  | Cancel all open orders |
+//! | `/v2/account`       | `GET`    | Fetch account info     |
+//!
+//! ## Authentication
+//!
+//! Alpaca uses simple header-based authentication:
+//! - `APCA-API-KEY-ID: {api_key}`
+//! - `APCA-API-SECRET-KEY: {secret_key}`
+//!
+//! ## WebSocket
+//!
+//! The streaming endpoint at `wss://paper-api.alpaca.markets/stream`
+//! (or `wss://api.alpaca.markets/stream` for live) delivers `trade_updates`
+//! events for real-time order status changes.
+//!
+//! ### Trade update message format
+//!
+//! ```json
+//! {
+//!   "stream": "trade_updates",
+//!   "data": {
+//!     "event": "fill",
+//!     "order": {
+//!       "id": "...",
+//!       "client_order_id": "...",
+//!       "symbol": "AAPL",
+//!       "qty": "100",
+//!       "filled_qty": "100",
+//!       "side": "buy",
+//!       "type": "limit",
+//!       "status": "filled",
+//!       "filled_avg_price": "150.25",
+//!       ...
+//!     }
+//!   }
+//! }
+//! ```
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use chrono::Utc;
+use futures::{SinkExt, StreamExt};
+use mm_core::{
+    traits::{Balance, ExecutionConnector},
+    CancelAllOrders, CancelOrder, Exchange, MmError, MmResult, NewOrder, OrderStatus, OrderUpdate,
+    Side, Symbol,
+};
+use reqwest::Client;
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+/// Configuration for the Alpaca execution connector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlpacaExecutionConfig {
+    pub api_key: String,
+    pub secret_key: String,
+    #[serde(default = "default_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_ws_url")]
+    pub ws_url: String,
+}
+
+fn default_base_url() -> String {
+    "https://paper-api.alpaca.markets".into()
+}
+
+fn default_ws_url() -> String {
+    "wss://paper-api.alpaca.markets/stream".into()
+}
+
+// ---------------------------------------------------------------------------
+// Connector
+// ---------------------------------------------------------------------------
+
+pub struct AlpacaExecutionConnector {
+    config: AlpacaExecutionConfig,
+    http: Client,
+    connected: Arc<AtomicBool>,
+    ws_handle: Option<JoinHandle<()>>,
+}
+
+impl AlpacaExecutionConnector {
+    pub fn new(config: AlpacaExecutionConfig) -> Self {
+        let http = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .expect("failed to build HTTP client");
+
+        Self {
+            config,
+            http,
+            connected: Arc::new(AtomicBool::new(false)),
+            ws_handle: None,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Symbol conversion helpers
+    // -----------------------------------------------------------------------
+
+    /// Convert our canonical `Symbol` to an Alpaca ticker (e.g., "AAPL").
+    fn to_alpaca_symbol(symbol: &Symbol) -> String {
+        symbol.base.clone()
+    }
+
+    /// Convert an Alpaca ticker back to our canonical `Symbol`.
+    fn from_alpaca_symbol(ticker: &str) -> Symbol {
+        Symbol::new(ticker, "USD")
+    }
+
+    // -----------------------------------------------------------------------
+    // Order side/type/tif mappers
+    // -----------------------------------------------------------------------
+
+    fn side_to_str(side: Side) -> &'static str {
+        match side {
+            Side::Buy => "buy",
+            Side::Sell => "sell",
+        }
+    }
+
+    fn order_type_to_str(ot: mm_core::OrderType) -> &'static str {
+        match ot {
+            mm_core::OrderType::Market => "market",
+            mm_core::OrderType::Limit => "limit",
+            mm_core::OrderType::StopLimit => "stop_limit",
+            mm_core::OrderType::StopMarket => "stop",
+        }
+    }
+
+    fn tif_to_str(tif: mm_core::TimeInForce) -> &'static str {
+        match tif {
+            mm_core::TimeInForce::GTC => "gtc",
+            mm_core::TimeInForce::IOC => "ioc",
+            mm_core::TimeInForce::FOK => "fok",
+            mm_core::TimeInForce::GTD => "gtc", // Alpaca has no GTD; fall back to GTC.
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // WebSocket trade_updates stream
+    // -----------------------------------------------------------------------
+
+    fn spawn_ws_listener(
+        config: AlpacaExecutionConfig,
+        update_tx: mpsc::Sender<OrderUpdate>,
+        connected: Arc<AtomicBool>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            info!("Alpaca: connecting trade updates WebSocket");
+
+            let ws_stream = match tokio_tungstenite::connect_async(&config.ws_url).await {
+                Ok((stream, _)) => stream,
+                Err(e) => {
+                    error!(error = %e, "Alpaca: WebSocket connection failed");
+                    connected.store(false, Ordering::SeqCst);
+                    return;
+                }
+            };
+
+            let (mut write, mut read) = ws_stream.split();
+
+            // --- Authenticate ---
+            // Alpaca streaming API expects:
+            // {"action": "authenticate", "data": {"key_id": "...", "secret_key": "..."}}
+            let auth_msg = serde_json::json!({
+                "action": "authenticate",
+                "data": {
+                    "key_id": config.api_key,
+                    "secret_key": config.secret_key,
+                }
+            });
+
+            if let Err(e) = write
+                .send(WsMessage::Text(auth_msg.to_string().into()))
+                .await
+            {
+                error!(error = %e, "Alpaca: failed to send auth message");
+                connected.store(false, Ordering::SeqCst);
+                return;
+            }
+
+            // Wait for auth response.
+            match read.next().await {
+                Some(Ok(WsMessage::Text(text))) => {
+                    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&text);
+                    if let Ok(msg) = parsed {
+                        let stream = msg["stream"].as_str().unwrap_or("");
+                        let status = msg["data"]["status"].as_str().unwrap_or("");
+                        if stream == "authorization" && status == "authorized" {
+                            info!("Alpaca: WebSocket authenticated");
+                        } else if stream == "authorization" && status != "authorized" {
+                            error!(
+                                response = %text,
+                                "Alpaca: WebSocket authentication failed"
+                            );
+                            connected.store(false, Ordering::SeqCst);
+                            return;
+                        }
+                    }
+                }
+                Some(Err(e)) => {
+                    error!(error = %e, "Alpaca: error reading auth response");
+                    connected.store(false, Ordering::SeqCst);
+                    return;
+                }
+                _ => {
+                    error!("Alpaca: stream ended before auth response");
+                    connected.store(false, Ordering::SeqCst);
+                    return;
+                }
+            }
+
+            // --- Subscribe to trade_updates ---
+            let listen_msg = serde_json::json!({
+                "action": "listen",
+                "data": {
+                    "streams": ["trade_updates"]
+                }
+            });
+
+            if let Err(e) = write
+                .send(WsMessage::Text(listen_msg.to_string().into()))
+                .await
+            {
+                error!(error = %e, "Alpaca: failed to send listen message");
+                connected.store(false, Ordering::SeqCst);
+                return;
+            }
+
+            info!("Alpaca: subscribed to trade_updates");
+
+            // --- Main read loop ---
+            while let Some(msg_result) = read.next().await {
+                let msg = match msg_result {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!(error = %e, "Alpaca: WebSocket read error");
+                        break;
+                    }
+                };
+
+                match msg {
+                    WsMessage::Text(text) => {
+                        if let Err(e) =
+                            Self::handle_ws_message(&text, &update_tx).await
+                        {
+                            warn!(error = %e, "Alpaca: failed to process WS message");
+                        }
+                    }
+                    WsMessage::Ping(data) => {
+                        if let Err(e) = write.send(WsMessage::Pong(data)).await {
+                            warn!(error = %e, "Alpaca: failed to send pong");
+                        }
+                    }
+                    WsMessage::Close(_) => {
+                        info!("Alpaca: WebSocket closed by server");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            connected.store(false, Ordering::SeqCst);
+            warn!("Alpaca: trade updates stream disconnected");
+        })
+    }
+
+    async fn handle_ws_message(
+        text: &str,
+        update_tx: &mpsc::Sender<OrderUpdate>,
+    ) -> MmResult<()> {
+        let msg: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("JSON parse error: {}", e),
+            })?;
+
+        let stream = msg["stream"].as_str().unwrap_or("");
+
+        if stream != "trade_updates" {
+            return Ok(());
+        }
+
+        let data = &msg["data"];
+        let update = Self::parse_trade_update(data)?;
+
+        debug!(
+            client_order_id = %update.client_order_id,
+            status = %update.status,
+            "Alpaca: trade update received"
+        );
+
+        update_tx.send(update).await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Alpaca,
+            message: format!("channel send error: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    fn parse_trade_update(data: &serde_json::Value) -> MmResult<OrderUpdate> {
+        let event = data["event"].as_str().unwrap_or("");
+        let order = &data["order"];
+
+        let client_order_id = order["client_order_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let exchange_order_id = order["id"].as_str().map(|s| s.to_string());
+        let symbol_str = order["symbol"].as_str().unwrap_or("");
+        let symbol = Self::from_alpaca_symbol(symbol_str);
+
+        // Map the Alpaca event/status to our OrderStatus.
+        let status = match event {
+            "new" => OrderStatus::New,
+            "partially_filled" | "partial_fill" => OrderStatus::PartiallyFilled,
+            "fill" | "filled" => OrderStatus::Filled,
+            "canceled" | "cancelled" => OrderStatus::Cancelled,
+            "rejected" => OrderStatus::Rejected,
+            "expired" => OrderStatus::Expired,
+            "pending_new" => OrderStatus::Submitted,
+            "accepted" => OrderStatus::New,
+            "pending_cancel" => OrderStatus::PendingCancel,
+            "replaced" => OrderStatus::New,
+            other => {
+                // Also try parsing from the order status field.
+                let order_status = order["status"].as_str().unwrap_or("");
+                match order_status {
+                    "new" | "accepted" | "accepted_for_bidding" => OrderStatus::New,
+                    "partially_filled" => OrderStatus::PartiallyFilled,
+                    "filled" => OrderStatus::Filled,
+                    "canceled" | "cancelled" => OrderStatus::Cancelled,
+                    "rejected" => OrderStatus::Rejected,
+                    "expired" => OrderStatus::Expired,
+                    "pending_new" | "pending_replace" => OrderStatus::Submitted,
+                    "pending_cancel" => OrderStatus::PendingCancel,
+                    _ => {
+                        return Err(MmError::Exchange {
+                            exchange: Exchange::Alpaca,
+                            message: format!(
+                                "unknown order event '{}' / status '{}'",
+                                other, order_status
+                            ),
+                        });
+                    }
+                }
+            }
+        };
+
+        let filled_quantity = order["filled_qty"]
+            .as_str()
+            .and_then(|s| s.parse::<Decimal>().ok())
+            .unwrap_or(Decimal::ZERO);
+        let total_quantity = order["qty"]
+            .as_str()
+            .and_then(|s| s.parse::<Decimal>().ok())
+            .unwrap_or(Decimal::ZERO);
+        let remaining = total_quantity - filled_quantity;
+
+        let average_fill_price = order["filled_avg_price"]
+            .as_str()
+            .and_then(|s| s.parse::<Decimal>().ok())
+            .unwrap_or(Decimal::ZERO);
+
+        // Alpaca trade updates for fills include price/qty at the event level.
+        let last_fill_price = data["price"]
+            .as_str()
+            .and_then(|s| s.parse::<Decimal>().ok())
+            .or_else(|| {
+                data["order"]["filled_avg_price"]
+                    .as_str()
+                    .and_then(|s| s.parse::<Decimal>().ok())
+            });
+        let last_fill_quantity = data["qty"]
+            .as_str()
+            .and_then(|s| s.parse::<Decimal>().ok());
+
+        let timestamp = order["updated_at"]
+            .as_str()
+            .or_else(|| order["created_at"].as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+
+        Ok(OrderUpdate {
+            client_order_id,
+            exchange_order_id,
+            exchange: Exchange::Alpaca,
+            symbol,
+            status,
+            filled_quantity,
+            remaining_quantity: remaining,
+            average_fill_price,
+            last_fill_price,
+            last_fill_quantity,
+            fee: None, // Alpaca does not report fees in trade updates.
+            fee_currency: None,
+            timestamp,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ExecutionConnector impl
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl ExecutionConnector for AlpacaExecutionConnector {
+    fn exchange(&self) -> Exchange {
+        Exchange::Alpaca
+    }
+
+    async fn connect(&mut self, update_tx: mpsc::Sender<OrderUpdate>) -> MmResult<()> {
+        info!("Alpaca: connecting execution connector");
+        self.connected.store(true, Ordering::SeqCst);
+
+        self.ws_handle = Some(Self::spawn_ws_listener(
+            self.config.clone(),
+            update_tx,
+            Arc::clone(&self.connected),
+        ));
+
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> MmResult<()> {
+        info!("Alpaca: disconnecting");
+        self.connected.store(false, Ordering::SeqCst);
+        if let Some(h) = self.ws_handle.take() {
+            h.abort();
+        }
+        Ok(())
+    }
+
+    async fn submit_order(&self, order: &NewOrder) -> MmResult<String> {
+        let symbol = Self::to_alpaca_symbol(&order.symbol);
+        let side = Self::side_to_str(order.side);
+        let order_type = Self::order_type_to_str(order.order_type);
+        let tif = Self::tif_to_str(order.time_in_force);
+        let client_order_id = Uuid::new_v4().to_string();
+
+        let mut body = serde_json::json!({
+            "symbol": symbol,
+            "qty": order.quantity.to_string(),
+            "side": side,
+            "type": order_type,
+            "time_in_force": tif,
+            "client_order_id": client_order_id,
+        });
+
+        // Add limit_price for limit and stop-limit orders.
+        if let Some(ref price) = order.price {
+            match order.order_type {
+                mm_core::OrderType::Limit | mm_core::OrderType::StopLimit => {
+                    body["limit_price"] = serde_json::Value::String(price.to_string());
+                }
+                mm_core::OrderType::StopMarket => {
+                    body["stop_price"] = serde_json::Value::String(price.to_string());
+                }
+                _ => {}
+            }
+            // StopLimit needs both limit_price and stop_price; for simplicity
+            // we use the same price as both (caller should provide distinct
+            // prices via a richer order struct if needed).
+            if order.order_type == mm_core::OrderType::StopLimit {
+                body["stop_price"] = serde_json::Value::String(price.to_string());
+            }
+        }
+
+        let url = format!("{}/v2/orders", self.config.base_url);
+
+        debug!(url = %url, %symbol, %side, %order_type, "Alpaca: submitting order");
+
+        let resp = self
+            .http
+            .post(&url)
+            .header("APCA-API-KEY-ID", &self.config.api_key)
+            .header("APCA-API-SECRET-KEY", &self.config.secret_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("submit_order HTTP error: {}", e),
+            })?;
+
+        let status = resp.status();
+        let resp_body: serde_json::Value =
+            resp.json().await.map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("submit_order parse error: {}", e),
+            })?;
+
+        if !status.is_success() {
+            let error_msg = resp_body["message"]
+                .as_str()
+                .or_else(|| resp_body["code"].as_str())
+                .unwrap_or("unknown error");
+            return Err(MmError::OrderRejected {
+                reason: format!("Alpaca error ({}): {}", status, error_msg),
+            });
+        }
+
+        let order_id = resp_body["id"]
+            .as_str()
+            .unwrap_or(&client_order_id)
+            .to_string();
+
+        info!(
+            exchange_order_id = %order_id,
+            %symbol,
+            side = %side,
+            "Alpaca: order submitted"
+        );
+
+        Ok(order_id)
+    }
+
+    async fn cancel_order(&self, cancel: &CancelOrder) -> MmResult<()> {
+        // Prefer exchange_order_id; fall back to client_order_id.
+        let order_id = cancel
+            .exchange_order_id
+            .as_deref()
+            .unwrap_or(&cancel.client_order_id);
+
+        let url = format!("{}/v2/orders/{}", self.config.base_url, order_id);
+
+        let resp = self
+            .http
+            .delete(&url)
+            .header("APCA-API-KEY-ID", &self.config.api_key)
+            .header("APCA-API-SECRET-KEY", &self.config.secret_key)
+            .send()
+            .await
+            .map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("cancel_order HTTP error: {}", e),
+            })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body: serde_json::Value =
+                resp.json().await.unwrap_or(serde_json::Value::Null);
+            let msg = body["message"]
+                .as_str()
+                .unwrap_or("unknown error");
+            return Err(MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("cancel_order failed ({}): {}", status, msg),
+            });
+        }
+
+        info!(
+            client_order_id = %cancel.client_order_id,
+            "Alpaca: order cancelled"
+        );
+        Ok(())
+    }
+
+    async fn cancel_all_orders(&self, _request: &CancelAllOrders) -> MmResult<u32> {
+        // Alpaca DELETE /v2/orders cancels all open orders and returns the list
+        // of cancelled orders. No symbol filter is available at the API level.
+        let url = format!("{}/v2/orders", self.config.base_url);
+
+        let resp = self
+            .http
+            .delete(&url)
+            .header("APCA-API-KEY-ID", &self.config.api_key)
+            .header("APCA-API-SECRET-KEY", &self.config.secret_key)
+            .send()
+            .await
+            .map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("cancel_all HTTP error: {}", e),
+            })?;
+
+        let status = resp.status();
+        // Alpaca returns 207 Multi-Status with an array of cancelled orders.
+        if !status.is_success() && status.as_u16() != 207 {
+            let body: serde_json::Value =
+                resp.json().await.unwrap_or(serde_json::Value::Null);
+            let msg = body["message"]
+                .as_str()
+                .unwrap_or("unknown");
+            return Err(MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("cancel_all failed ({}): {}", status, msg),
+            });
+        }
+
+        let body: serde_json::Value =
+            resp.json().await.map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("cancel_all parse error: {}", e),
+            })?;
+
+        let count = body.as_array().map(|a| a.len() as u32).unwrap_or(0);
+        info!(count, "Alpaca: cancel_all completed");
+        Ok(count)
+    }
+
+    async fn fetch_balances(&self) -> MmResult<Vec<Balance>> {
+        let url = format!("{}/v2/account", self.config.base_url);
+
+        let resp = self
+            .http
+            .get(&url)
+            .header("APCA-API-KEY-ID", &self.config.api_key)
+            .header("APCA-API-SECRET-KEY", &self.config.secret_key)
+            .send()
+            .await
+            .map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("fetch_balances HTTP error: {}", e),
+            })?;
+
+        let status = resp.status();
+        let body: serde_json::Value =
+            resp.json().await.map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("fetch_balances parse error: {}", e),
+            })?;
+
+        if !status.is_success() {
+            return Err(MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("fetch_balances error ({}): {}", status, body),
+            });
+        }
+
+        // Alpaca account has `cash`, `buying_power`, `portfolio_value`.
+        // We model the cash balance as a single USD balance.
+        let cash: Decimal = body["cash"]
+            .as_str()
+            .and_then(|s| s.parse::<Decimal>().ok())
+            .unwrap_or(Decimal::ZERO);
+
+        let buying_power: Decimal = body["buying_power"]
+            .as_str()
+            .and_then(|s| s.parse::<Decimal>().ok())
+            .unwrap_or(Decimal::ZERO);
+
+        // `cash` = total, `buying_power` = available for trading.
+        // The "locked" portion is cash minus buying power (margin held, etc.)
+        // but buying_power can exceed cash in margin accounts. Clamp to zero.
+        let locked = if cash > buying_power {
+            cash - buying_power
+        } else {
+            Decimal::ZERO
+        };
+
+        let balance = Balance {
+            currency: "USD".to_string(),
+            free: buying_power,
+            locked,
+            total: cash,
+        };
+
+        debug!("Alpaca: balance fetched");
+        Ok(vec![balance])
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
+    }
+}

@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package mm.common;
+
+// Shared message types used across all market maker gRPC services.
+
+// A trading pair (e.g., base="BTC", quote="USDT").
+message Symbol {
+  string base = 1;
+  string quote = 2;
+}
+
+// Supported exchanges.
+enum Exchange {
+  EXCHANGE_UNSPECIFIED = 0;
+  EXCHANGE_BINANCE = 1;
+  EXCHANGE_COINBASE = 2;
+  EXCHANGE_KRAKEN = 3;
+  EXCHANGE_UNISWAP = 4;
+  EXCHANGE_RAYDIUM = 5;
+  EXCHANGE_INTERACTIVE_BROKERS = 6;
+  EXCHANGE_ALPACA = 7;
+  EXCHANGE_SIMULATED = 8;
+}
+
+// Order side.
+enum Side {
+  SIDE_UNSPECIFIED = 0;
+  SIDE_BUY = 1;
+  SIDE_SELL = 2;
+}
+
+// Order type.
+enum OrderType {
+  ORDER_TYPE_UNSPECIFIED = 0;
+  ORDER_TYPE_MARKET = 1;
+  ORDER_TYPE_LIMIT = 2;
+  ORDER_TYPE_STOP_LIMIT = 3;
+  ORDER_TYPE_STOP_MARKET = 4;
+}
+
+// Time in force.
+enum TimeInForce {
+  TIME_IN_FORCE_UNSPECIFIED = 0;
+  TIME_IN_FORCE_GTC = 1;
+  TIME_IN_FORCE_IOC = 2;
+  TIME_IN_FORCE_FOK = 3;
+  TIME_IN_FORCE_GTD = 4;
+}
+
+// Order status.
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_PENDING = 1;
+  ORDER_STATUS_SUBMITTED = 2;
+  ORDER_STATUS_NEW = 3;
+  ORDER_STATUS_PARTIALLY_FILLED = 4;
+  ORDER_STATUS_FILLED = 5;
+  ORDER_STATUS_PENDING_CANCEL = 6;
+  ORDER_STATUS_CANCELLED = 7;
+  ORDER_STATUS_REJECTED = 8;
+  ORDER_STATUS_EXPIRED = 9;
+}
+
+// A single price level in the order book.
+message PriceLevel {
+  string price = 1;    // Decimal as string
+  string quantity = 2;  // Decimal as string
+}
+
+// Full order book snapshot.
+message OrderBook {
+  Exchange exchange = 1;
+  Symbol symbol = 2;
+  repeated PriceLevel bids = 3;
+  repeated PriceLevel asks = 4;
+  int64 timestamp_ms = 5;
+  uint64 sequence = 6;
+}
+
+// A trade event.
+message Trade {
+  Exchange exchange = 1;
+  Symbol symbol = 2;
+  string price = 3;
+  string quantity = 4;
+  Side side = 5;
+  int64 timestamp_ms = 6;
+  string trade_id = 7;
+}
+
+// An order.
+message Order {
+  string client_order_id = 1;
+  string exchange_order_id = 2;
+  Exchange exchange = 3;
+  Symbol symbol = 4;
+  Side side = 5;
+  OrderType order_type = 6;
+  TimeInForce time_in_force = 7;
+  string price = 8;       // Decimal as string, empty for market orders
+  string quantity = 9;     // Decimal as string
+  OrderStatus status = 10;
+  string filled_quantity = 11;
+  string remaining_quantity = 12;
+  string average_fill_price = 13;
+  string strategy_id = 14;
+  int64 created_at_ms = 15;
+  int64 updated_at_ms = 16;
+}
+
+// A position.
+message Position {
+  Exchange exchange = 1;
+  Symbol symbol = 2;
+  string quantity = 3;
+  string average_entry_price = 4;
+  string unrealized_pnl = 5;
+  string realized_pnl = 6;
+  int64 updated_at_ms = 7;
+}
+
+// Portfolio risk summary.
+message PortfolioRisk {
+  string total_var_95 = 1;
+  string total_var_99 = 2;
+  string net_exposure = 3;
+  string gross_exposure = 4;
+  string max_drawdown = 5;
+  string daily_pnl = 6;
+  repeated Position positions = 7;
+  int64 timestamp_ms = 8;
+}

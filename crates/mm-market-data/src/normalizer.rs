@@ -27,7 +27,11 @@ pub fn to_exchange_symbol(exchange: Exchange, symbol: &Symbol) -> String {
         Exchange::Binance => binance_to_exchange(symbol),
         Exchange::Coinbase => coinbase_to_exchange(symbol),
         Exchange::Kraken => kraken_to_exchange(symbol),
-        _ => format!("{}{}", symbol.base, symbol.quote),
+        Exchange::Alpaca => alpaca_to_exchange(symbol),
+        Exchange::InteractiveBrokers => ib_to_exchange(symbol),
+        Exchange::Uniswap => uniswap_to_exchange(symbol),
+        Exchange::Raydium => raydium_to_exchange(symbol),
+        Exchange::Simulated => format!("{}/{}", symbol.base, symbol.quote),
     }
 }
 
@@ -39,7 +43,14 @@ pub fn from_exchange_symbol(exchange: Exchange, raw: &str) -> Option<Symbol> {
         Exchange::Binance => binance_from_exchange(raw),
         Exchange::Coinbase => coinbase_from_exchange(raw),
         Exchange::Kraken => kraken_from_exchange(raw),
-        _ => None,
+        Exchange::Alpaca => alpaca_from_exchange(raw),
+        Exchange::InteractiveBrokers => ib_from_exchange(raw),
+        Exchange::Uniswap => uniswap_from_exchange(raw),
+        Exchange::Raydium => raydium_from_exchange(raw),
+        Exchange::Simulated => {
+            let parts: Vec<&str> = raw.splitn(2, '/').collect();
+            if parts.len() == 2 { Some(Symbol::new(parts[0], parts[1])) } else { None }
+        }
     }
 }
 
@@ -209,6 +220,76 @@ fn normalize_kraken_asset(asset: &str) -> String {
         return stripped.to_string();
     }
     upper
+}
+
+// ---------------------------------------------------------------------------
+// Alpaca — plain ticker symbol: "AAPL"
+// ---------------------------------------------------------------------------
+
+fn alpaca_to_exchange(symbol: &Symbol) -> String {
+    // Alpaca uses just the base ticker, e.g., "AAPL"
+    symbol.base.to_uppercase()
+}
+
+fn alpaca_from_exchange(raw: &str) -> Option<Symbol> {
+    let ticker = raw.trim().to_uppercase();
+    if ticker.is_empty() {
+        return None;
+    }
+    // Alpaca equities are quoted in USD.
+    Some(Symbol::new(ticker, "USD"))
+}
+
+// ---------------------------------------------------------------------------
+// Interactive Brokers — conid-based, but we use ticker for normalization
+// ---------------------------------------------------------------------------
+
+fn ib_to_exchange(symbol: &Symbol) -> String {
+    // IB symbol normalization uses the base ticker.
+    // Actual conid resolution happens in the connector config.
+    symbol.base.to_uppercase()
+}
+
+fn ib_from_exchange(raw: &str) -> Option<Symbol> {
+    let ticker = raw.trim().to_uppercase();
+    if ticker.is_empty() {
+        return None;
+    }
+    Some(Symbol::new(ticker, "USD"))
+}
+
+// ---------------------------------------------------------------------------
+// Uniswap — token pair with slash: "WETH/USDC"
+// ---------------------------------------------------------------------------
+
+fn uniswap_to_exchange(symbol: &Symbol) -> String {
+    format!("{}/{}", symbol.base.to_uppercase(), symbol.quote.to_uppercase())
+}
+
+fn uniswap_from_exchange(raw: &str) -> Option<Symbol> {
+    let parts: Vec<&str> = raw.splitn(2, '/').collect();
+    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+        Some(Symbol::new(parts[0].trim().to_uppercase(), parts[1].trim().to_uppercase()))
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Raydium — token pair with slash: "SOL/USDC"
+// ---------------------------------------------------------------------------
+
+fn raydium_to_exchange(symbol: &Symbol) -> String {
+    format!("{}/{}", symbol.base.to_uppercase(), symbol.quote.to_uppercase())
+}
+
+fn raydium_from_exchange(raw: &str) -> Option<Symbol> {
+    let parts: Vec<&str> = raw.splitn(2, '/').collect();
+    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+        Some(Symbol::new(parts[0].trim().to_uppercase(), parts[1].trim().to_uppercase()))
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

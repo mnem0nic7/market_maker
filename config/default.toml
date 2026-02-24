@@ -35,6 +35,30 @@ secret_key = "your-secret-key-here"
 enabled = false
 symbols = ["BTC/USD", "ETH/USD"]
 
+[exchanges.alpaca]
+api_key = "your-alpaca-key-id"
+secret_key = "your-alpaca-secret-key"
+enabled = false
+symbols = ["AAPL/USD", "MSFT/USD", "TSLA/USD"]
+
+[exchanges.interactive_brokers]
+api_key = ""
+secret_key = ""
+enabled = false
+symbols = ["AAPL/USD", "SPY/USD"]
+
+[exchanges.uniswap]
+api_key = ""
+secret_key = ""
+enabled = false
+symbols = ["WETH/USDC", "WETH/USDT"]
+
+[exchanges.raydium]
+api_key = ""
+secret_key = ""
+enabled = false
+symbols = ["SOL/USDC", "SOL/USDT"]
+
 # =============================================================================
 # Strategy instances
 # =============================================================================

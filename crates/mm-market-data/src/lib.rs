@@ -18,17 +18,25 @@
 //! - A **market data manager** ([`connector::MarketDataManager`]) that
 //!   orchestrates multiple connectors and provides a unified query surface.
 
+pub mod alpaca;
 pub mod binance;
 pub mod coinbase;
 pub mod connector;
+pub mod ib;
 pub mod kraken;
 pub mod normalizer;
 pub mod order_book;
+pub mod raydium;
+pub mod uniswap;
 
 // Re-export the most commonly used types for ergonomic imports.
+pub use alpaca::{AlpacaConfig, AlpacaConnector};
 pub use binance::BinanceConnector;
 pub use coinbase::CoinbaseConnector;
 pub use connector::MarketDataManager;
+pub use ib::{IbConfig, IbConnector};
 pub use kraken::KrakenConnector;
 pub use normalizer::{from_exchange_symbol, to_exchange_symbol};
 pub use order_book::LocalOrderBook;
+pub use raydium::{RaydiumConfig, RaydiumConnector};
+pub use uniswap::{UniswapConfig, UniswapConnector};

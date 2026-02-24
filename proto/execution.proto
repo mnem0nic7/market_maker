@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package mm.execution;
+
+import "common.proto";
+
+// Execution service for submitting and managing orders.
+service ExecutionService {
+  // Submit a new order.
+  rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
+
+  // Cancel a single order.
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+
+  // Cancel all orders, optionally filtered by exchange/symbol/strategy.
+  rpc CancelAllOrders(CancelAllOrdersRequest) returns (CancelAllOrdersResponse);
+
+  // Get all open (non-terminal) orders.
+  rpc GetOpenOrders(GetOpenOrdersRequest) returns (GetOpenOrdersResponse);
+
+  // Stream real-time order updates.
+  rpc StreamOrderUpdates(StreamOrderUpdatesRequest) returns (stream OrderUpdate);
+}
+
+message SubmitOrderRequest {
+  mm.common.Exchange exchange = 1;
+  mm.common.Symbol symbol = 2;
+  mm.common.Side side = 3;
+  mm.common.OrderType order_type = 4;
+  mm.common.TimeInForce time_in_force = 5;
+  string price = 6;       // Decimal as string (empty for market orders)
+  string quantity = 7;     // Decimal as string
+  string strategy_id = 8;
+  bool reduce_only = 9;
+}
+
+message SubmitOrderResponse {
+  string client_order_id = 1;
+  string exchange_order_id = 2;
+}
+
+message CancelOrderRequest {
+  mm.common.Exchange exchange = 1;
+  string client_order_id = 2;
+  string exchange_order_id = 3;
+  mm.common.Symbol symbol = 4;
+}
+
+message CancelOrderResponse {
+  bool success = 1;
+}
+
+message CancelAllOrdersRequest {
+  mm.common.Exchange exchange = 1;  // EXCHANGE_UNSPECIFIED = all exchanges
+  mm.common.Symbol symbol = 2;      // empty = all symbols
+  string strategy_id = 3;            // empty = all strategies
+}
+
+message CancelAllOrdersResponse {
+  uint32 cancelled_count = 1;
+}
+
+message GetOpenOrdersRequest {
+  mm.common.Exchange exchange = 1;  // EXCHANGE_UNSPECIFIED = all
+  mm.common.Symbol symbol = 2;      // empty = all
+}
+
+message GetOpenOrdersResponse {
+  repeated mm.common.Order orders = 1;
+}
+
+message OrderUpdate {
+  string client_order_id = 1;
+  string exchange_order_id = 2;
+  mm.common.Exchange exchange = 3;
+  mm.common.Symbol symbol = 4;
+  mm.common.OrderStatus status = 5;
+  string filled_quantity = 6;
+  string remaining_quantity = 7;
+  string last_fill_price = 8;
+  string last_fill_quantity = 9;
+  string fee = 10;
+  string fee_currency = 11;
+  int64 timestamp_ms = 12;
+}
+
+message StreamOrderUpdatesRequest {
+  mm.common.Exchange exchange = 1;  // EXCHANGE_UNSPECIFIED = all
+}

@@ -27,12 +27,16 @@ use mm_core::{
 };
 use mm_data_pipeline::{NatsConfig, NatsEventPublisher};
 use mm_execution::{
-    BinanceExecutionConfig, BinanceExecutionConnector, CoinbaseExecutionConfig,
-    CoinbaseExecutionConnector, KrakenExecutionConfig, KrakenExecutionConnector, OrderManager,
-    OrderRouter,
+    AlpacaExecutionConfig, AlpacaExecutionConnector, BinanceExecutionConfig,
+    BinanceExecutionConnector, CoinbaseExecutionConfig, CoinbaseExecutionConnector,
+    IbExecutionConfig, IbExecutionConnector, KrakenExecutionConfig, KrakenExecutionConnector,
+    OrderManager, OrderRouter,
 };
 use mm_gateway::{ApiState, GatewayConfig, GatewayServer};
-use mm_market_data::{BinanceConnector, CoinbaseConnector, KrakenConnector, MarketDataManager};
+use mm_market_data::{
+    AlpacaConfig, AlpacaConnector, BinanceConnector, CoinbaseConnector, IbConfig, IbConnector,
+    KrakenConnector, MarketDataManager,
+};
 use mm_risk::{
     KillSwitch, KillSwitchConfig, OrderSizeCheck, OrderSizeConfig, PnlLimitCheck, PnlLimitConfig,
     PositionLimitCheck, PositionLimitConfig, RateLimitCheck, RateLimitConfig, RiskEngine,
@@ -204,8 +208,38 @@ async fn main() -> Result<()> {
                     },
                 )));
             }
+            Exchange::Alpaca => {
+                md_manager.register_connector(Box::new(AlpacaConnector::new(AlpacaConfig {
+                    api_key: exchange_cfg.api_key.clone(),
+                    secret_key: exchange_cfg.secret_key.clone(),
+                    data_ws_url: "wss://stream.data.alpaca.markets/v2/iex".into(),
+                })));
+                order_router.register_connector(Box::new(AlpacaExecutionConnector::new(
+                    AlpacaExecutionConfig {
+                        api_key: exchange_cfg.api_key.clone(),
+                        secret_key: exchange_cfg.secret_key.clone(),
+                        base_url: "https://paper-api.alpaca.markets".into(),
+                        ws_url: "wss://paper-api.alpaca.markets/stream".into(),
+                    },
+                )));
+            }
+            Exchange::InteractiveBrokers => {
+                md_manager.register_connector(Box::new(IbConnector::new(IbConfig {
+                    base_url: "https://localhost:5000/v1/api".into(),
+                    ws_url: "wss://localhost:5000/v1/api/ws".into(),
+                    account_id: String::new(),
+                    conid_map: std::collections::HashMap::new(),
+                })));
+                order_router.register_connector(Box::new(IbExecutionConnector::new(
+                    IbExecutionConfig {
+                        base_url: "https://localhost:5000/v1/api".into(),
+                        account_id: String::new(),
+                        conid_map: std::collections::HashMap::new(),
+                    },
+                )));
+            }
             _ => {
-                warn!(%exchange, "exchange not supported for live trading, skipping");
+                warn!(%exchange, "exchange not supported for live trading yet, skipping");
                 continue;
             }
         }

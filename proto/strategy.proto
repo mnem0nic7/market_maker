@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package mm.strategy;
+
+import "common.proto";
+
+// Strategy management service.
+service StrategyService {
+  // List all registered strategies and their status.
+  rpc ListStrategies(ListStrategiesRequest) returns (ListStrategiesResponse);
+
+  // Start a strategy by ID.
+  rpc StartStrategy(StartStrategyRequest) returns (StrategyActionResponse);
+
+  // Stop a strategy by ID.
+  rpc StopStrategy(StopStrategyRequest) returns (StrategyActionResponse);
+
+  // Get details for a specific strategy.
+  rpc GetStrategy(GetStrategyRequest) returns (StrategyDetail);
+}
+
+message StrategyInfo {
+  string strategy_id = 1;
+  string strategy_type = 2;
+  mm.common.Exchange exchange = 3;
+  mm.common.Symbol symbol = 4;
+  bool running = 5;
+  int64 started_at_ms = 6;  // 0 if never started
+  int64 stopped_at_ms = 7;  // 0 if never stopped
+}
+
+message ListStrategiesRequest {}
+
+message ListStrategiesResponse {
+  repeated StrategyInfo strategies = 1;
+}
+
+message StartStrategyRequest {
+  string strategy_id = 1;
+}
+
+message StopStrategyRequest {
+  string strategy_id = 1;
+}
+
+message StrategyActionResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetStrategyRequest {
+  string strategy_id = 1;
+}
+
+message StrategyDetail {
+  StrategyInfo info = 1;
+  // Strategy-specific configuration as JSON string.
+  string config_json = 2;
+}

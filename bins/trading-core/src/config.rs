@@ -411,6 +411,11 @@ pub fn parse_exchange(name: &str) -> Option<Exchange> {
         "binance" => Some(Exchange::Binance),
         "coinbase" => Some(Exchange::Coinbase),
         "kraken" => Some(Exchange::Kraken),
+        "alpaca" => Some(Exchange::Alpaca),
+        "interactive_brokers" | "ib" => Some(Exchange::InteractiveBrokers),
+        "uniswap" => Some(Exchange::Uniswap),
+        "raydium" => Some(Exchange::Raydium),
+        "simulated" => Some(Exchange::Simulated),
         _ => None,
     }
 }

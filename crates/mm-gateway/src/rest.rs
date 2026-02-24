@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
-use mm_core::{Exchange, Order, OrderBook, PortfolioRisk, Position, StrategyConfig};
+use mm_core::{Exchange, MetricsRegistry, Order, OrderBook, PortfolioRisk, Position, StrategyConfig};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
@@ -96,6 +96,9 @@ pub struct ApiState {
 
     /// Whether the global kill-switch is currently active.
     pub kill_switch_active: Mutex<bool>,
+
+    /// Optional Prometheus metrics registry.
+    pub metrics: Option<Arc<MetricsRegistry>>,
 }
 
 /// Wraps a strategy config with its runtime status.
@@ -117,6 +120,20 @@ impl ApiState {
             strategies: RwLock::new(Vec::new()),
             order_books: RwLock::new(std::collections::HashMap::new()),
             kill_switch_active: Mutex::new(false),
+            metrics: None,
+        })
+    }
+
+    /// Create state with a Prometheus metrics registry attached.
+    pub fn with_metrics(metrics: Arc<MetricsRegistry>) -> Arc<Self> {
+        Arc::new(Self {
+            positions: RwLock::new(Vec::new()),
+            orders: RwLock::new(Vec::new()),
+            portfolio_risk: RwLock::new(None),
+            strategies: RwLock::new(Vec::new()),
+            order_books: RwLock::new(std::collections::HashMap::new()),
+            kill_switch_active: Mutex::new(false),
+            metrics: Some(metrics),
         })
     }
 }
@@ -130,6 +147,7 @@ impl Default for ApiState {
             strategies: RwLock::new(Vec::new()),
             order_books: RwLock::new(std::collections::HashMap::new()),
             kill_switch_active: Mutex::new(false),
+            metrics: None,
         }
     }
 }
@@ -141,6 +159,8 @@ impl Default for ApiState {
 /// Build the full REST API router with all v1 routes.
 pub fn rest_router(state: Arc<ApiState>) -> Router {
     Router::new()
+        // Prometheus metrics
+        .route("/metrics", get(prometheus_metrics))
         // Health
         .route("/api/v1/health", get(health_check))
         // Positions
@@ -194,6 +214,31 @@ async fn health_check() -> impl IntoResponse {
         timestamp: Utc::now().to_rfc3339(),
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+// ---------------------------------------------------------------------------
+// Prometheus metrics
+// ---------------------------------------------------------------------------
+
+async fn prometheus_metrics(
+    State(state): State<Arc<ApiState>>,
+) -> impl IntoResponse {
+    match &state.metrics {
+        Some(metrics) => {
+            let body = metrics.encode();
+            (
+                StatusCode::OK,
+                [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+                body,
+            )
+                .into_response()
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "metrics not configured",
+        )
+            .into_response()
+    }
 }
 
 // ---------------------------------------------------------------------------

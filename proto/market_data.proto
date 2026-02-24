@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package mm.market_data;
+
+import "common.proto";
+
+// Market data service for streaming and querying order book and trade data.
+service MarketDataService {
+  // Get a snapshot of the current order book.
+  rpc GetOrderBook(GetOrderBookRequest) returns (GetOrderBookResponse);
+
+  // Stream real-time order book updates.
+  rpc StreamOrderBook(StreamOrderBookRequest) returns (stream mm.common.OrderBook);
+
+  // Stream real-time trade events.
+  rpc StreamTrades(StreamTradesRequest) returns (stream mm.common.Trade);
+}
+
+message GetOrderBookRequest {
+  mm.common.Exchange exchange = 1;
+  mm.common.Symbol symbol = 2;
+  uint32 depth = 3;  // Number of price levels (0 = all available)
+}
+
+message GetOrderBookResponse {
+  mm.common.OrderBook order_book = 1;
+}
+
+message StreamOrderBookRequest {
+  mm.common.Exchange exchange = 1;
+  mm.common.Symbol symbol = 2;
+  uint32 depth = 3;
+}
+
+message StreamTradesRequest {
+  mm.common.Exchange exchange = 1;
+  mm.common.Symbol symbol = 2;
+}
