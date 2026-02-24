@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useDashboard } from "@/lib/store";
 import { api } from "@/lib/api";
 import type { OrderBook, PriceLevel } from "@/lib/types";
@@ -14,73 +14,81 @@ export function OrderBookPanel() {
 
   const tickKeys = Object.keys(ticks);
 
-  // Auto-select first key if nothing selected
-  useEffect(() => {
-    if (!selectedKey && tickKeys.length > 0) {
-      setSelectedKey(tickKeys[0]);
-    }
+  // Derive effective key: use selectedKey if valid, otherwise first available
+  const effectiveKey = useMemo(() => {
+    if (selectedKey && tickKeys.includes(selectedKey)) return selectedKey;
+    return tickKeys[0] ?? "";
   }, [selectedKey, tickKeys]);
 
-  const fetchBook = useCallback(async () => {
-    if (!selectedKey) return;
-    const tick = ticks[selectedKey];
-    if (!tick) return;
-    try {
-      const data = await api.orderbook(
-        tick.exchange,
-        `${tick.symbol.base}/${tick.symbol.quote}`
-      );
-      setBook(data);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [selectedKey, ticks]);
+  // Sync selectedKey when effectiveKey changes (user hasn't picked yet)
+  const displayKey = effectiveKey;
 
   useEffect(() => {
+    if (!effectiveKey) return;
+
+    let cancelled = false;
+
+    const fetchBook = async () => {
+      const tick = ticks[effectiveKey];
+      if (!tick) return;
+      try {
+        const data = await api.orderbook(
+          tick.exchange,
+          `${tick.symbol.base}/${tick.symbol.quote}`
+        );
+        if (!cancelled) {
+          setBook(data);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    };
+
     fetchBook();
     intervalRef.current = setInterval(fetchBook, 2000);
+
     return () => {
+      cancelled = true;
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [fetchBook]);
+  }, [effectiveKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const maxQty = (levels: PriceLevel[]) =>
     Math.max(...levels.map((l) => parseFloat(l.quantity)), 0.0001);
 
-  const renderLevel = (
-    level: PriceLevel,
-    side: "bid" | "ask",
-    max: number
-  ) => {
-    const qty = parseFloat(level.quantity);
-    const pct = (qty / max) * 100;
-    const barColor = side === "bid" ? "bg-accent-green/20" : "bg-accent-red/20";
-    const textColor = side === "bid" ? "text-accent-green" : "text-accent-red";
+  const renderLevel = useCallback(
+    (level: PriceLevel, side: "bid" | "ask", max: number) => {
+      const qty = parseFloat(level.quantity);
+      const pct = (qty / max) * 100;
+      const barColor = side === "bid" ? "bg-accent-green/20" : "bg-accent-red/20";
+      const textColor = side === "bid" ? "text-accent-green" : "text-accent-red";
 
-    return (
-      <div key={`${side}-${level.price}`} className="relative flex items-center text-xs py-0.5 px-2">
-        <div
-          className={`absolute inset-y-0 ${side === "bid" ? "right-0" : "left-0"} ${barColor}`}
-          style={{ width: `${pct}%` }}
-        />
-        <span className={`relative z-10 font-mono flex-1 ${side === "bid" ? "text-left" : "text-right"} ${textColor}`}>
-          {level.price}
-        </span>
-        <span className="relative z-10 font-mono flex-1 text-right text-text-secondary">
-          {qty.toFixed(4)}
-        </span>
-      </div>
-    );
-  };
+      return (
+        <div key={`${side}-${level.price}`} className="relative flex items-center text-xs py-0.5 px-2">
+          <div
+            className={`absolute inset-y-0 ${side === "bid" ? "right-0" : "left-0"} ${barColor}`}
+            style={{ width: `${pct}%` }}
+          />
+          <span className={`relative z-10 font-mono flex-1 ${side === "bid" ? "text-left" : "text-right"} ${textColor}`}>
+            {level.price}
+          </span>
+          <span className="relative z-10 font-mono flex-1 text-right text-text-secondary">
+            {qty.toFixed(4)}
+          </span>
+        </div>
+      );
+    },
+    []
+  );
 
   return (
     <div className="flex flex-col gap-2 h-full">
       {/* Symbol selector */}
       <select
-        value={selectedKey}
+        value={displayKey}
         onChange={(e) => setSelectedKey(e.target.value)}
-        className="bg-bg-primary border border-border-panel rounded px-2 py-1 text-xs text-text-primary font-mono focus:outline-none focus:border-accent-cyan"
+        className="bg-bg-primary border border-border-panel rounded px-2 py-1 text-xs text-text-primary font-mono focus:outline-hidden focus:border-accent-cyan"
       >
         {tickKeys.length === 0 && <option value="">No symbols available</option>}
         {tickKeys.map((key) => (
@@ -94,7 +102,7 @@ export function OrderBookPanel() {
 
       {!book ? (
         <p className="text-text-muted text-sm">
-          {selectedKey ? "Loading order book..." : "Select a symbol"}
+          {displayKey ? "Loading order book..." : "Select a symbol"}
         </p>
       ) : (
         <div className="flex flex-col flex-1 overflow-hidden">
