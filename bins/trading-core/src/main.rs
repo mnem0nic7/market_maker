@@ -23,7 +23,7 @@ use mm_core::{
         CancelAllOrders, Exchange, Fill, MarketSnapshot, OrderAction, OrderBook, Position,
         RiskAction, Symbol, Trade,
     },
-    OrderStatus,
+    MetricsRegistry, OrderStatus,
 };
 use mm_data_pipeline::{NatsConfig, NatsEventPublisher};
 use mm_execution::{
@@ -34,8 +34,8 @@ use mm_execution::{
 };
 use mm_gateway::{ApiState, GatewayConfig, GatewayServer};
 use mm_market_data::{
-    AlpacaConfig, AlpacaConnector, BinanceConnector, CoinbaseConnector, IbConfig, IbConnector,
-    KrakenConnector, MarketDataManager,
+    AlpacaConfig, AlpacaConnector, BinanceConnector, BinanceMarketDataConfig, CoinbaseConnector,
+    IbConfig, IbConnector, KrakenConnector, MarketDataManager,
 };
 use mm_risk::{
     KillSwitch, KillSwitchConfig, OrderSizeCheck, OrderSizeConfig, PnlLimitCheck, PnlLimitConfig,
@@ -176,13 +176,18 @@ async fn main() -> Result<()> {
         // Register market data connector.
         match exchange {
             Exchange::Binance => {
-                md_manager.register_connector(Box::new(BinanceConnector::new()));
+                md_manager.register_connector(Box::new(BinanceConnector::new(
+                    BinanceMarketDataConfig {
+                        rest_url: "https://api.binance.us".into(),
+                        ws_url: "wss://stream.binance.us:9443".into(),
+                    },
+                )));
                 order_router.register_connector(Box::new(BinanceExecutionConnector::new(
                     BinanceExecutionConfig {
                         api_key: exchange_cfg.api_key.clone(),
                         secret_key: exchange_cfg.secret_key.clone(),
-                        base_url: "https://api.binance.com".into(),
-                        ws_url: "wss://stream.binance.com:9443".into(),
+                        base_url: "https://api.binance.us".into(),
+                        ws_url: "wss://stream.binance.us:9443".into(),
                     },
                 )));
             }
@@ -416,7 +421,8 @@ async fn main() -> Result<()> {
     info!(check_count = risk_engine.check_count(), "risk engine initialized");
 
     // ----- (j) Initialize gateway (REST API + WebSocket) -----
-    let api_state = ApiState::new();
+    let metrics = Arc::new(MetricsRegistry::new());
+    let api_state = ApiState::with_metrics(Arc::clone(&metrics));
 
     if cfg.gateway.enabled {
         let gw_config = GatewayConfig {

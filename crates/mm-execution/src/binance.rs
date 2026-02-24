@@ -65,11 +65,11 @@ pub struct BinanceExecutionConfig {
 }
 
 fn default_base_url() -> String {
-    "https://api.binance.com".into()
+    "https://api.binance.us".into()
 }
 
 fn default_ws_url() -> String {
-    "wss://stream.binance.com:9443".into()
+    "wss://stream.binance.us:9443".into()
 }
 
 // ---------------------------------------------------------------------------

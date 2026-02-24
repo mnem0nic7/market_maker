@@ -12,14 +12,16 @@
 //!
 //! ## Authentication
 //!
-//! Coinbase Advanced Trade uses HMAC-SHA256 signing:
-//! - Signature = HMAC-SHA256(secret, timestamp + method + path + body)
-//! - Headers: CB-ACCESS-KEY, CB-ACCESS-SIGN, CB-ACCESS-TIMESTAMP
+//! Coinbase CDP keys use JWT/ES256 authentication:
+//! - The `secret_key` field holds an EC private key in PEM format.
+//! - Each request builds a short-lived JWT (120 s) signed with ES256.
+//! - REST requests set `Authorization: Bearer <jwt>` with a `uri` claim.
+//! - WebSocket auth sends a JWT **without** the `uri` claim.
 //!
 //! ## WebSocket
 //!
 //! The `user` channel on the Advanced Trade WebSocket provides real-time order
-//! updates. Authentication uses the same HMAC scheme.
+//! updates. Authentication uses JWT (no `uri` claim).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -28,23 +30,22 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::{SinkExt, StreamExt};
-use hmac::{Hmac, Mac};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use p256::SecretKey;
 use mm_core::{
     traits::{Balance, ExecutionConnector},
     CancelAllOrders, CancelOrder, Exchange, MmError, MmResult, NewOrder, OrderStatus, OrderUpdate,
     Side, Symbol,
 };
+use rand::Rng;
 use reqwest::Client;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-
-type HmacSha256 = Hmac<Sha256>;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -96,36 +97,113 @@ impl CoinbaseExecutionConnector {
     }
 
     // -----------------------------------------------------------------------
-    // Signature
+    // JWT / ES256 Authentication
     // -----------------------------------------------------------------------
 
-    /// Compute the CB-ACCESS-SIGN header value.
+    /// Build a short-lived JWT signed with ES256 for Coinbase CDP auth.
     ///
-    /// `message` = `timestamp` + `method` + `path` + `body`
-    fn sign(&self, timestamp: &str, method: &str, path: &str, body: &str) -> String {
-        let prehash = format!("{}{}{}{}", timestamp, method, path, body);
-        let mut mac = HmacSha256::new_from_slice(self.config.secret_key.as_bytes())
-            .expect("HMAC accepts any key length");
-        mac.update(prehash.as_bytes());
-        hex::encode(mac.finalize().into_bytes())
+    /// `uri` should be `Some("METHOD host/path")` for REST requests,
+    /// or `None` for WebSocket authentication.
+    fn build_jwt(api_key: &str, secret_pem: &str, uri: Option<&str>) -> Result<String, MmError> {
+        let now = Utc::now().timestamp() as u64;
+        let nonce: String = {
+            let bytes: [u8; 16] = rand::thread_rng().gen();
+            hex::encode(bytes)
+        };
+
+        // Env vars / config files may store the PEM with literal "\n" escapes
+        // instead of real newlines. Normalize for parsing.
+        let secret_pem = secret_pem.replace("\\n", "\n");
+
+        // Coinbase issues SEC1 EC keys ("BEGIN EC PRIVATE KEY") but
+        // jsonwebtoken only accepts PKCS#8 ("BEGIN PRIVATE KEY").
+        // Detect and convert if necessary.
+        let pkcs8_pem = if secret_pem.contains("BEGIN EC PRIVATE KEY") {
+            use p256::pkcs8::EncodePrivateKey;
+            let sk = SecretKey::from_sec1_pem(&secret_pem).map_err(|e| MmError::Exchange {
+                exchange: Exchange::Coinbase,
+                message: format!("failed to parse SEC1 EC key: {}", e),
+            })?;
+            sk.to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+                .map_err(|e| MmError::Exchange {
+                    exchange: Exchange::Coinbase,
+                    message: format!("failed to convert EC key to PKCS#8: {}", e),
+                })?
+                .to_string()
+        } else {
+            secret_pem
+        };
+
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(api_key.to_string());
+        header.typ = Some("JWT".to_string());
+        // Coinbase expects the nonce in the header.
+        // jsonwebtoken doesn't have a built-in nonce field, so we use a
+        // custom serialization approach via serde_json.
+        // We'll build the header manually.
+        drop(header);
+
+        // Build header as a JSON value so we can include `nonce`.
+        let header_value = serde_json::json!({
+            "alg": "ES256",
+            "kid": api_key,
+            "nonce": nonce,
+            "typ": "JWT"
+        });
+
+        let mut claims = serde_json::json!({
+            "iss": "cdp",
+            "sub": api_key,
+            "aud": ["cdp_service"],
+            "nbf": now,
+            "exp": now + 120
+        });
+
+        if let Some(uri_val) = uri {
+            claims["uri"] = serde_json::Value::String(uri_val.to_string());
+        }
+
+        // Use jsonwebtoken with a custom header.
+        let header_obj: Header = serde_json::from_value(header_value).map_err(|e| {
+            MmError::Exchange {
+                exchange: Exchange::Coinbase,
+                message: format!("failed to build JWT header: {}", e),
+            }
+        })?;
+
+        let encoding_key =
+            EncodingKey::from_ec_pem(pkcs8_pem.as_bytes()).map_err(|e| MmError::Exchange {
+                exchange: Exchange::Coinbase,
+                message: format!("failed to parse EC PEM key: {}", e),
+            })?;
+
+        encode(&header_obj, &claims, &encoding_key).map_err(|e| MmError::Exchange {
+            exchange: Exchange::Coinbase,
+            message: format!("failed to encode JWT: {}", e),
+        })
     }
 
-    /// Build authenticated headers for a request.
+    /// Build authenticated headers for a REST request.
     fn auth_headers(
         &self,
         method: &str,
         path: &str,
-        body: &str,
-    ) -> Vec<(String, String)> {
-        let timestamp = Utc::now().timestamp().to_string();
-        let signature = self.sign(&timestamp, method, path, body);
+        _body: &str,
+    ) -> Result<Vec<(String, String)>, MmError> {
+        // Extract host from base_url for the URI claim.
+        let host = self
+            .config
+            .base_url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
+        let uri = format!("{} {}{}", method, host, path);
 
-        vec![
-            ("CB-ACCESS-KEY".into(), self.config.api_key.clone()),
-            ("CB-ACCESS-SIGN".into(), signature),
-            ("CB-ACCESS-TIMESTAMP".into(), timestamp),
+        let jwt = Self::build_jwt(&self.config.api_key, &self.config.secret_key, Some(&uri))?;
+
+        Ok(vec![
+            ("Authorization".into(), format!("Bearer {}", jwt)),
             ("Content-Type".into(), "application/json".into()),
-        ]
+        ])
     }
 
     // -----------------------------------------------------------------------
@@ -170,22 +248,21 @@ impl CoinbaseExecutionConnector {
 
             let (mut write, mut read) = ws_stream.split();
 
-            // Authenticate and subscribe to the user channel.
-            let timestamp = Utc::now().timestamp().to_string();
-            let channel = "user";
-            let sign_message = format!("{}{}{}", timestamp, channel, "");
-            let mut mac = HmacSha256::new_from_slice(config.secret_key.as_bytes())
-                .expect("HMAC key");
-            mac.update(sign_message.as_bytes());
-            let signature = hex::encode(mac.finalize().into_bytes());
+            // Authenticate and subscribe to the user channel using JWT (no uri claim for WS).
+            let jwt = match Self::build_jwt(&config.api_key, &config.secret_key, None) {
+                Ok(t) => t,
+                Err(e) => {
+                    error!(error = %e, "Coinbase: failed to build WS JWT");
+                    connected.store(false, Ordering::SeqCst);
+                    return;
+                }
+            };
 
             let subscribe = serde_json::json!({
                 "type": "subscribe",
                 "product_ids": [],
-                "channel": channel,
-                "api_key": config.api_key,
-                "timestamp": timestamp,
-                "signature": signature,
+                "channel": "user",
+                "jwt": jwt,
             });
 
             if let Err(e) = write
@@ -455,7 +532,7 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
 
         let body_str = body.to_string();
         let path = "/api/v3/brokerage/orders";
-        let headers = self.auth_headers("POST", path, &body_str);
+        let headers = self.auth_headers("POST", path, &body_str)?;
         let url = format!("{}{}", self.config.base_url, path);
 
         let mut req = self.http.post(&url).body(body_str);
@@ -512,7 +589,7 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
 
         let body_str = body.to_string();
         let path = "/api/v3/brokerage/orders/batch_cancel";
-        let headers = self.auth_headers("POST", path, &body_str);
+        let headers = self.auth_headers("POST", path, &body_str)?;
         let url = format!("{}{}", self.config.base_url, path);
 
         let mut req = self.http.post(&url).body(body_str);
@@ -564,7 +641,7 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
             .join("&");
         let full_path = format!("{}?{}", path, query_string);
 
-        let headers = self.auth_headers("GET", &full_path, "");
+        let headers = self.auth_headers("GET", &full_path, "")?;
         let url = format!("{}{}", self.config.base_url, full_path);
 
         let mut req = self.http.get(&url);
@@ -602,7 +679,7 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
         let cancel_body = serde_json::json!({ "order_ids": order_ids });
         let cancel_body_str = cancel_body.to_string();
         let cancel_path = "/api/v3/brokerage/orders/batch_cancel";
-        let cancel_headers = self.auth_headers("POST", cancel_path, &cancel_body_str);
+        let cancel_headers = self.auth_headers("POST", cancel_path, &cancel_body_str)?;
         let cancel_url = format!("{}{}", self.config.base_url, cancel_path);
 
         let mut cancel_req = self.http.post(&cancel_url).body(cancel_body_str);
@@ -621,7 +698,7 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
 
     async fn fetch_balances(&self) -> MmResult<Vec<Balance>> {
         let path = "/api/v3/brokerage/accounts";
-        let headers = self.auth_headers("GET", path, "");
+        let headers = self.auth_headers("GET", path, "")?;
         let url = format!("{}{}", self.config.base_url, path);
 
         let mut req = self.http.get(&url);

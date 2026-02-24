@@ -1,0 +1,18 @@
+[package]
+name = "connection-test"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "connection-test"
+path = "src/main.rs"
+
+[dependencies]
+mm-core = { workspace = true }
+mm-execution = { workspace = true }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = "0.15"

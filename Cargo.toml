@@ -13,6 +13,7 @@ members = [
     "bins/data-pipeline",
     "bins/gateway",
     "bins/backtester",
+    "bins/connection-test",
 ]
 
 [workspace.package]

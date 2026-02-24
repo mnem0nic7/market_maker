@@ -31,7 +31,7 @@ pub mod uniswap;
 
 // Re-export the most commonly used types for ergonomic imports.
 pub use alpaca::{AlpacaConfig, AlpacaConnector};
-pub use binance::BinanceConnector;
+pub use binance::{BinanceConnector, BinanceMarketDataConfig};
 pub use coinbase::CoinbaseConnector;
 pub use connector::MarketDataManager;
 pub use ib::{IbConfig, IbConnector};

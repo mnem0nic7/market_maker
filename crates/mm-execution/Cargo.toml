@@ -52,5 +52,12 @@ anyhow = { workspace = true }
 # Base64 encoding (needed for Kraken/Coinbase auth)
 base64 = "0.22"
 
+# JWT auth (needed for Coinbase CDP keys)
+jsonwebtoken = "9"
+rand = "0.8"
+
+# EC key handling (SEC1 → PKCS#8 conversion for Coinbase CDP keys)
+p256 = { version = "0.13", features = ["pem"] }
+
 [dev-dependencies]
 rust_decimal_macros = { workspace = true }

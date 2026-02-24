@@ -53,12 +53,9 @@ use mm_core::types::{Exchange, OrderBook, PriceLevel, Side, Symbol, Trade};
 use crate::normalizer;
 
 // ---------------------------------------------------------------------------
-// Constants
+// Constants & Configuration
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
-const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/ws";
-const BINANCE_REST_URL: &str = "https://api.binance.com";
 const RECONNECT_DELAY_SECS: u64 = 5;
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
@@ -137,12 +134,31 @@ struct BinanceOrderBookSnapshot {
 // BinanceConnector
 // ---------------------------------------------------------------------------
 
+/// Configuration for the Binance market data connector.
+#[derive(Debug, Clone)]
+pub struct BinanceMarketDataConfig {
+    /// Base REST URL (e.g. `https://api.binance.us`).
+    pub rest_url: String,
+    /// Base WebSocket URL (e.g. `wss://stream.binance.us:9443`).
+    pub ws_url: String,
+}
+
+impl Default for BinanceMarketDataConfig {
+    fn default() -> Self {
+        Self {
+            rest_url: "https://api.binance.us".into(),
+            ws_url: "wss://stream.binance.us:9443".into(),
+        }
+    }
+}
+
 /// Binance market data connector.
 ///
 /// Spawns a background task that maintains a WebSocket connection to the
 /// Binance combined streams endpoint and forwards normalized data through
 /// the provided channels.
 pub struct BinanceConnector {
+    config: BinanceMarketDataConfig,
     connected: Arc<AtomicBool>,
     /// Handle to the background reader task so we can abort on disconnect.
     task_handle: Option<tokio::task::JoinHandle<()>>,
@@ -151,8 +167,9 @@ pub struct BinanceConnector {
 }
 
 impl BinanceConnector {
-    pub fn new() -> Self {
+    pub fn new(config: BinanceMarketDataConfig) -> Self {
         Self {
+            config,
             connected: Arc::new(AtomicBool::new(false)),
             task_handle: None,
             http: reqwest::Client::new(),
@@ -162,7 +179,7 @@ impl BinanceConnector {
 
 impl Default for BinanceConnector {
     fn default() -> Self {
-        Self::new()
+        Self::new(BinanceMarketDataConfig::default())
     }
 }
 
@@ -184,7 +201,7 @@ impl MarketDataConnector for BinanceConnector {
         }
 
         // Build the combined stream URL.
-        // Format: wss://stream.binance.com:9443/stream?streams=btcusdt@depth@100ms/btcusdt@trade
+        // Format: wss://stream.binance.us:9443/stream?streams=btcusdt@depth@100ms/btcusdt@trade
         let streams: Vec<String> = symbols
             .iter()
             .flat_map(|sym| {
@@ -197,7 +214,8 @@ impl MarketDataConnector for BinanceConnector {
             .collect();
 
         let url = format!(
-            "wss://stream.binance.com:9443/stream?streams={}",
+            "{}/stream?streams={}",
+            self.config.ws_url,
             streams.join("/")
         );
 
@@ -301,7 +319,7 @@ impl MarketDataConnector for BinanceConnector {
         let limit = depth.min(5000); // Binance max is 5000
         let url = format!(
             "{}/api/v3/depth?symbol={}&limit={}",
-            BINANCE_REST_URL, raw, limit
+            self.config.rest_url, raw, limit
         );
 
         let resp = self
