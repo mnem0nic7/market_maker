@@ -1,0 +1,498 @@
+//! Order Management System (OMS).
+//!
+//! Centralised in-memory store for all orders across exchanges. Provides:
+//! - Primary index by `client_order_id` (our internal identifier).
+//! - Secondary index by `exchange_order_id` (the identifier assigned by the venue).
+//! - State-machine validation on every transition — rejects illegal moves such as
+//!   `Filled -> New`.
+//! - Tracing instrumentation for every state change.
+
+use chrono::Utc;
+use dashmap::DashMap;
+use mm_core::{
+    CancelOrder, Exchange, NewOrder, Order, OrderStatus, OrderUpdate,
+};
+use rust_decimal::Decimal;
+use std::sync::Arc;
+use tracing::{debug, info, warn};
+use uuid::Uuid;
+
+// ---------------------------------------------------------------------------
+// State transition rules
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if the transition from `current` to `next` is legal.
+fn is_valid_transition(current: OrderStatus, next: OrderStatus) -> bool {
+    use OrderStatus::*;
+    matches!(
+        (current, next),
+        // From Pending — we either submit, get rejected, or cancel before sending.
+        (Pending, Submitted)
+            | (Pending, Rejected)
+            | (Pending, Cancelled)
+            // From Submitted — exchange acks, rejects, or we cancel.
+            | (Submitted, New)
+            | (Submitted, Rejected)
+            | (Submitted, Cancelled)
+            | (Submitted, PartiallyFilled)
+            | (Submitted, Filled)
+            // From New — fills, cancels, or expiry.
+            | (New, PartiallyFilled)
+            | (New, Filled)
+            | (New, PendingCancel)
+            | (New, Cancelled)
+            | (New, Expired)
+            // From PartiallyFilled — more fills, cancel, or expiry.
+            | (PartiallyFilled, PartiallyFilled)
+            | (PartiallyFilled, Filled)
+            | (PartiallyFilled, PendingCancel)
+            | (PartiallyFilled, Cancelled)
+            | (PartiallyFilled, Expired)
+            // From PendingCancel — actually cancelled or filled first.
+            | (PendingCancel, Cancelled)
+            | (PendingCancel, Filled)
+            | (PendingCancel, PartiallyFilled)
+    )
+}
+
+// ---------------------------------------------------------------------------
+// OrderManager
+// ---------------------------------------------------------------------------
+
+/// Thread-safe order management system backed by `DashMap`.
+///
+/// All public methods are lock-free at the per-key level — concurrent reads
+/// and writes to *different* orders proceed without contention.
+#[derive(Debug, Clone)]
+pub struct OrderManager {
+    /// Primary index: client_order_id -> Order
+    orders: Arc<DashMap<String, Order>>,
+    /// Secondary index: exchange_order_id -> client_order_id
+    exchange_index: Arc<DashMap<String, String>>,
+}
+
+impl Default for OrderManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OrderManager {
+    /// Create a new, empty `OrderManager`.
+    pub fn new() -> Self {
+        Self {
+            orders: Arc::new(DashMap::new()),
+            exchange_index: Arc::new(DashMap::new()),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Registration
+    // -----------------------------------------------------------------------
+
+    /// Register a new order from a `NewOrder` request.
+    ///
+    /// Assigns a fresh `client_order_id`, sets status to `Pending`, and
+    /// inserts the order into the primary index.
+    pub fn register_order(&self, new_order: &NewOrder) -> Order {
+        let now = Utc::now();
+        let client_order_id = Uuid::new_v4().to_string();
+
+        let order = Order {
+            client_order_id: client_order_id.clone(),
+            exchange_order_id: None,
+            exchange: new_order.exchange,
+            symbol: new_order.symbol.clone(),
+            side: new_order.side,
+            order_type: new_order.order_type,
+            time_in_force: new_order.time_in_force,
+            price: new_order.price,
+            quantity: new_order.quantity,
+            status: OrderStatus::Pending,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: new_order.quantity,
+            average_fill_price: Decimal::ZERO,
+            strategy_id: new_order.strategy_id.clone(),
+            reduce_only: new_order.reduce_only,
+            created_at: now,
+            updated_at: now,
+        };
+
+        info!(
+            client_order_id = %order.client_order_id,
+            exchange = %order.exchange,
+            symbol = %order.symbol,
+            side = %order.side,
+            order_type = %order.order_type,
+            quantity = %order.quantity,
+            price = ?order.price,
+            strategy_id = %order.strategy_id,
+            "OMS: order registered"
+        );
+
+        self.orders.insert(client_order_id, order.clone());
+        order
+    }
+
+    // -----------------------------------------------------------------------
+    // Updates
+    // -----------------------------------------------------------------------
+
+    /// Apply an `OrderUpdate` to the tracked order.
+    ///
+    /// Returns the updated `Order` if the update was applied successfully, or
+    /// `None` if the order was not found or the state transition is invalid.
+    pub fn update_order(&self, update: &OrderUpdate) -> Option<Order> {
+        // Look up by client_order_id first; fall back to exchange_order_id.
+        let client_id = if self.orders.contains_key(&update.client_order_id) {
+            update.client_order_id.clone()
+        } else if let Some(exch_id) = &update.exchange_order_id {
+            match self.exchange_index.get(exch_id) {
+                Some(cid) => cid.value().clone(),
+                None => {
+                    warn!(
+                        client_order_id = %update.client_order_id,
+                        exchange_order_id = ?update.exchange_order_id,
+                        "OMS: order not found for update"
+                    );
+                    return None;
+                }
+            }
+        } else {
+            warn!(
+                client_order_id = %update.client_order_id,
+                "OMS: order not found for update"
+            );
+            return None;
+        };
+
+        let mut entry = match self.orders.get_mut(&client_id) {
+            Some(e) => e,
+            None => {
+                warn!(client_order_id = %client_id, "OMS: order disappeared during update");
+                return None;
+            }
+        };
+
+        let order = entry.value_mut();
+        let old_status = order.status;
+        let new_status = update.status;
+
+        // Validate state transition.
+        if !is_valid_transition(old_status, new_status) {
+            warn!(
+                client_order_id = %client_id,
+                old_status = %old_status,
+                new_status = %new_status,
+                "OMS: invalid state transition — update ignored"
+            );
+            return None;
+        }
+
+        // Apply the update.
+        order.status = new_status;
+        order.filled_quantity = update.filled_quantity;
+        order.remaining_quantity = update.remaining_quantity;
+        order.average_fill_price = update.average_fill_price;
+        order.updated_at = update.timestamp;
+
+        // Update exchange_order_id if provided and not yet set.
+        if let Some(ref exch_id) = update.exchange_order_id {
+            if order.exchange_order_id.is_none() {
+                order.exchange_order_id = Some(exch_id.clone());
+                self.exchange_index
+                    .insert(exch_id.clone(), client_id.clone());
+                debug!(
+                    client_order_id = %client_id,
+                    exchange_order_id = %exch_id,
+                    "OMS: exchange order ID linked"
+                );
+            }
+        }
+
+        info!(
+            client_order_id = %client_id,
+            exchange_order_id = ?order.exchange_order_id,
+            old_status = %old_status,
+            new_status = %new_status,
+            filled_qty = %order.filled_quantity,
+            remaining_qty = %order.remaining_quantity,
+            avg_fill_price = %order.average_fill_price,
+            "OMS: order state transition"
+        );
+
+        Some(order.clone())
+    }
+
+    // -----------------------------------------------------------------------
+    // Queries
+    // -----------------------------------------------------------------------
+
+    /// Look up an order by its `client_order_id`.
+    pub fn get_order(&self, client_order_id: &str) -> Option<Order> {
+        self.orders.get(client_order_id).map(|r| r.value().clone())
+    }
+
+    /// Look up an order by its `exchange_order_id`.
+    pub fn get_by_exchange_id(&self, exchange_order_id: &str) -> Option<Order> {
+        self.exchange_index
+            .get(exchange_order_id)
+            .and_then(|cid| self.orders.get(cid.value()).map(|r| r.value().clone()))
+    }
+
+    /// Return all orders that are currently active (i.e., not in a terminal state).
+    pub fn get_open_orders(&self) -> Vec<Order> {
+        self.orders
+            .iter()
+            .filter(|r| r.value().status.is_active())
+            .map(|r| r.value().clone())
+            .collect()
+    }
+
+    /// Return all orders belonging to a given strategy.
+    pub fn get_orders_by_strategy(&self, strategy_id: &str) -> Vec<Order> {
+        self.orders
+            .iter()
+            .filter(|r| r.value().strategy_id == strategy_id)
+            .map(|r| r.value().clone())
+            .collect()
+    }
+
+    /// Generate `CancelOrder` requests for every open order belonging to `strategy_id`.
+    pub fn cancel_all_for_strategy(&self, strategy_id: &str) -> Vec<CancelOrder> {
+        self.orders
+            .iter()
+            .filter(|r| r.value().strategy_id == strategy_id && r.value().status.is_active())
+            .map(|r| {
+                let order = r.value();
+                CancelOrder {
+                    exchange: order.exchange,
+                    symbol: order.symbol.clone(),
+                    client_order_id: order.client_order_id.clone(),
+                    exchange_order_id: order.exchange_order_id.clone(),
+                }
+            })
+            .collect()
+    }
+
+    /// Mark an order as `Submitted`. Convenience helper called by the router
+    /// right after it hands the order off to the exchange connector.
+    pub fn mark_submitted(&self, client_order_id: &str) -> Option<Order> {
+        let mut entry = self.orders.get_mut(client_order_id)?;
+        let order = entry.value_mut();
+
+        if !is_valid_transition(order.status, OrderStatus::Submitted) {
+            warn!(
+                client_order_id = %client_order_id,
+                current_status = %order.status,
+                "OMS: cannot mark as Submitted — invalid transition"
+            );
+            return None;
+        }
+
+        let old_status = order.status;
+        order.status = OrderStatus::Submitted;
+        order.updated_at = Utc::now();
+
+        debug!(
+            client_order_id = %client_order_id,
+            old_status = %old_status,
+            new_status = "Submitted",
+            "OMS: order marked submitted"
+        );
+
+        Some(order.clone())
+    }
+
+    /// Mark an order as `PendingCancel`. Called by the router when a cancel
+    /// request is issued.
+    pub fn mark_pending_cancel(&self, client_order_id: &str) -> Option<Order> {
+        let mut entry = self.orders.get_mut(client_order_id)?;
+        let order = entry.value_mut();
+
+        if !is_valid_transition(order.status, OrderStatus::PendingCancel) {
+            warn!(
+                client_order_id = %client_order_id,
+                current_status = %order.status,
+                "OMS: cannot mark as PendingCancel — invalid transition"
+            );
+            return None;
+        }
+
+        let old_status = order.status;
+        order.status = OrderStatus::PendingCancel;
+        order.updated_at = Utc::now();
+
+        debug!(
+            client_order_id = %client_order_id,
+            old_status = %old_status,
+            new_status = "PendingCancel",
+            "OMS: order marked pending cancel"
+        );
+
+        Some(order.clone())
+    }
+
+    /// Return the total number of tracked orders (all states).
+    pub fn order_count(&self) -> usize {
+        self.orders.len()
+    }
+
+    /// Return all orders for a given exchange.
+    pub fn get_orders_by_exchange(&self, exchange: Exchange) -> Vec<Order> {
+        self.orders
+            .iter()
+            .filter(|r| r.value().exchange == exchange)
+            .map(|r| r.value().clone())
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mm_core::{OrderType, Side, Symbol, TimeInForce};
+    use rust_decimal_macros::dec;
+
+    fn sample_new_order() -> NewOrder {
+        NewOrder {
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            side: Side::Buy,
+            order_type: OrderType::Limit,
+            time_in_force: TimeInForce::GTC,
+            price: Some(dec!(50000)),
+            quantity: dec!(0.1),
+            strategy_id: "test-strategy".into(),
+            reduce_only: false,
+        }
+    }
+
+    #[test]
+    fn test_register_order() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+        assert_eq!(order.status, OrderStatus::Pending);
+        assert_eq!(order.exchange, Exchange::Binance);
+        assert_eq!(order.quantity, dec!(0.1));
+        assert!(oms.get_order(&order.client_order_id).is_some());
+    }
+
+    #[test]
+    fn test_valid_state_transitions() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+        let cid = order.client_order_id.clone();
+
+        // Pending -> Submitted
+        assert!(oms.mark_submitted(&cid).is_some());
+
+        // Submitted -> New (via update)
+        let update = OrderUpdate {
+            client_order_id: cid.clone(),
+            exchange_order_id: Some("BINANCE-123".into()),
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::New,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: dec!(0.1),
+            average_fill_price: Decimal::ZERO,
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+        let updated = oms.update_order(&update);
+        assert!(updated.is_some());
+        assert_eq!(updated.unwrap().status, OrderStatus::New);
+
+        // Exchange index should be populated
+        let by_exch = oms.get_by_exchange_id("BINANCE-123");
+        assert!(by_exch.is_some());
+        assert_eq!(by_exch.unwrap().client_order_id, cid);
+    }
+
+    #[test]
+    fn test_invalid_state_transition_rejected() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+        let cid = order.client_order_id.clone();
+
+        // Move to terminal: Pending -> Rejected
+        let update = OrderUpdate {
+            client_order_id: cid.clone(),
+            exchange_order_id: None,
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::Rejected,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: dec!(0.1),
+            average_fill_price: Decimal::ZERO,
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+        assert!(oms.update_order(&update).is_some());
+
+        // Try Rejected -> New — should fail
+        let bad_update = OrderUpdate {
+            client_order_id: cid.clone(),
+            exchange_order_id: None,
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::New,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: dec!(0.1),
+            average_fill_price: Decimal::ZERO,
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+        assert!(oms.update_order(&bad_update).is_none());
+    }
+
+    #[test]
+    fn test_open_orders_and_strategy_filter() {
+        let oms = OrderManager::new();
+
+        let mut no1 = sample_new_order();
+        no1.strategy_id = "strat-a".into();
+        let o1 = oms.register_order(&no1);
+
+        let mut no2 = sample_new_order();
+        no2.strategy_id = "strat-b".into();
+        let o2 = oms.register_order(&no2);
+
+        // Move both to Submitted then New
+        oms.mark_submitted(&o1.client_order_id);
+        oms.mark_submitted(&o2.client_order_id);
+
+        for cid in [&o1.client_order_id, &o2.client_order_id] {
+            let update = OrderUpdate {
+                client_order_id: cid.clone(),
+                exchange_order_id: Some(format!("EX-{}", cid)),
+                exchange: Exchange::Binance,
+                symbol: Symbol::new("BTC", "USDT"),
+                status: OrderStatus::New,
+                filled_quantity: Decimal::ZERO,
+                remaining_quantity: dec!(0.1),
+                average_fill_price: Decimal::ZERO,
+                last_fill_price: None,
+                last_fill_quantity: None,
+                fee: None,
+                fee_currency: None,
+                timestamp: Utc::now(),
+            };
+            oms.update_order(&update);
+        }
+
+        assert_eq!(oms.get_open_orders().len(), 2);
+        assert_eq!(oms.get_orders_by_strategy("strat-a").len(), 1);
+        assert_eq!(oms.cancel_all_for_strategy("strat-a").len(), 1);
+    }
+}

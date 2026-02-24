@@ -1,0 +1,93 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mm-core",
+    "crates/mm-market-data",
+    "crates/mm-strategy",
+    "crates/mm-execution",
+    "crates/mm-risk",
+    "crates/mm-data-pipeline",
+    "crates/mm-backtest",
+    "crates/mm-gateway",
+    "bins/trading-core",
+    "bins/data-pipeline",
+    "bins/gateway",
+    "bins/backtester",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Web / API
+axum = { version = "0.8", features = ["ws"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+# Messaging
+async-nats = "0.38"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "postgres", "chrono", "rust_decimal", "uuid"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "native-tls"] }
+
+# Math / precision
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry = "0.27"
+opentelemetry-otlp = "0.27"
+prometheus = "0.13"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Config
+config = "0.14"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Crypto / auth
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+# Misc
+uuid = { version = "1", features = ["v4", "serde"] }
+dashmap = "6"
+parking_lot = "0.12"
+futures = "0.3"
+async-trait = "0.1"
+url = { version = "2", features = ["serde"] }
+bytes = "1"
+strum = { version = "0.26", features = ["derive"] }
+
+# Workspace crates
+mm-core = { path = "crates/mm-core" }
+mm-market-data = { path = "crates/mm-market-data" }
+mm-strategy = { path = "crates/mm-strategy" }
+mm-execution = { path = "crates/mm-execution" }
+mm-risk = { path = "crates/mm-risk" }
+mm-data-pipeline = { path = "crates/mm-data-pipeline" }
+mm-backtest = { path = "crates/mm-backtest" }
+mm-gateway = { path = "crates/mm-gateway" }

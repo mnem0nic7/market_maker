@@ -1,0 +1,17 @@
+[package]
+name = "mm-backtest"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mm-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

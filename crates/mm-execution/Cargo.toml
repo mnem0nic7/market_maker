@@ -1,0 +1,56 @@
+[package]
+name = "mm-execution"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mm-core = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# WebSocket
+tokio-tungstenite = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+
+# Crypto / auth
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Math / precision
+rust_decimal = { workspace = true }
+
+# Concurrent data structures
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+
+# Identity
+uuid = { workspace = true }
+
+# URL handling
+url = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Base64 encoding (needed for Kraken/Coinbase auth)
+base64 = "0.22"
+
+[dev-dependencies]
+rust_decimal_macros = { workspace = true }

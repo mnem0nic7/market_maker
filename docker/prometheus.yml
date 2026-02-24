@@ -1,0 +1,35 @@
+# Prometheus configuration for the market maker platform.
+#
+# Scrapes metrics from the trading-core engine and gateway services.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Trading core engine metrics
+  - job_name: "trading-core"
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: "trading-core"
+    metrics_path: "/metrics"
+    scrape_interval: 5s
+
+  # Gateway API metrics
+  - job_name: "gateway"
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: "gateway"
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+
+  # NATS server metrics (exposed on management port)
+  - job_name: "nats"
+    static_configs:
+      - targets: ["nats:8222"]
+        labels:
+          service: "nats"
+    metrics_path: "/metrics"
+    scrape_interval: 15s

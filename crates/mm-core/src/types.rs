@@ -1,0 +1,498 @@
+use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
+use uuid::Uuid;
+
+// ---------------------------------------------------------------------------
+// Exchange & Symbol
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub enum Exchange {
+    Binance,
+    Coinbase,
+    Kraken,
+    Uniswap,
+    Raydium,
+    InteractiveBrokers,
+    Alpaca,
+    Simulated,
+}
+
+/// Canonical symbol representation: "BTC/USDT", "ETH/USD", etc.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Symbol {
+    pub base: String,
+    pub quote: String,
+}
+
+impl Symbol {
+    pub fn new(base: impl Into<String>, quote: impl Into<String>) -> Self {
+        Self {
+            base: base.into().to_uppercase(),
+            quote: quote.into().to_uppercase(),
+        }
+    }
+
+    pub fn canonical(&self) -> String {
+        format!("{}/{}", self.base, self.quote)
+    }
+}
+
+impl std::fmt::Display for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.base, self.quote)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Side, OrderType, TimeInForce
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+pub enum Side {
+    Buy,
+    Sell,
+}
+
+impl Side {
+    pub fn opposite(&self) -> Self {
+        match self {
+            Side::Buy => Side::Sell,
+            Side::Sell => Side::Buy,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+pub enum OrderType {
+    Market,
+    Limit,
+    StopLimit,
+    StopMarket,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+pub enum TimeInForce {
+    /// Good till cancelled
+    GTC,
+    /// Immediate or cancel
+    IOC,
+    /// Fill or kill
+    FOK,
+    /// Good till date
+    GTD,
+}
+
+// ---------------------------------------------------------------------------
+// Order Status (lifecycle state machine)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+pub enum OrderStatus {
+    /// Created locally, not yet sent to exchange
+    Pending,
+    /// Sent to exchange, awaiting acknowledgment
+    Submitted,
+    /// Acknowledged by exchange
+    New,
+    /// Partially filled
+    PartiallyFilled,
+    /// Fully filled (terminal)
+    Filled,
+    /// Cancel request sent
+    PendingCancel,
+    /// Cancelled (terminal)
+    Cancelled,
+    /// Rejected by exchange (terminal)
+    Rejected,
+    /// Expired (terminal)
+    Expired,
+}
+
+impl OrderStatus {
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Rejected | OrderStatus::Expired
+        )
+    }
+
+    pub fn is_active(&self) -> bool {
+        matches!(
+            self,
+            OrderStatus::New | OrderStatus::PartiallyFilled | OrderStatus::Submitted
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Order
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Order {
+    pub client_order_id: String,
+    pub exchange_order_id: Option<String>,
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub side: Side,
+    pub order_type: OrderType,
+    pub time_in_force: TimeInForce,
+    pub price: Option<Decimal>,
+    pub quantity: Decimal,
+    pub status: OrderStatus,
+    pub filled_quantity: Decimal,
+    pub remaining_quantity: Decimal,
+    pub average_fill_price: Decimal,
+    pub strategy_id: String,
+    pub reduce_only: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Order {
+    pub fn new_limit(
+        exchange: Exchange,
+        symbol: Symbol,
+        side: Side,
+        price: Decimal,
+        quantity: Decimal,
+        strategy_id: impl Into<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            client_order_id: Uuid::new_v4().to_string(),
+            exchange_order_id: None,
+            exchange,
+            symbol,
+            side,
+            order_type: OrderType::Limit,
+            time_in_force: TimeInForce::GTC,
+            price: Some(price),
+            quantity,
+            status: OrderStatus::Pending,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: quantity,
+            average_fill_price: Decimal::ZERO,
+            strategy_id: strategy_id.into(),
+            reduce_only: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NewOrder (request to place an order)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewOrder {
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub side: Side,
+    pub order_type: OrderType,
+    pub time_in_force: TimeInForce,
+    pub price: Option<Decimal>,
+    pub quantity: Decimal,
+    pub strategy_id: String,
+    pub reduce_only: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Cancel request
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CancelOrder {
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub client_order_id: String,
+    pub exchange_order_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CancelAllOrders {
+    pub exchange: Option<Exchange>,
+    pub symbol: Option<Symbol>,
+    pub strategy_id: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Fill
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Fill {
+    pub fill_id: String,
+    pub client_order_id: String,
+    pub exchange_order_id: String,
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub side: Side,
+    pub price: Decimal,
+    pub quantity: Decimal,
+    pub fee: Decimal,
+    pub fee_currency: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Position
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Position {
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub quantity: Decimal,
+    pub average_entry_price: Decimal,
+    pub unrealized_pnl: Decimal,
+    pub realized_pnl: Decimal,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Position {
+    pub fn new(exchange: Exchange, symbol: Symbol) -> Self {
+        Self {
+            exchange,
+            symbol,
+            quantity: Decimal::ZERO,
+            average_entry_price: Decimal::ZERO,
+            unrealized_pnl: Decimal::ZERO,
+            realized_pnl: Decimal::ZERO,
+            updated_at: Utc::now(),
+        }
+    }
+
+    pub fn is_long(&self) -> bool {
+        self.quantity > Decimal::ZERO
+    }
+
+    pub fn is_short(&self) -> bool {
+        self.quantity < Decimal::ZERO
+    }
+
+    pub fn is_flat(&self) -> bool {
+        self.quantity == Decimal::ZERO
+    }
+
+    pub fn notional(&self, current_price: Decimal) -> Decimal {
+        self.quantity.abs() * current_price
+    }
+
+    pub fn update_on_fill(&mut self, fill: &Fill) {
+        let signed_qty = match fill.side {
+            Side::Buy => fill.quantity,
+            Side::Sell => -fill.quantity,
+        };
+
+        let new_quantity = self.quantity + signed_qty;
+
+        // If adding to position, update average entry
+        if (self.quantity >= Decimal::ZERO && signed_qty > Decimal::ZERO)
+            || (self.quantity <= Decimal::ZERO && signed_qty < Decimal::ZERO)
+        {
+            let total_cost =
+                self.average_entry_price * self.quantity.abs() + fill.price * fill.quantity;
+            let total_qty = self.quantity.abs() + fill.quantity;
+            if total_qty != Decimal::ZERO {
+                self.average_entry_price = total_cost / total_qty;
+            }
+        } else {
+            // Reducing position — realize PnL
+            let pnl_per_unit = match fill.side {
+                Side::Sell => fill.price - self.average_entry_price,
+                Side::Buy => self.average_entry_price - fill.price,
+            };
+            let realized = pnl_per_unit * fill.quantity.min(self.quantity.abs());
+            self.realized_pnl += realized;
+
+            // If flipping sides, reset avg entry to fill price
+            if (self.quantity > Decimal::ZERO && new_quantity < Decimal::ZERO)
+                || (self.quantity < Decimal::ZERO && new_quantity > Decimal::ZERO)
+            {
+                self.average_entry_price = fill.price;
+            }
+        }
+
+        self.quantity = new_quantity;
+        self.updated_at = Utc::now();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Market Data Types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceLevel {
+    pub price: Decimal,
+    pub quantity: Decimal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderBook {
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub bids: Vec<PriceLevel>,
+    pub asks: Vec<PriceLevel>,
+    pub timestamp: DateTime<Utc>,
+    pub sequence: u64,
+}
+
+impl OrderBook {
+    pub fn best_bid(&self) -> Option<&PriceLevel> {
+        self.bids.first()
+    }
+
+    pub fn best_ask(&self) -> Option<&PriceLevel> {
+        self.asks.first()
+    }
+
+    pub fn mid_price(&self) -> Option<Decimal> {
+        match (self.best_bid(), self.best_ask()) {
+            (Some(bid), Some(ask)) => Some((bid.price + ask.price) / Decimal::from(2)),
+            _ => None,
+        }
+    }
+
+    pub fn spread(&self) -> Option<Decimal> {
+        match (self.best_bid(), self.best_ask()) {
+            (Some(bid), Some(ask)) => Some(ask.price - bid.price),
+            _ => None,
+        }
+    }
+
+    pub fn spread_bps(&self) -> Option<Decimal> {
+        match (self.spread(), self.mid_price()) {
+            (Some(spread), Some(mid)) if mid > Decimal::ZERO => {
+                Some(spread / mid * Decimal::from(10_000))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Ticker {
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub bid: Decimal,
+    pub ask: Decimal,
+    pub last_price: Decimal,
+    pub volume_24h: Decimal,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Trade {
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub price: Decimal,
+    pub quantity: Decimal,
+    pub side: Side,
+    pub timestamp: DateTime<Utc>,
+    pub trade_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Candle {
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub open: Decimal,
+    pub high: Decimal,
+    pub low: Decimal,
+    pub close: Decimal,
+    pub volume: Decimal,
+    pub timestamp: DateTime<Utc>,
+    pub interval: CandleInterval,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+pub enum CandleInterval {
+    #[strum(serialize = "1m")]
+    OneMinute,
+    #[strum(serialize = "5m")]
+    FiveMinutes,
+    #[strum(serialize = "15m")]
+    FifteenMinutes,
+    #[strum(serialize = "1h")]
+    OneHour,
+    #[strum(serialize = "4h")]
+    FourHours,
+    #[strum(serialize = "1d")]
+    OneDay,
+}
+
+// ---------------------------------------------------------------------------
+// Market Snapshot (aggregated view for strategies)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketSnapshot {
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub order_book: OrderBook,
+    pub last_trade: Option<Trade>,
+    pub position: Position,
+    pub open_orders: Vec<Order>,
+    pub timestamp: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Strategy Actions (output from strategies)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OrderAction {
+    Place(NewOrder),
+    Cancel(CancelOrder),
+    CancelAll(CancelAllOrders),
+    Amend {
+        client_order_id: String,
+        new_price: Option<Decimal>,
+        new_quantity: Option<Decimal>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Risk
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortfolioRisk {
+    pub total_var_95: Decimal,
+    pub total_var_99: Decimal,
+    pub net_exposure: Decimal,
+    pub gross_exposure: Decimal,
+    pub max_drawdown: Decimal,
+    pub daily_pnl: Decimal,
+    pub positions: Vec<Position>,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RiskAction {
+    Allow,
+    Reject { reason: String },
+    ReduceSize { max_quantity: Decimal, reason: String },
+    KillSwitch { reason: String },
+}
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrategyConfig {
+    pub strategy_id: String,
+    pub strategy_type: String,
+    pub exchange: Exchange,
+    pub symbol: Symbol,
+    pub enabled: bool,
+    pub params: serde_json::Value,
+}

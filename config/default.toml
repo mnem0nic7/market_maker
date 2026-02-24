@@ -1,0 +1,184 @@
+# =============================================================================
+# trading-core default configuration
+# =============================================================================
+#
+# This file provides baseline settings for the trading-core binary.
+# Every value here can be overridden by environment variables prefixed with
+# MM_ using double-underscore as a separator.
+#
+# Example:
+#   MM_EXCHANGES__BINANCE__API_KEY=abc123
+#   MM_GATEWAY__PORT=9090
+#   MM_TRADING_LOOP__TICK_INTERVAL_MS=200
+
+# =============================================================================
+# Exchange connections
+# =============================================================================
+# Each exchange section is keyed by lowercase name. Only exchanges with
+# enabled = true will have their connectors initialized.
+
+[exchanges.binance]
+api_key = "your-api-key-here"
+secret_key = "your-secret-key-here"
+enabled = false
+symbols = ["BTC/USDT", "ETH/USDT"]
+
+[exchanges.coinbase]
+api_key = "your-api-key-here"
+secret_key = "your-secret-key-here"
+enabled = false
+symbols = ["BTC/USD", "ETH/USD"]
+
+[exchanges.kraken]
+api_key = "your-api-key-here"
+secret_key = "your-secret-key-here"
+enabled = false
+symbols = ["BTC/USD", "ETH/USD"]
+
+# =============================================================================
+# Strategy instances
+# =============================================================================
+# Each [[strategies]] entry creates one strategy instance. Supported types:
+#   - "spread"     : Basic symmetric spread market making.
+#   - "avellaneda" : Avellaneda-Stoikov inventory-aware market making.
+#   - "grid"       : Grid trading within a price range.
+#
+# The "params" table is passed directly to the strategy constructor. Its
+# schema depends on the strategy_type. The strategy_id, exchange, and symbol
+# fields in the outer section take precedence over anything in params.
+
+[[strategies]]
+strategy_id = "spread-btc-binance"
+strategy_type = "spread"
+exchange = "binance"
+symbol = "BTC/USDT"
+enabled = false
+
+[strategies.params]
+# Half-spread in basis points for the innermost level.
+spread_bps = "10"
+# Order quantity per level.
+order_size = "0.01"
+# Number of price levels on each side of the book.
+num_levels = 3
+# Minimum ms between full order refreshes.
+refresh_interval_ms = 1000
+# Floor for the spread in basis points.
+min_spread_bps = "5"
+# Mid-price movement (bps) that triggers a cancel-and-replace cycle.
+reprice_threshold_bps = "3"
+
+[[strategies]]
+strategy_id = "as-eth-binance"
+strategy_type = "avellaneda"
+exchange = "binance"
+symbol = "ETH/USDT"
+enabled = false
+
+[strategies.params]
+# Risk aversion (higher = more inventory-averse quoting).
+gamma = "0.1"
+# Volatility estimate (annualized or period-matched).
+sigma = "0.02"
+# Order book liquidity parameter.
+kappa = "1.5"
+# Order size per side.
+order_size = "0.05"
+# Maximum absolute inventory the strategy may hold.
+max_position = "5.0"
+# Session duration in seconds (8 hours).
+session_duration_secs = 28800
+
+[[strategies]]
+strategy_id = "grid-btc-coinbase"
+strategy_type = "grid"
+exchange = "coinbase"
+symbol = "BTC/USD"
+enabled = false
+
+[strategies.params]
+# Upper bound of the grid.
+upper_price = "70000"
+# Lower bound of the grid.
+lower_price = "60000"
+# Number of grid intervals (levels = num_grids + 1).
+num_grids = 10
+# Order quantity per grid level.
+order_size = "0.01"
+# "Arithmetic" (equal price spacing) or "Geometric" (equal % spacing).
+grid_type = "Arithmetic"
+
+# =============================================================================
+# Risk management
+# =============================================================================
+
+[risk.position_limits]
+# Maximum absolute position for any single symbol.
+max_position_per_symbol = "10"
+# Maximum total gross notional exposure across all positions.
+max_gross_exposure = "500000"
+
+[risk.order_limits]
+# Maximum quantity for a single order.
+max_order_quantity = "1"
+# Maximum notional value (price * quantity) for a single order.
+max_order_notional = "100000"
+
+[risk.pnl_limits]
+# Maximum daily loss (positive number). Kill switch fires when
+# daily_pnl <= -max_daily_loss.
+max_daily_loss = "10000"
+# Maximum drawdown as a decimal fraction (0.05 = 5%).
+max_drawdown_pct = "0.05"
+
+[risk.rate_limits]
+# Maximum order submissions per second per exchange.
+max_orders_per_second = 10
+# Maximum order submissions per minute per exchange.
+max_orders_per_minute = 200
+
+[risk.kill_switch]
+# Maximum daily loss before global kill switch fires.
+max_daily_loss = "10000"
+# Maximum position per symbol before kill switch fires.
+max_position_per_symbol = "100"
+# Seconds an exchange can be disconnected before kill switch fires.
+exchange_disconnect_timeout_secs = 30
+# Seconds without an internal heartbeat before kill switch fires.
+heartbeat_timeout_secs = 10
+
+# =============================================================================
+# NATS event streaming
+# =============================================================================
+# When enabled, all system events (orders, fills, risk, strategy signals)
+# are published to NATS JetStream for persistence, audit, and replay.
+
+[nats]
+enabled = false
+url = "nats://127.0.0.1:4222"
+stream_name = "EVENTS"
+# Maximum message age in seconds (0 = unlimited).
+max_age_secs = 0
+# Maximum total bytes in the stream (0 = unlimited).
+max_bytes = 0
+
+# =============================================================================
+# REST / WebSocket gateway
+# =============================================================================
+# The gateway exposes a REST API for querying positions, orders, and risk,
+# and a WebSocket endpoint for real-time dashboard updates.
+
+[gateway]
+enabled = true
+host = "127.0.0.1"
+port = 8080
+
+# =============================================================================
+# Main trading loop
+# =============================================================================
+
+[trading_loop]
+# Interval in milliseconds between strategy tick evaluations.
+# Lower values provide faster reaction times but increase CPU load
+# and order submission rate. 100ms is a reasonable starting point.
+tick_interval_ms = 100

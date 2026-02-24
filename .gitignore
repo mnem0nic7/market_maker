@@ -1,0 +1,84 @@
+# =============================================================================
+# Rust / Cargo
+# =============================================================================
+
+# Build artifacts
+target/
+
+# Cargo lock is committed for binaries but listed here for awareness.
+# If this were a library-only project, Cargo.lock would be ignored.
+# Cargo.lock
+
+# Backup files
+**/*.rs.bk
+
+# =============================================================================
+# IDE / Editor
+# =============================================================================
+
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# IntelliJ / CLion
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# =============================================================================
+# Environment & Secrets
+# =============================================================================
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Production configuration (may contain secrets)
+config/production.toml
+config/production.yaml
+config/production.json
+
+# TLS certificates and private keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# =============================================================================
+# Data
+# =============================================================================
+
+# Local data directory (market data files, audit logs, etc.)
+data/
+
+# =============================================================================
+# Docker
+# =============================================================================
+
+# Docker volume data (when mounted locally)
+docker/data/
+
+# =============================================================================
+# Miscellaneous
+# =============================================================================
+
+# Log files
+*.log
+
+# Core dumps
+core
+
+# Profiling data
+perf.data
+perf.data.old
+flamegraph.svg

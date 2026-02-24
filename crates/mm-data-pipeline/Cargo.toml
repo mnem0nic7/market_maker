@@ -1,0 +1,42 @@
+[package]
+name = "mm-data-pipeline"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mm-core = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Messaging
+async-nats = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Math / precision
+rust_decimal = { workspace = true }
+
+# Identity
+uuid = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Crypto (for audit hash chaining)
+sha2 = { workspace = true }
+hex = { workspace = true }
