@@ -3,12 +3,21 @@
 import { DashboardGrid } from "@/components/layout/DashboardGrid";
 import { Panel } from "@/components/ui/Panel";
 import { useDashboard } from "@/lib/store";
+import { MarketDataPanel } from "@/components/panels/MarketData";
+import { PositionsPanel } from "@/components/panels/Positions";
+import { OrderBookPanel } from "@/components/panels/OrderBook";
+import { OrderEntryPanel } from "@/components/panels/OrderEntry";
+import { StrategiesPanel } from "@/components/panels/Strategies";
+import { PriceChartPanel } from "@/components/panels/PriceChart";
+import { RiskDashboardPanel } from "@/components/panels/RiskDashboard";
+import { ActiveOrdersPanel } from "@/components/panels/ActiveOrders";
+import { EventLogPanel } from "@/components/panels/EventLog";
 
 export default function DashboardPage() {
   const { connected, loading } = useDashboard();
-
   return (
     <main className="min-h-screen">
+      {/* status bar stays the same */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border-panel bg-bg-panel/50">
         <h1 className="text-sm font-bold text-accent-cyan font-mono tracking-wider">MARKET MAKER</h1>
         <div className="flex items-center gap-3 text-xs">
@@ -21,15 +30,15 @@ export default function DashboardPage() {
       </div>
 
       <DashboardGrid>
-        <div key="market-data"><Panel title="Market Data"><p className="text-text-muted text-sm">Waiting for ticks...</p></Panel></div>
-        <div key="positions"><Panel title="Positions & PnL"><p className="text-text-muted text-sm">No positions</p></Panel></div>
-        <div key="order-book"><Panel title="Order Book"><p className="text-text-muted text-sm">Select a symbol</p></Panel></div>
-        <div key="order-entry"><Panel title="Order Entry"><p className="text-text-muted text-sm">Form here</p></Panel></div>
-        <div key="strategies"><Panel title="Strategies"><p className="text-text-muted text-sm">No strategies</p></Panel></div>
-        <div key="price-chart"><Panel title="Price Chart"><p className="text-text-muted text-sm">Chart here</p></Panel></div>
-        <div key="risk"><Panel title="Risk Dashboard"><p className="text-text-muted text-sm">No risk data</p></Panel></div>
-        <div key="orders"><Panel title="Active Orders"><p className="text-text-muted text-sm">No orders</p></Panel></div>
-        <div key="event-log"><Panel title="Event Log"><p className="text-text-muted text-sm">No events</p></Panel></div>
+        <div key="market-data"><Panel title="Market Data"><MarketDataPanel /></Panel></div>
+        <div key="positions"><Panel title="Positions & PnL"><PositionsPanel /></Panel></div>
+        <div key="order-book"><Panel title="Order Book"><OrderBookPanel /></Panel></div>
+        <div key="order-entry"><Panel title="Order Entry"><OrderEntryPanel /></Panel></div>
+        <div key="strategies"><Panel title="Strategies"><StrategiesPanel /></Panel></div>
+        <div key="price-chart"><Panel title="Price Chart"><PriceChartPanel /></Panel></div>
+        <div key="risk"><Panel title="Risk Dashboard"><RiskDashboardPanel /></Panel></div>
+        <div key="orders"><Panel title="Active Orders"><ActiveOrdersPanel /></Panel></div>
+        <div key="event-log"><Panel title="Event Log"><EventLogPanel /></Panel></div>
       </DashboardGrid>
     </main>
   );
