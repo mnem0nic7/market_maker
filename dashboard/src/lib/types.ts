@@ -99,6 +99,20 @@ export interface HealthResponse {
   version: string;
 }
 
+export interface StrategyMetrics {
+  strategy_id: string;
+  realized_pnl: string;
+  unrealized_pnl: string;
+  total_fills: number;
+  total_orders_placed: number;
+  total_orders_cancelled: number;
+  total_orders_rejected: number;
+  avg_spread_captured_bps: string;
+  volume_traded: string;
+  uptime_secs: number;
+  last_fill_at: string | null;
+}
+
 export interface KillSwitchResponse {
   active: boolean;
   timestamp: string;
@@ -116,6 +130,7 @@ export type ServerMessage =
   | OrderUpdateMsg
   | RiskUpdateMsg
   | MarketDataTickMsg
+  | StrategyMetricsMsg
   | ErrorMsg
   | SubscribedMsg
   | UnsubscribedMsg;
@@ -170,6 +185,12 @@ export interface SubscribedMsg {
 export interface UnsubscribedMsg {
   type: "Unsubscribed";
   channel: string;
+}
+
+export interface StrategyMetricsMsg {
+  type: "StrategyMetrics";
+  strategy_id: string;
+  metrics: StrategyMetrics;
 }
 
 export type ClientMessage =

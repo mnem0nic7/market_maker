@@ -8,6 +8,7 @@ import { api } from "./api";
 import { WebSocketManager } from "./websocket";
 import type {
   Position, Order, PortfolioRisk, StrategyStatus, ServerMessage, MarketDataTickMsg,
+  StrategyMetrics,
 } from "./types";
 
 export interface DashboardState {
@@ -16,6 +17,7 @@ export interface DashboardState {
   orders: Order[];
   risk: PortfolioRisk | null;
   strategies: StrategyStatus[];
+  metrics: Record<string, StrategyMetrics>;
   ticks: Record<string, MarketDataTickMsg>;
   events: ServerMessage[];
   loading: boolean;
@@ -28,6 +30,7 @@ const initialState: DashboardState = {
   orders: [],
   risk: null,
   strategies: [],
+  metrics: {},
   ticks: {},
   events: [],
   loading: true,
@@ -83,6 +86,15 @@ function reducer(state: DashboardState, action: Action): DashboardState {
             risk: state.risk
               ? { ...state.risk, net_exposure: msg.net_exposure, gross_exposure: msg.gross_exposure, daily_pnl: msg.daily_pnl }
               : null,
+          };
+        case "StrategyMetrics":
+          return {
+            ...state,
+            metrics: {
+              ...state.metrics,
+              [msg.strategy_id]: msg.metrics,
+            },
+            events,
           };
         default:
           return { ...state, events };

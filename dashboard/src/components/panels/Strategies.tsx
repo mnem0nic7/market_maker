@@ -3,9 +3,102 @@
 import { useState, useCallback } from "react";
 import { useDashboard, useDashboardDispatch } from "@/lib/store";
 import { api } from "@/lib/api";
+import type { StrategyMetrics } from "@/lib/types";
+
+function formatUptime(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function pnlColor(value: string): string {
+  const n = parseFloat(value);
+  if (Number.isNaN(n) || n === 0) return "text-text-secondary";
+  return n > 0 ? "text-accent-green" : "text-accent-red";
+}
+
+function formatPnl(value: string): string {
+  const n = parseFloat(value);
+  if (Number.isNaN(n)) return value;
+  const sign = n >= 0 ? "+" : "";
+  return `${sign}${n.toFixed(4)}`;
+}
+
+function MetricsRow({ m }: { m: StrategyMetrics }) {
+  const realizedN = parseFloat(m.realized_pnl) || 0;
+  const unrealizedN = parseFloat(m.unrealized_pnl) || 0;
+  const totalPnl = (realizedN + unrealizedN).toFixed(4);
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-1.5 text-xs border-t border-border-panel bg-bg-primary/30">
+      <div className="flex items-center gap-1">
+        <span className="text-text-secondary">PnL:</span>
+        <span className={`font-mono ${pnlColor(totalPnl)}`}>{formatPnl(totalPnl)}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-text-secondary">Fills:</span>
+        <span className="font-mono text-text-primary">{m.total_fills}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-text-secondary">Vol:</span>
+        <span className="font-mono text-text-primary">{parseFloat(m.volume_traded).toFixed(4)}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-text-secondary">Up:</span>
+        <span className="font-mono text-text-primary">{formatUptime(m.uptime_secs)}</span>
+      </div>
+    </div>
+  );
+}
+
+function MetricsDetail({ m }: { m: StrategyMetrics }) {
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] mt-2">
+      <div>
+        <span className="text-text-muted">Realized PnL:</span>{" "}
+        <span className={`font-mono ${pnlColor(m.realized_pnl)}`}>{formatPnl(m.realized_pnl)}</span>
+      </div>
+      <div>
+        <span className="text-text-muted">Unrealized PnL:</span>{" "}
+        <span className={`font-mono ${pnlColor(m.unrealized_pnl)}`}>{formatPnl(m.unrealized_pnl)}</span>
+      </div>
+      <div>
+        <span className="text-text-muted">Orders Placed:</span>{" "}
+        <span className="font-mono text-text-secondary">{m.total_orders_placed}</span>
+      </div>
+      <div>
+        <span className="text-text-muted">Orders Cancelled:</span>{" "}
+        <span className="font-mono text-text-secondary">{m.total_orders_cancelled}</span>
+      </div>
+      <div>
+        <span className="text-text-muted">Orders Rejected:</span>{" "}
+        <span className="font-mono text-text-secondary">{m.total_orders_rejected}</span>
+      </div>
+      <div>
+        <span className="text-text-muted">Avg Spread (bps):</span>{" "}
+        <span className="font-mono text-text-secondary">{parseFloat(m.avg_spread_captured_bps).toFixed(2)}</span>
+      </div>
+      <div>
+        <span className="text-text-muted">Volume Traded:</span>{" "}
+        <span className="font-mono text-text-secondary">{parseFloat(m.volume_traded).toFixed(6)}</span>
+      </div>
+      <div>
+        <span className="text-text-muted">Uptime:</span>{" "}
+        <span className="font-mono text-text-secondary">{formatUptime(m.uptime_secs)}</span>
+      </div>
+      {m.last_fill_at && (
+        <div className="col-span-2">
+          <span className="text-text-muted">Last Fill:</span>{" "}
+          <span className="font-mono text-text-secondary">{m.last_fill_at}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function StrategiesPanel() {
-  const { strategies } = useDashboard();
+  const { strategies, metrics } = useDashboard();
   const dispatch = useDashboardDispatch();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
@@ -53,6 +146,7 @@ export function StrategiesPanel() {
         const id = strat.config.strategy_id;
         const isExpanded = expandedIds.has(id);
         const isLoading = loadingIds.has(id);
+        const m = metrics[id];
 
         return (
           <div
@@ -100,9 +194,18 @@ export function StrategiesPanel() {
               </button>
             </div>
 
-            {/* Expanded params */}
+            {/* Live metrics row */}
+            {m && <MetricsRow m={m} />}
+
+            {/* Expanded params + metrics detail */}
             {isExpanded && (
               <div className="px-3 pb-2 border-t border-border-panel">
+                {m && (
+                  <>
+                    <div className="text-[10px] text-text-muted mt-2 mb-1">Metrics Detail</div>
+                    <MetricsDetail m={m} />
+                  </>
+                )}
                 <div className="text-[10px] text-text-muted mt-2 mb-1">Parameters</div>
                 <pre className="text-[10px] font-mono text-text-secondary bg-bg-primary rounded p-2 overflow-auto max-h-32">
                   {JSON.stringify(strat.config.params, null, 2)}
