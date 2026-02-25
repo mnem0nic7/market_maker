@@ -82,3 +82,6 @@ core
 perf.data
 perf.data.old
 flamegraph.svg
+
+# Playwright MCP artifacts
+.playwright-mcp/
