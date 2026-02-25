@@ -3,7 +3,8 @@
 import { useState, useCallback } from "react";
 import { useDashboard, useDashboardDispatch } from "@/lib/store";
 import { api } from "@/lib/api";
-import type { StrategyMetrics } from "@/lib/types";
+import type { StrategyMetrics, StrategyStatus } from "@/lib/types";
+import { OptimizeModal } from "./OptimizeModal";
 
 function formatUptime(secs: number): string {
   const h = Math.floor(secs / 3600);
@@ -102,6 +103,7 @@ export function StrategiesPanel() {
   const dispatch = useDashboardDispatch();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
+  const [optimizeTarget, setOptimizeTarget] = useState<StrategyStatus | null>(null);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -134,6 +136,26 @@ export function StrategiesPanel() {
       }
     },
     [dispatch]
+  );
+
+  const handleOptimizeApply = useCallback(
+    async (params: Record<string, unknown>) => {
+      if (!optimizeTarget) return;
+      try {
+        const updatedConfig = {
+          ...optimizeTarget.config,
+          params: { ...optimizeTarget.config.params, ...params },
+        };
+        await api.updateStrategy(optimizeTarget.config.strategy_id, updatedConfig);
+        const updated = await api.strategies();
+        dispatch({ type: "SET_STRATEGIES", strategies: updated });
+      } catch (e) {
+        console.error("Failed to apply optimized params:", e);
+      } finally {
+        setOptimizeTarget(null);
+      }
+    },
+    [optimizeTarget, dispatch]
   );
 
   if (strategies.length === 0) {
@@ -182,6 +204,13 @@ export function StrategiesPanel() {
               </button>
               <button
                 type="button"
+                onClick={() => setOptimizeTarget(strat)}
+                className="text-xs font-semibold px-3 py-1 rounded transition-colors bg-accent-blue/20 text-accent-blue hover:bg-accent-blue/30"
+              >
+                OPT
+              </button>
+              <button
+                type="button"
                 disabled={isLoading}
                 onClick={() => handleToggle(id, strat.running)}
                 className={`text-xs font-semibold px-3 py-1 rounded transition-colors ${
@@ -225,6 +254,15 @@ export function StrategiesPanel() {
           </div>
         );
       })}
+
+      {optimizeTarget && (
+        <OptimizeModal
+          strategyType={optimizeTarget.config.strategy_type}
+          currentParams={optimizeTarget.config.params}
+          onClose={() => setOptimizeTarget(null)}
+          onApply={handleOptimizeApply}
+        />
+      )}
     </div>
   );
 }

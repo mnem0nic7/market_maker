@@ -1,6 +1,7 @@
 import type {
   ApiResponse, HealthResponse, Position, Order, PortfolioRisk,
   StrategyConfig, StrategyStatus, OrderBook, KillSwitchResponse,
+  OptimizationResult,
 } from "./types";
 
 const BASE = "/api/v1";
@@ -59,4 +60,26 @@ export const api = {
     }),
   deleteStrategy: (id: string) =>
     fetchApi<string>(`/strategies/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  startOptimization: (config: {
+    strategy_type: string;
+    base_params: Record<string, unknown>;
+    param_ranges: Array<{ name: string; values: unknown[] }>;
+    backtest_config: { initial_capital: string; fee_rate: string; slippage_bps: string };
+    metric: string;
+    top_n: number;
+    num_events?: number;
+  }) =>
+    fetchApi<{ job_id: string }>("/backtest/optimize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    }),
+
+  getOptimizationResult: (jobId: string) =>
+    fetchApi<{
+      status: string;
+      results?: OptimizationResult[];
+      progress?: { completed: number; total: number };
+    }>(`/backtest/optimize/${encodeURIComponent(jobId)}`),
 };

@@ -227,6 +227,20 @@ export interface StrategyPreset {
   params: Record<string, unknown>;
 }
 
+export interface OptimizationResult {
+  params: Record<string, unknown>;
+  backtest_result: {
+    total_pnl: number;
+    sharpe_ratio: number;
+    sortino_ratio: number;
+    max_drawdown_pct: number;
+    profit_factor: number;
+    win_rate: number;
+    total_trades: number;
+  };
+  metric_value: number;
+}
+
 export const STRATEGY_TYPES: StrategyTypeInfo[] = [
   {
     type: "spread",
