@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   ResponsiveGridLayout,
   useContainerWidth,
@@ -44,32 +44,42 @@ interface DashboardGridProps {
 }
 
 export function DashboardGrid({ children }: DashboardGridProps) {
-  const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 1200 });
-  const [layouts, setLayouts] = useState<ResponsiveLayouts<Breakpoint>>(loadLayouts);
+  const { width, containerRef } = useContainerWidth({ initialWidth: 1200 });
+  const [clientReady, setClientReady] = useState(false);
+  const [layouts, setLayouts] = useState<ResponsiveLayouts<Breakpoint>>(defaultLayouts);
+
+  // Only render the grid after hydration completes — avoids SSR mismatch on
+  // computed transforms/widths/heights which depend on actual window size.
+  useEffect(() => {
+    setLayouts(loadLayouts());
+    setClientReady(true);
+  }, []);
 
   const onLayoutChange = useCallback((_layout: Layout, allLayouts: ResponsiveLayouts<Breakpoint>) => {
     setLayouts(allLayouts);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(allLayouts)); } catch {}
   }, []);
 
+  if (!clientReady) {
+    return <div ref={containerRef} />;
+  }
+
   return (
     <div ref={containerRef}>
-      {mounted && (
-        <ResponsiveGridLayout
-          className="layout"
-          width={width}
-          layouts={layouts}
-          breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
-          cols={{ lg: 12, md: 10, sm: 6, xs: 4 }}
-          rowHeight={40}
-          onLayoutChange={onLayoutChange}
-          dragConfig={{ handle: ".cursor-move" }}
-          compactor={verticalCompactor}
-          margin={[8, 8]}
-        >
-          {children}
-        </ResponsiveGridLayout>
-      )}
+      <ResponsiveGridLayout
+        className="layout"
+        width={width}
+        layouts={layouts}
+        breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+        cols={{ lg: 12, md: 10, sm: 6, xs: 4 }}
+        rowHeight={40}
+        onLayoutChange={onLayoutChange}
+        dragConfig={{ handle: ".cursor-move" }}
+        compactor={verticalCompactor}
+        margin={[8, 8]}
+      >
+        {children}
+      </ResponsiveGridLayout>
     </div>
   );
 }

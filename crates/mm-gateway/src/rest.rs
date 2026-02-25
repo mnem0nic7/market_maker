@@ -18,6 +18,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
+use mm_core::traits::Strategy;
+use mm_strategy::{
+    AvellanedaStoikovConfig, AvellanedaStoikovStrategy, GridConfig, GridStrategy,
+    MeanReversionConfig, MeanReversionStrategy, MomentumConfig, MomentumStrategy, SpreadConfig,
+    SpreadStrategy, StatArbConfig, StatArbStrategy, StrategyEngine, TwapConfig, TwapStrategy,
+    VwapConfig, VwapStrategy,
+};
+
 use crate::assistant::{AssistantConfig, ChatRequest, ClaudeClient, build_system_context};
 
 // ---------------------------------------------------------------------------
@@ -137,6 +145,10 @@ pub struct ApiState {
 
     /// Optional Claude AI assistant configuration.
     pub assistant_config: Option<AssistantConfig>,
+
+    /// Shared strategy engine — when set, start/stop handlers register real
+    /// strategy instances with the trading loop's engine.
+    pub strategy_engine: Option<Arc<Mutex<StrategyEngine>>>,
 }
 
 /// State of an optimisation job (running, completed, or failed).
@@ -170,6 +182,7 @@ impl ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             assistant_config: AssistantConfig::from_env(),
+            strategy_engine: None,
         })
     }
 
@@ -186,6 +199,27 @@ impl ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             assistant_config: AssistantConfig::from_env(),
+            strategy_engine: None,
+        })
+    }
+
+    /// Create state with a Prometheus metrics registry and a shared strategy engine.
+    pub fn with_engine(
+        metrics: Arc<MetricsRegistry>,
+        engine: Arc<Mutex<StrategyEngine>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            positions: RwLock::new(Vec::new()),
+            orders: RwLock::new(Vec::new()),
+            portfolio_risk: RwLock::new(None),
+            strategies: RwLock::new(Vec::new()),
+            order_books: RwLock::new(HashMap::new()),
+            kill_switch_active: Mutex::new(false),
+            metrics: Some(metrics),
+            strategy_metrics: RwLock::new(HashMap::new()),
+            optimization_jobs: RwLock::new(HashMap::new()),
+            assistant_config: AssistantConfig::from_env(),
+            strategy_engine: Some(engine),
         })
     }
 }
@@ -203,6 +237,7 @@ impl Default for ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             assistant_config: AssistantConfig::from_env(),
+            strategy_engine: None,
         }
     }
 }
@@ -506,6 +541,78 @@ async fn delete_strategy(
     }
 }
 
+/// Build a boxed strategy instance from a StrategyConfig.
+fn build_strategy(config: &StrategyConfig) -> Result<Box<dyn Strategy>, String> {
+    let exchange = config.exchange;
+    let symbol = config.symbol.clone();
+
+    match config.strategy_type.as_str() {
+        "spread" => {
+            let mut cfg: SpreadConfig = serde_json::from_value(config.params.clone())
+                .map_err(|e| format!("invalid spread params: {e}"))?;
+            cfg.strategy_id = config.strategy_id.clone();
+            cfg.exchange = exchange;
+            cfg.symbol = symbol;
+            Ok(Box::new(SpreadStrategy::new(cfg)))
+        }
+        "avellaneda" => {
+            let mut cfg: AvellanedaStoikovConfig = serde_json::from_value(config.params.clone())
+                .map_err(|e| format!("invalid avellaneda params: {e}"))?;
+            cfg.strategy_id = config.strategy_id.clone();
+            cfg.exchange = exchange;
+            cfg.symbol = symbol;
+            Ok(Box::new(AvellanedaStoikovStrategy::new(cfg)))
+        }
+        "grid" => {
+            let mut cfg: GridConfig = serde_json::from_value(config.params.clone())
+                .map_err(|e| format!("invalid grid params: {e}"))?;
+            cfg.strategy_id = config.strategy_id.clone();
+            cfg.exchange = exchange;
+            cfg.symbol = symbol;
+            Ok(Box::new(GridStrategy::new(cfg)))
+        }
+        "twap" => {
+            let mut cfg: TwapConfig = serde_json::from_value(config.params.clone())
+                .map_err(|e| format!("invalid twap params: {e}"))?;
+            cfg.strategy_id = config.strategy_id.clone();
+            cfg.exchange = exchange;
+            cfg.symbol = symbol;
+            Ok(Box::new(TwapStrategy::new(cfg)))
+        }
+        "vwap" => {
+            let mut cfg: VwapConfig = serde_json::from_value(config.params.clone())
+                .map_err(|e| format!("invalid vwap params: {e}"))?;
+            cfg.strategy_id = config.strategy_id.clone();
+            cfg.exchange = exchange;
+            cfg.symbol = symbol;
+            Ok(Box::new(VwapStrategy::new(cfg)))
+        }
+        "momentum" => {
+            let mut cfg: MomentumConfig = serde_json::from_value(config.params.clone())
+                .map_err(|e| format!("invalid momentum params: {e}"))?;
+            cfg.strategy_id = config.strategy_id.clone();
+            cfg.exchange = exchange;
+            cfg.symbol = symbol;
+            Ok(Box::new(MomentumStrategy::new(cfg)))
+        }
+        "mean_reversion" => {
+            let mut cfg: MeanReversionConfig = serde_json::from_value(config.params.clone())
+                .map_err(|e| format!("invalid mean_reversion params: {e}"))?;
+            cfg.strategy_id = config.strategy_id.clone();
+            cfg.exchange = exchange;
+            cfg.symbol = symbol;
+            Ok(Box::new(MeanReversionStrategy::new(cfg)))
+        }
+        "stat_arb" => {
+            let mut cfg: StatArbConfig = serde_json::from_value(config.params.clone())
+                .map_err(|e| format!("invalid stat_arb params: {e}"))?;
+            cfg.strategy_id = config.strategy_id.clone();
+            Ok(Box::new(StatArbStrategy::new(cfg)))
+        }
+        other => Err(format!("unsupported strategy type: {other}")),
+    }
+}
+
 async fn start_strategy(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
@@ -524,6 +631,16 @@ async fn start_strategy(
                     "strategy {id} is already running"
                 )))
             } else {
+                // Build and register the strategy with the engine.
+                if let Some(ref engine) = state.strategy_engine {
+                    let strategy_instance = build_strategy(&s.config)
+                        .map_err(|e| ApiResponse::error(format!("failed to build strategy: {e}")))?;
+
+                    let mut engine_guard = engine.lock().await;
+                    engine_guard.add_strategy(strategy_instance)
+                        .map_err(|e| ApiResponse::error(format!("failed to register strategy: {e}")))?;
+                }
+
                 s.running = true;
                 s.started_at = Some(Utc::now());
                 s.stopped_at = None;
@@ -557,6 +674,18 @@ async fn stop_strategy(
                     "strategy {id} is already stopped"
                 )))
             } else {
+                // Remove the strategy from the engine.
+                if let Some(ref engine) = state.strategy_engine {
+                    let mut engine_guard = engine.lock().await;
+                    if let Some((_strat, cancel_actions)) = engine_guard.remove_strategy(&id) {
+                        info!(
+                            strategy_id = %id,
+                            cancel_actions = cancel_actions.len(),
+                            "strategy removed from engine"
+                        );
+                    }
+                }
+
                 s.running = false;
                 s.stopped_at = Some(Utc::now());
                 info!(strategy_id = %id, "strategy stopped via API");

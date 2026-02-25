@@ -271,8 +271,10 @@ async fn main() -> Result<()> {
     }
 
     // ----- (h) Initialize strategy engine -----
-    let mut strategy_engine = StrategyEngine::new();
+    let strategy_engine_shared = Arc::new(tokio::sync::Mutex::new(StrategyEngine::new()));
 
+    {
+    let mut strategy_engine = strategy_engine_shared.lock().await;
     for strat_cfg in &cfg.strategies {
         if !strat_cfg.enabled {
             debug!(strategy_id = %strat_cfg.strategy_id, "strategy disabled, skipping");
@@ -506,6 +508,7 @@ async fn main() -> Result<()> {
         active_count = strategy_engine.active_count(),
         "strategy engine initialized"
     );
+    } // drop lock on strategy_engine_shared
 
     // ----- (h2) Initialize strategy metrics tracker -----
     let mut strategy_metrics_tracker = StrategyMetricsTracker::new();
@@ -546,7 +549,7 @@ async fn main() -> Result<()> {
 
     // ----- (j) Initialize gateway (REST API + WebSocket) -----
     let metrics = Arc::new(MetricsRegistry::new());
-    let api_state = ApiState::with_metrics(Arc::clone(&metrics));
+    let api_state = ApiState::with_engine(Arc::clone(&metrics), Arc::clone(&strategy_engine_shared));
 
     // Create the broadcaster externally so the main loop can publish events.
     let broadcaster = DashboardBroadcaster::new(4096, 1024);
@@ -652,7 +655,7 @@ async fn main() -> Result<()> {
                 handle_order_update(
                     &update,
                     &order_manager,
-                    &mut strategy_engine,
+                    &strategy_engine_shared,
                     &positions,
                     &daily_pnl,
                     &api_state,
@@ -698,7 +701,7 @@ async fn main() -> Result<()> {
                     }
 
                     // Stop all strategies.
-                    let stop_actions = strategy_engine.stop_all();
+                    let stop_actions = strategy_engine_shared.lock().await.stop_all();
                     for action in stop_actions {
                         if let Err(e) = order_router.route_action(action).await {
                             error!(error = %e, "failed to route stop action during kill switch");
@@ -772,7 +775,7 @@ async fn main() -> Result<()> {
                         };
 
                         // Run strategies.
-                        let actions = strategy_engine.tick(&snapshot);
+                        let actions = strategy_engine_shared.lock().await.tick(&snapshot);
 
                         if actions.is_empty() {
                             continue;
@@ -837,7 +840,7 @@ async fn main() -> Result<()> {
                                                     error!(error = %e, "kill switch cancel failed");
                                                 }
                                             }
-                                            strategy_engine.stop_all();
+                                            strategy_engine_shared.lock().await.stop_all();
                                             *api_state.kill_switch_active.lock().await = true;
                                             None
                                         }
@@ -922,7 +925,7 @@ async fn main() -> Result<()> {
     info!("shutting down...");
 
     // Stop all strategies — they may emit final cancel actions.
-    let stop_actions = strategy_engine.stop_all();
+    let stop_actions = strategy_engine_shared.lock().await.stop_all();
     info!(
         cancel_actions = stop_actions.len(),
         "strategies stopped, routing final cancel actions"
@@ -1003,7 +1006,7 @@ async fn shutdown_signal() {
 async fn handle_order_update(
     update: &OrderUpdate,
     order_manager: &Arc<OrderManager>,
-    strategy_engine: &mut StrategyEngine,
+    strategy_engine: &Arc<tokio::sync::Mutex<StrategyEngine>>,
     positions: &Arc<RwLock<PositionMap>>,
     daily_pnl: &Arc<RwLock<Decimal>>,
     _api_state: &Arc<ApiState>,
@@ -1015,7 +1018,7 @@ async fn handle_order_update(
 
     if let Some(ref order) = updated_order {
         // Route order update to the owning strategy.
-        strategy_engine.route_order_update(&order.strategy_id, update);
+        strategy_engine.lock().await.route_order_update(&order.strategy_id, update);
 
         // Handle fills: update positions.
         if matches!(
@@ -1057,7 +1060,7 @@ async fn handle_order_update(
                 }
 
                 // Route fill to strategy.
-                strategy_engine.route_fill(&order.strategy_id, &fill);
+                strategy_engine.lock().await.route_fill(&order.strategy_id, &fill);
 
                 // Track fill in strategy metrics.
                 strategy_metrics_tracker.on_fill(&order.strategy_id, &fill);
