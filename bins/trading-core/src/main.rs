@@ -32,7 +32,8 @@ use mm_execution::{
     IbExecutionConfig, IbExecutionConnector, KrakenExecutionConfig, KrakenExecutionConnector,
     OrderManager, OrderRouter,
 };
-use mm_gateway::{ApiState, GatewayConfig, GatewayServer};
+use mm_gateway::{ApiState, DashboardBroadcaster, GatewayConfig, GatewayServer};
+use mm_gateway::ws::ServerMessage;
 use mm_market_data::{
     AlpacaConfig, AlpacaConnector, BinanceConnector, BinanceMarketDataConfig, CoinbaseConnector,
     IbConfig, IbConnector, KrakenConnector, MarketDataManager,
@@ -427,14 +428,19 @@ async fn main() -> Result<()> {
     let metrics = Arc::new(MetricsRegistry::new());
     let api_state = ApiState::with_metrics(Arc::clone(&metrics));
 
+    // Create the broadcaster externally so the main loop can publish events.
+    let broadcaster = DashboardBroadcaster::new(4096, 1024);
+    let broadcast_tx = broadcaster.sender();
+
     if cfg.gateway.enabled {
         let gw_config = GatewayConfig {
             host: cfg.gateway.host.clone(),
             port: cfg.gateway.port,
         };
         let gw_state = Arc::clone(&api_state);
+        let gw_broadcaster = Arc::clone(&broadcaster);
         tokio::spawn(async move {
-            let server = GatewayServer::new(gw_config, gw_state);
+            let server = GatewayServer::with_broadcaster(gw_config, gw_state, gw_broadcaster);
             if let Err(e) = server.start().await {
                 error!(error = %e, "gateway server exited with error");
             }
@@ -484,6 +490,25 @@ async fn main() -> Result<()> {
                 {
                     let mut obs = api_state.order_books.write().await;
                     obs.insert(key.clone(), book.clone());
+                }
+
+                // Broadcast market data tick to WebSocket dashboard clients.
+                if let (Some(bid), Some(ask)) = (book.best_bid(), book.best_ask()) {
+                    let mid = (bid.price + ask.price) / Decimal::from(2);
+                    let spread_bps = if mid > Decimal::ZERO {
+                        (ask.price - bid.price) / mid * Decimal::from(10_000)
+                    } else {
+                        Decimal::ZERO
+                    };
+                    let tick_msg = ServerMessage::MarketDataTick {
+                        exchange: book.exchange,
+                        symbol: book.symbol.clone(),
+                        best_bid: bid.price,
+                        best_ask: ask.price,
+                        mid_price: mid,
+                        spread_bps,
+                    };
+                    let _ = broadcast_tx.try_send(tick_msg);
                 }
 
                 latest_books.insert(key, book);

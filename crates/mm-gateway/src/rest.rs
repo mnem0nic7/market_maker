@@ -456,6 +456,7 @@ async fn get_orderbook(
     Path((exchange, symbol)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
     let exchange_parsed: Exchange = exchange
+        .to_lowercase()
         .parse()
         .map_err(|_| ApiResponse::not_found(format!("unknown exchange: {exchange}")))?;
 
