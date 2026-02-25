@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
-use mm_core::{Exchange, MetricsRegistry, Order, OrderBook, PortfolioRisk, Position, StrategyConfig};
+use mm_core::{Exchange, MetricsRegistry, Order, OrderBook, PortfolioRisk, Position, StrategyConfig, StrategyMetrics};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
@@ -121,6 +121,9 @@ pub struct ApiState {
 
     /// Optional Prometheus metrics registry.
     pub metrics: Option<Arc<MetricsRegistry>>,
+
+    /// Per-strategy metrics keyed by strategy_id.
+    pub strategy_metrics: RwLock<std::collections::HashMap<String, StrategyMetrics>>,
 }
 
 /// Wraps a strategy config with its runtime status.
@@ -143,6 +146,7 @@ impl ApiState {
             order_books: RwLock::new(std::collections::HashMap::new()),
             kill_switch_active: Mutex::new(false),
             metrics: None,
+            strategy_metrics: RwLock::new(std::collections::HashMap::new()),
         })
     }
 
@@ -156,6 +160,7 @@ impl ApiState {
             order_books: RwLock::new(std::collections::HashMap::new()),
             kill_switch_active: Mutex::new(false),
             metrics: Some(metrics),
+            strategy_metrics: RwLock::new(std::collections::HashMap::new()),
         })
     }
 }
@@ -170,6 +175,7 @@ impl Default for ApiState {
             order_books: RwLock::new(std::collections::HashMap::new()),
             kill_switch_active: Mutex::new(false),
             metrics: None,
+            strategy_metrics: RwLock::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -197,6 +203,7 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/strategies/{id}", put(update_strategy).delete(delete_strategy))
         .route("/api/v1/strategies/{id}/start", post(start_strategy))
         .route("/api/v1/strategies/{id}/stop", post(stop_strategy))
+        .route("/api/v1/strategies/{id}/metrics", get(get_strategy_metrics))
         // Risk controls
         .route("/api/v1/risk/kill-switch", post(activate_kill_switch))
         .route("/api/v1/risk/kill-switch", delete(reset_kill_switch))
@@ -528,6 +535,24 @@ async fn stop_strategy(
         }
         None => Err(ApiResponse::not_found(format!(
             "strategy not found: {id}"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Strategy metrics
+// ---------------------------------------------------------------------------
+
+async fn get_strategy_metrics(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let metrics = state.strategy_metrics.read().await;
+
+    match metrics.get(&id) {
+        Some(m) => Ok(ApiResponse::ok(m.clone())),
+        None => Err(ApiResponse::not_found(format!(
+            "strategy metrics not found: {id}"
         ))),
     }
 }

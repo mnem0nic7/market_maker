@@ -56,6 +56,10 @@ pub enum ServerMessage {
         mid_price: Decimal,
         spread_bps: Decimal,
     },
+    StrategyMetrics {
+        strategy_id: String,
+        metrics: mm_core::StrategyMetrics,
+    },
     Error {
         message: String,
     },
@@ -370,8 +374,9 @@ fn should_send(subscriptions: &HashSet<Channel>, msg: &ServerMessage) -> bool {
         ServerMessage::OrderUpdate { .. } => subscriptions.contains(&Channel::Orders),
         ServerMessage::RiskUpdate { .. } => subscriptions.contains(&Channel::Risk),
         ServerMessage::MarketDataTick { .. } => subscriptions.contains(&Channel::MarketData),
-        // Error and ack messages are always forwarded.
-        ServerMessage::Error { .. }
+        // Strategy metrics, error, and ack messages are always forwarded.
+        ServerMessage::StrategyMetrics { .. }
+        | ServerMessage::Error { .. }
         | ServerMessage::Subscribed { .. }
         | ServerMessage::Unsubscribed { .. } => true,
     }

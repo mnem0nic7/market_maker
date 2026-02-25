@@ -23,7 +23,7 @@ use mm_core::{
         CancelAllOrders, Exchange, Fill, MarketSnapshot, OrderAction, OrderBook, Position,
         RiskAction, Symbol, Trade,
     },
-    MetricsRegistry, OrderStatus,
+    MetricsRegistry, OrderStatus, StrategyMetricsTracker,
 };
 use mm_data_pipeline::{NatsConfig, NatsEventPublisher};
 use mm_execution::{
@@ -507,6 +507,18 @@ async fn main() -> Result<()> {
         "strategy engine initialized"
     );
 
+    // ----- (h2) Initialize strategy metrics tracker -----
+    let mut strategy_metrics_tracker = StrategyMetricsTracker::new();
+    for strat_cfg in &cfg.strategies {
+        if strat_cfg.enabled {
+            strategy_metrics_tracker.register_strategy(&strat_cfg.strategy_id);
+        }
+    }
+    info!(
+        tracked_strategies = strategy_metrics_tracker.all().len(),
+        "strategy metrics tracker initialized"
+    );
+
     // ----- (i) Initialize risk engine -----
     let mut risk_engine = RiskEngine::new();
 
@@ -645,6 +657,7 @@ async fn main() -> Result<()> {
                     &daily_pnl,
                     &api_state,
                     event_publisher.as_ref(),
+                    &mut strategy_metrics_tracker,
                 ).await;
             }
 
@@ -781,12 +794,16 @@ async fn main() -> Result<()> {
                                         .await;
 
                                     match risk_result {
-                                        RiskAction::Allow => Some(action),
+                                        RiskAction::Allow => {
+                                            strategy_metrics_tracker.on_order_placed(&new_order.strategy_id);
+                                            Some(action)
+                                        }
                                         RiskAction::Reject { reason } => {
                                             warn!(
                                                 reason = %reason,
                                                 "order rejected by risk engine"
                                             );
+                                            strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
                                             None
                                         }
                                         RiskAction::ReduceSize { max_quantity, reason } => {
@@ -795,6 +812,7 @@ async fn main() -> Result<()> {
                                                 reason = %reason,
                                                 "risk engine reducing order size"
                                             );
+                                            strategy_metrics_tracker.on_order_placed(&new_order.strategy_id);
                                             let mut reduced = new_order.clone();
                                             reduced.quantity = max_quantity;
                                             Some(OrderAction::Place(reduced))
@@ -804,6 +822,7 @@ async fn main() -> Result<()> {
                                                 reason = %reason,
                                                 "risk check triggered kill switch"
                                             );
+                                            strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
                                             let activation = kill_switch.activate(
                                                 mm_risk::KillSwitchTrigger::MaxDailyLoss {
                                                     daily_pnl: current_daily_pnl,
@@ -824,7 +843,15 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                 }
-                                // Cancel and CancelAll actions bypass risk checks.
+                                // Track cancels for strategy metrics.
+                                OrderAction::Cancel(cancel) => {
+                                    // Look up the strategy_id from the order manager.
+                                    if let Some(order) = order_manager.get_order(&cancel.client_order_id) {
+                                        strategy_metrics_tracker.on_order_cancelled(&order.strategy_id);
+                                    }
+                                    Some(action)
+                                }
+                                // CancelAll and Amend bypass individual tracking.
                                 _ => Some(action),
                             };
 
@@ -852,7 +879,19 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                // Periodically update the gateway state with current orders and positions.
+                // Update strategy metrics uptime.
+                strategy_metrics_tracker.update_uptime(Utc::now());
+
+                // Broadcast strategy metrics to WebSocket dashboard clients.
+                for m in strategy_metrics_tracker.all() {
+                    let msg = ServerMessage::StrategyMetrics {
+                        strategy_id: m.strategy_id.clone(),
+                        metrics: m,
+                    };
+                    let _ = broadcast_tx.try_send(msg);
+                }
+
+                // Periodically update the gateway state with current orders, positions, and strategy metrics.
                 {
                     let open = order_manager.get_open_orders();
                     *api_state.orders.write().await = open;
@@ -860,6 +899,14 @@ async fn main() -> Result<()> {
                 {
                     let pos_map = positions.read().await;
                     *api_state.positions.write().await = pos_map.values().cloned().collect();
+                }
+                {
+                    let all_metrics = strategy_metrics_tracker.all();
+                    let mut sm = api_state.strategy_metrics.write().await;
+                    sm.clear();
+                    for m in all_metrics {
+                        sm.insert(m.strategy_id.clone(), m);
+                    }
                 }
             }
 
@@ -961,6 +1008,7 @@ async fn handle_order_update(
     daily_pnl: &Arc<RwLock<Decimal>>,
     _api_state: &Arc<ApiState>,
     event_publisher: Option<&Arc<dyn EventPublisher>>,
+    strategy_metrics_tracker: &mut StrategyMetricsTracker,
 ) {
     // Apply the update to the OMS.
     let updated_order = order_manager.update_order(update);
@@ -1010,6 +1058,9 @@ async fn handle_order_update(
 
                 // Route fill to strategy.
                 strategy_engine.route_fill(&order.strategy_id, &fill);
+
+                // Track fill in strategy metrics.
+                strategy_metrics_tracker.on_fill(&order.strategy_id, &fill);
 
                 info!(
                     client_order_id = %update.client_order_id,
