@@ -14,7 +14,10 @@ use rust_decimal_macros::dec;
 use serde::Deserialize;
 use tracing::info;
 
-use mm_backtest::{BacktestConfig, MarketEvent, ReplayEngine, print_report};
+use mm_backtest::{
+    BacktestConfig, MarketEvent, OptimizationConfig, OptimizationMetric, ParameterOptimizer,
+    ParameterRange, ReplayEngine, print_report,
+};
 use mm_core::traits::Strategy;
 use mm_core::{Exchange, PriceLevel, Side, Symbol};
 use mm_strategy::{
@@ -96,6 +99,26 @@ struct CliConfig {
     /// Volatility estimate sigma (for Avellaneda-Stoikov).
     #[serde(default = "default_sigma")]
     sigma: Decimal,
+
+    // -- Optimizer parameters --
+
+    /// Enable parameter optimisation mode (grid search).
+    #[serde(default)]
+    optimize: bool,
+
+    /// JSON string specifying parameter ranges for optimisation.
+    /// Example: `{"spread_bps": [5, 10, 15, 20], "num_levels": [2, 3, 5]}`
+    #[serde(default)]
+    param_ranges: String,
+
+    /// Optimisation metric: "sharpe", "sortino", "total_pnl", "max_drawdown",
+    /// "profit_factor", or "win_rate".
+    #[serde(default = "default_metric")]
+    metric: String,
+
+    /// Number of top results to display.
+    #[serde(default = "default_top_n")]
+    top_n: usize,
 }
 
 fn default_source() -> String {
@@ -134,6 +157,12 @@ fn default_gamma() -> Decimal {
 fn default_sigma() -> Decimal {
     dec!(0.02)
 }
+fn default_metric() -> String {
+    "sharpe".to_string()
+}
+fn default_top_n() -> usize {
+    10
+}
 
 impl Default for CliConfig {
     fn default() -> Self {
@@ -153,6 +182,10 @@ impl Default for CliConfig {
             grid_spacing: default_grid_spacing(),
             gamma: default_gamma(),
             sigma: default_sigma(),
+            optimize: false,
+            param_ranges: String::new(),
+            metric: default_metric(),
+            top_n: default_top_n(),
         }
     }
 }
@@ -249,18 +282,29 @@ async fn main() -> Result<()> {
     info!(total_events = events.len(), "market events ready");
 
     // ------------------------------------------------------------------
-    // 2. Create strategy
+    // 2. Optimisation mode or single backtest
     // ------------------------------------------------------------------
-    let mut strategy: Box<dyn Strategy> = create_strategy(&cfg)?;
+    if cfg.optimize {
+        run_optimization(&cfg, events)?;
+    } else {
+        run_single_backtest(&cfg, events)?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Single backtest
+// ---------------------------------------------------------------------------
+
+fn run_single_backtest(cfg: &CliConfig, events: Vec<MarketEvent>) -> Result<()> {
+    let mut strategy: Box<dyn Strategy> = create_strategy(cfg)?;
     info!(
         strategy_type = %cfg.strategy_type,
         strategy_name = strategy.name(),
         "strategy created"
     );
 
-    // ------------------------------------------------------------------
-    // 3. Configure and run the replay engine
-    // ------------------------------------------------------------------
     let backtest_config = BacktestConfig {
         initial_capital: cfg.initial_capital,
         fee_rate: cfg.fee_rate,
@@ -273,13 +317,8 @@ async fn main() -> Result<()> {
     info!("running backtest...");
 
     let result = engine.run(strategy.as_mut(), events);
-
-    // ------------------------------------------------------------------
-    // 4. Print the report
-    // ------------------------------------------------------------------
     print_report(&result);
 
-    // Also emit structured log for automation.
     info!(
         net_pnl = %result.net_pnl,
         total_pnl = %result.total_pnl,
@@ -291,6 +330,135 @@ async fn main() -> Result<()> {
         sharpe_ratio = %result.sharpe_ratio,
         "backtest complete"
     );
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Optimisation mode
+// ---------------------------------------------------------------------------
+
+fn parse_metric(s: &str) -> OptimizationMetric {
+    match s.to_lowercase().as_str() {
+        "sortino" => OptimizationMetric::Sortino,
+        "total_pnl" | "pnl" => OptimizationMetric::TotalPnl,
+        "max_drawdown" | "drawdown" => OptimizationMetric::MaxDrawdown,
+        "profit_factor" => OptimizationMetric::ProfitFactor,
+        "win_rate" => OptimizationMetric::WinRate,
+        _ => OptimizationMetric::Sharpe,
+    }
+}
+
+fn run_optimization(cfg: &CliConfig, events: Vec<MarketEvent>) -> Result<()> {
+    // Parse param_ranges JSON
+    let param_ranges: Vec<ParameterRange> = if cfg.param_ranges.is_empty() {
+        // Default: sweep spread_bps if no ranges specified
+        info!("No --param-ranges specified, using default spread_bps sweep");
+        vec![ParameterRange {
+            name: "spread_bps".to_string(),
+            values: vec![
+                serde_json::json!(5),
+                serde_json::json!(10),
+                serde_json::json!(15),
+                serde_json::json!(20),
+            ],
+        }]
+    } else {
+        // Parse JSON object: {"param_name": [val1, val2, ...], ...}
+        let raw: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&cfg.param_ranges)
+                .context("failed to parse --param-ranges JSON")?;
+
+        raw.into_iter()
+            .map(|(name, values)| {
+                let vals = match values {
+                    serde_json::Value::Array(arr) => arr,
+                    other => vec![other],
+                };
+                ParameterRange { name, values: vals }
+            })
+            .collect()
+    };
+
+    let metric = parse_metric(&cfg.metric);
+
+    // Build base_params from CLI config values
+    let base_params = serde_json::json!({
+        "spread_bps": cfg.spread_bps.to_string(),
+        "order_size": cfg.order_size.to_string(),
+        "num_levels": cfg.num_levels,
+        "grid_spacing": cfg.grid_spacing.to_string(),
+        "gamma": cfg.gamma.to_string(),
+        "sigma": cfg.sigma.to_string(),
+    });
+
+    let opt_config = OptimizationConfig {
+        strategy_type: cfg.strategy_type.clone(),
+        base_params,
+        param_ranges,
+        backtest_config: BacktestConfig {
+            initial_capital: cfg.initial_capital,
+            fee_rate: cfg.fee_rate,
+            slippage_bps: cfg.slippage_bps,
+            start_time: None,
+            end_time: None,
+        },
+        metric,
+        top_n: cfg.top_n,
+    };
+
+    info!(
+        strategy_type = %cfg.strategy_type,
+        metric = ?metric,
+        top_n = cfg.top_n,
+        "starting parameter optimisation"
+    );
+
+    let results = ParameterOptimizer::run(&opt_config, events, None);
+
+    // Print results table
+    println!();
+    println!("============================================================");
+    println!("              OPTIMISATION RESULTS ({:?})               ", metric);
+    println!("============================================================");
+    println!();
+    println!(
+        "{:<5} {:<12} {:<12} {:<12} {:<12} {:<12}  {}",
+        "Rank", "Metric", "Net PnL", "Sharpe", "Win Rate", "Max DD", "Params"
+    );
+    println!("{}", "-".repeat(100));
+
+    for (i, res) in results.iter().enumerate() {
+        let br = &res.backtest_result;
+        // Format params as compact key=value pairs
+        let param_str = if let Some(obj) = res.params.as_object() {
+            obj.iter()
+                .filter(|(k, _)| {
+                    // Only show the swept parameters, not defaults
+                    !["strategy_id", "exchange", "symbol"].contains(&k.as_str())
+                })
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            format!("{}", res.params)
+        };
+
+        println!(
+            "{:<5} {:<12.4} {:<12.2} {:<12.4} {:<12.2}% {:<12.2}  {}",
+            i + 1,
+            res.metric_value,
+            br.net_pnl,
+            br.sharpe_ratio,
+            br.win_rate * dec!(100),
+            br.max_drawdown,
+            param_str,
+        );
+    }
+
+    println!();
+    println!("============================================================");
+    println!();
 
     Ok(())
 }
@@ -599,6 +767,10 @@ fn load_config() -> Result<CliConfig> {
         .set_default("grid_spacing", "50")?
         .set_default("gamma", "0.1")?
         .set_default("sigma", "0.02")?
+        .set_default("optimize", false)?
+        .set_default("param_ranges", "")?
+        .set_default("metric", "sharpe")?
+        .set_default("top_n", 10_i64)?
         // Config files (optional)
         .add_source(
             config::File::with_name("config/backtester")

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -8,6 +9,9 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
+use mm_backtest::{
+    OptimizationConfig, OptimizationProgress, OptimizationResult, ParameterOptimizer,
+};
 use mm_core::{Exchange, MetricsRegistry, Order, OrderBook, PortfolioRisk, Position, StrategyConfig, StrategyMetrics};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
@@ -114,7 +118,7 @@ pub struct ApiState {
     pub strategies: RwLock<Vec<StrategyStatus>>,
 
     /// Latest order book snapshots keyed by (exchange, symbol).
-    pub order_books: RwLock<std::collections::HashMap<(Exchange, String), OrderBook>>,
+    pub order_books: RwLock<HashMap<(Exchange, String), OrderBook>>,
 
     /// Whether the global kill-switch is currently active.
     pub kill_switch_active: Mutex<bool>,
@@ -123,7 +127,18 @@ pub struct ApiState {
     pub metrics: Option<Arc<MetricsRegistry>>,
 
     /// Per-strategy metrics keyed by strategy_id.
-    pub strategy_metrics: RwLock<std::collections::HashMap<String, StrategyMetrics>>,
+    pub strategy_metrics: RwLock<HashMap<String, StrategyMetrics>>,
+
+    /// Parameter optimisation jobs keyed by job_id.
+    pub optimization_jobs: RwLock<HashMap<String, OptimizationJobState>>,
+}
+
+/// State of an optimisation job (running, completed, or failed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationJobState {
+    pub status: String,
+    pub results: Option<Vec<OptimizationResult>>,
+    pub progress: Option<OptimizationProgress>,
 }
 
 /// Wraps a strategy config with its runtime status.
@@ -143,10 +158,11 @@ impl ApiState {
             orders: RwLock::new(Vec::new()),
             portfolio_risk: RwLock::new(None),
             strategies: RwLock::new(Vec::new()),
-            order_books: RwLock::new(std::collections::HashMap::new()),
+            order_books: RwLock::new(HashMap::new()),
             kill_switch_active: Mutex::new(false),
             metrics: None,
-            strategy_metrics: RwLock::new(std::collections::HashMap::new()),
+            strategy_metrics: RwLock::new(HashMap::new()),
+            optimization_jobs: RwLock::new(HashMap::new()),
         })
     }
 
@@ -157,10 +173,11 @@ impl ApiState {
             orders: RwLock::new(Vec::new()),
             portfolio_risk: RwLock::new(None),
             strategies: RwLock::new(Vec::new()),
-            order_books: RwLock::new(std::collections::HashMap::new()),
+            order_books: RwLock::new(HashMap::new()),
             kill_switch_active: Mutex::new(false),
             metrics: Some(metrics),
-            strategy_metrics: RwLock::new(std::collections::HashMap::new()),
+            strategy_metrics: RwLock::new(HashMap::new()),
+            optimization_jobs: RwLock::new(HashMap::new()),
         })
     }
 }
@@ -172,10 +189,11 @@ impl Default for ApiState {
             orders: RwLock::new(Vec::new()),
             portfolio_risk: RwLock::new(None),
             strategies: RwLock::new(Vec::new()),
-            order_books: RwLock::new(std::collections::HashMap::new()),
+            order_books: RwLock::new(HashMap::new()),
             kill_switch_active: Mutex::new(false),
             metrics: None,
-            strategy_metrics: RwLock::new(std::collections::HashMap::new()),
+            strategy_metrics: RwLock::new(HashMap::new()),
+            optimization_jobs: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -212,6 +230,9 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
             "/api/v1/market-data/{exchange}/{symbol}/orderbook",
             get(get_orderbook),
         )
+        // Backtest optimisation
+        .route("/api/v1/backtest/optimize", post(start_optimization))
+        .route("/api/v1/backtest/optimize/{job_id}", get(get_optimization_job))
         .with_state(state)
 }
 
@@ -627,6 +648,194 @@ async fn get_orderbook(
         Some(book) => Ok(ApiResponse::ok(book.clone())),
         None => Err(ApiResponse::not_found(format!(
             "order book not found for {exchange_parsed} {normalised_symbol}"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Backtest optimisation
+// ---------------------------------------------------------------------------
+
+/// Request body for starting an optimisation. Wraps [`OptimizationConfig`]
+/// together with synthetic-data generation parameters since the gateway does
+/// not have access to historical data files directly.
+#[derive(Debug, Deserialize)]
+struct StartOptimizationRequest {
+    /// The full optimisation configuration.
+    #[serde(flatten)]
+    config: OptimizationConfig,
+    /// Number of synthetic events to generate for the backtest. Defaults to 500.
+    #[serde(default = "default_opt_num_events")]
+    num_events: usize,
+}
+
+fn default_opt_num_events() -> usize {
+    500
+}
+
+#[derive(Serialize)]
+struct StartOptimizationResponse {
+    job_id: String,
+}
+
+/// Generate simple synthetic market events for the optimizer (order book snapshots).
+fn generate_optimizer_events(num_events: usize) -> Vec<mm_backtest::MarketEvent> {
+    use mm_core::types::{PriceLevel, Symbol};
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut events = Vec::with_capacity(num_events);
+    let exchange = Exchange::Simulated;
+    let symbol = Symbol::new("BTC", "USDT");
+    let base_time = Utc::now() - chrono::Duration::seconds(num_events as i64);
+    let mut mid_price: f64 = 50_000.0;
+    let mut seed: u64 = 42;
+
+    for i in 0..num_events {
+        let ts = base_time + chrono::Duration::seconds(i as i64);
+        seed = {
+            let mut hasher = DefaultHasher::new();
+            seed.hash(&mut hasher);
+            i.hash(&mut hasher);
+            hasher.finish()
+        };
+        let step_pct = ((seed % 1000) as f64 / 1000.0 - 0.5) * 0.005;
+        mid_price *= 1.0 + step_pct;
+        if mid_price < 100.0 {
+            mid_price = 100.0;
+        }
+
+        let spread_bps = 1.0 + (seed % 10) as f64;
+        let half_spread = mid_price * spread_bps / 10_000.0 / 2.0;
+        let best_bid = mid_price - half_spread;
+        let best_ask = mid_price + half_spread;
+
+        let bids = vec![PriceLevel {
+            price: rust_decimal::Decimal::from_f64_retain(best_bid)
+                .unwrap_or(rust_decimal::Decimal::new(50000, 0))
+                .round_dp(2),
+            quantity: rust_decimal::Decimal::new(10, 0),
+        }];
+        let asks = vec![PriceLevel {
+            price: rust_decimal::Decimal::from_f64_retain(best_ask)
+                .unwrap_or(rust_decimal::Decimal::new(50000, 0))
+                .round_dp(2),
+            quantity: rust_decimal::Decimal::new(10, 0),
+        }];
+
+        if i % 3 == 0 && i > 0 {
+            let trade_side = if seed % 2 == 0 {
+                mm_core::Side::Buy
+            } else {
+                mm_core::Side::Sell
+            };
+            let trade_price = if trade_side == mm_core::Side::Buy {
+                best_ask
+            } else {
+                best_bid
+            };
+            events.push(mm_backtest::MarketEvent::TradeEvent {
+                timestamp: ts,
+                exchange,
+                symbol: symbol.clone(),
+                price: rust_decimal::Decimal::from_f64_retain(trade_price)
+                    .unwrap_or(rust_decimal::Decimal::new(50000, 0))
+                    .round_dp(2),
+                quantity: rust_decimal::Decimal::new(1, 2),
+                side: trade_side,
+                trade_id: format!("synth-{}", i),
+            });
+        } else {
+            events.push(mm_backtest::MarketEvent::OrderBookSnapshot {
+                timestamp: ts,
+                exchange,
+                symbol: symbol.clone(),
+                bids,
+                asks,
+                sequence: i as u64,
+            });
+        }
+    }
+
+    events
+}
+
+async fn start_optimization(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<StartOptimizationRequest>,
+) -> Result<(StatusCode, impl IntoResponse), (StatusCode, Json<ApiResponse<()>>)> {
+    let job_id = uuid::Uuid::new_v4().to_string();
+
+    // Insert job as running.
+    {
+        let mut jobs = state.optimization_jobs.write().await;
+        jobs.insert(
+            job_id.clone(),
+            OptimizationJobState {
+                status: "running".to_string(),
+                results: None,
+                progress: None,
+            },
+        );
+    }
+
+    info!(job_id = %job_id, "Starting optimisation job");
+
+    let config = req.config;
+    let num_events = req.num_events;
+    let state_clone = Arc::clone(&state);
+    let jid = job_id.clone();
+
+    // Spawn the optimisation in a background task.
+    tokio::task::spawn_blocking(move || {
+        let events = generate_optimizer_events(num_events);
+
+        let (progress_tx, mut progress_rx) =
+            tokio::sync::mpsc::channel::<mm_backtest::OptimizationProgress>(64);
+
+        // Spawn a small async task to forward progress into state.
+        let progress_state = Arc::clone(&state_clone);
+        let progress_jid = jid.clone();
+        let rt = tokio::runtime::Handle::current();
+        rt.spawn(async move {
+            while let Some(progress) = progress_rx.recv().await {
+                let mut jobs = progress_state.optimization_jobs.write().await;
+                if let Some(job) = jobs.get_mut(&progress_jid) {
+                    job.progress = Some(progress);
+                }
+            }
+        });
+
+        let results = ParameterOptimizer::run(&config, events, Some(progress_tx));
+
+        // Update job to completed.
+        let state_final = state_clone;
+        let jid_final = jid;
+        rt.block_on(async move {
+            let mut jobs = state_final.optimization_jobs.write().await;
+            if let Some(job) = jobs.get_mut(&jid_final) {
+                job.status = "completed".to_string();
+                job.results = Some(results);
+            }
+        });
+    });
+
+    Ok((
+        StatusCode::CREATED,
+        ApiResponse::ok(StartOptimizationResponse { job_id }),
+    ))
+}
+
+async fn get_optimization_job(
+    State(state): State<Arc<ApiState>>,
+    Path(job_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let jobs = state.optimization_jobs.read().await;
+
+    match jobs.get(&job_id) {
+        Some(job) => Ok(ApiResponse::ok(job.clone())),
+        None => Err(ApiResponse::not_found(format!(
+            "optimisation job not found: {job_id}"
         ))),
     }
 }

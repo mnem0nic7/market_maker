@@ -5,6 +5,8 @@ edition.workspace = true
 
 [dependencies]
 mm-core = { workspace = true }
+mm-backtest = { workspace = true }
+mm-strategy = { workspace = true }
 
 tokio = { workspace = true }
 serde = { workspace = true }
