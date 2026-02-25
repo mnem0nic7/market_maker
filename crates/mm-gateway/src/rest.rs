@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use chrono::Utc;
@@ -66,6 +66,28 @@ impl ApiResponse<()> {
             data: Some(message.into()),
             error: None,
         })
+    }
+
+    pub fn conflict(message: impl Into<String>) -> (StatusCode, Json<ApiResponse<()>>) {
+        (
+            StatusCode::CONFLICT,
+            Json(ApiResponse {
+                status: "error",
+                data: None,
+                error: Some(message.into()),
+            }),
+        )
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> (StatusCode, Json<ApiResponse<()>>) {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                status: "error",
+                data: None,
+                error: Some(message.into()),
+            }),
+        )
     }
 }
 
@@ -171,7 +193,8 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         // Portfolio risk
         .route("/api/v1/portfolio/risk", get(get_portfolio_risk))
         // Strategies
-        .route("/api/v1/strategies", get(list_strategies))
+        .route("/api/v1/strategies", get(list_strategies).post(create_strategy))
+        .route("/api/v1/strategies/{id}", put(update_strategy).delete(delete_strategy))
         .route("/api/v1/strategies/{id}/start", post(start_strategy))
         .route("/api/v1/strategies/{id}/stop", post(stop_strategy))
         // Risk controls
@@ -329,11 +352,119 @@ async fn get_portfolio_risk(
 // Strategies
 // ---------------------------------------------------------------------------
 
+/// Valid strategy types accepted by the platform.
+const VALID_STRATEGY_TYPES: &[&str] = &[
+    "spread",
+    "avellaneda",
+    "grid",
+    "twap",
+    "vwap",
+    "momentum",
+    "mean_reversion",
+    "stat_arb",
+];
+
 async fn list_strategies(
     State(state): State<Arc<ApiState>>,
 ) -> impl IntoResponse {
     let strategies = state.strategies.read().await;
     ApiResponse::ok(strategies.clone())
+}
+
+async fn create_strategy(
+    State(state): State<Arc<ApiState>>,
+    Json(config): Json<StrategyConfig>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    // Validate strategy_type
+    if !VALID_STRATEGY_TYPES.contains(&config.strategy_type.as_str()) {
+        return Err(ApiResponse::bad_request(format!(
+            "invalid strategy_type: '{}'. Must be one of: {}",
+            config.strategy_type,
+            VALID_STRATEGY_TYPES.join(", ")
+        )));
+    }
+
+    let mut strategies = state.strategies.write().await;
+
+    // Check for duplicate strategy_id
+    if strategies
+        .iter()
+        .any(|s| s.config.strategy_id == config.strategy_id)
+    {
+        return Err(ApiResponse::conflict(format!(
+            "strategy already exists: {}",
+            config.strategy_id
+        )));
+    }
+
+    let strategy_id = config.strategy_id.clone();
+    strategies.push(StrategyStatus {
+        config,
+        running: false,
+        started_at: None,
+        stopped_at: None,
+    });
+
+    info!(strategy_id = %strategy_id, "strategy created via API");
+    Ok((StatusCode::CREATED, ApiResponse::ok_message(format!("strategy {strategy_id} created"))))
+}
+
+async fn update_strategy(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(config): Json<StrategyConfig>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let mut strategies = state.strategies.write().await;
+
+    let strategy = strategies
+        .iter_mut()
+        .find(|s| s.config.strategy_id == id);
+
+    match strategy {
+        Some(s) => {
+            if s.running {
+                return Err(ApiResponse::conflict(format!(
+                    "cannot update running strategy: {id}. Stop it first."
+                )));
+            }
+            // Preserve the original strategy_id regardless of what was sent in the body
+            let mut new_config = config;
+            new_config.strategy_id = id.clone();
+            s.config = new_config;
+            info!(strategy_id = %id, "strategy updated via API");
+            Ok(ApiResponse::ok_message(format!("strategy {id} updated")))
+        }
+        None => Err(ApiResponse::not_found(format!(
+            "strategy not found: {id}"
+        ))),
+    }
+}
+
+async fn delete_strategy(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let mut strategies = state.strategies.write().await;
+
+    let pos = strategies
+        .iter()
+        .position(|s| s.config.strategy_id == id);
+
+    match pos {
+        Some(idx) => {
+            if strategies[idx].running {
+                return Err(ApiResponse::conflict(format!(
+                    "cannot delete running strategy: {id}. Stop it first."
+                )));
+            }
+            strategies.remove(idx);
+            info!(strategy_id = %id, "strategy deleted via API");
+            Ok(ApiResponse::ok_message(format!("strategy {id} deleted")))
+        }
+        None => Err(ApiResponse::not_found(format!(
+            "strategy not found: {id}"
+        ))),
+    }
 }
 
 async fn start_strategy(
@@ -484,7 +615,40 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use mm_core::types::Symbol;
     use tower::ServiceExt;
+
+    /// Helper to build a default StrategyConfig for tests.
+    fn test_strategy_config(id: &str) -> StrategyConfig {
+        StrategyConfig {
+            strategy_id: id.to_string(),
+            strategy_type: "spread".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            enabled: true,
+            params: serde_json::json!({}),
+        }
+    }
+
+    /// Helper to build a StrategyStatus (not running).
+    fn test_strategy_status(id: &str) -> StrategyStatus {
+        StrategyStatus {
+            config: test_strategy_config(id),
+            running: false,
+            started_at: None,
+            stopped_at: None,
+        }
+    }
+
+    /// Helper to build a running StrategyStatus.
+    fn test_running_strategy_status(id: &str) -> StrategyStatus {
+        StrategyStatus {
+            config: test_strategy_config(id),
+            running: true,
+            started_at: Some(Utc::now()),
+            stopped_at: None,
+        }
+    }
 
     #[tokio::test]
     async fn health_endpoint_returns_ok() {
@@ -531,6 +695,202 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/orders/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- Strategy CRUD tests ---
+
+    #[tokio::test]
+    async fn create_strategy_returns_201() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let config = test_strategy_config("test-create-1");
+        let body = serde_json::to_string(&config).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/strategies")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn create_duplicate_strategy_returns_409() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_strategy_status("dup-1"));
+        }
+        let app = rest_router(state);
+
+        let config = test_strategy_config("dup-1");
+        let body = serde_json::to_string(&config).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/strategies")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn create_strategy_invalid_type_returns_400() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let mut config = test_strategy_config("bad-type-1");
+        config.strategy_type = "nonexistent".to_string();
+        let body = serde_json::to_string(&config).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/strategies")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_stopped_strategy_returns_ok() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_strategy_status("update-1"));
+        }
+        let app = rest_router(state);
+
+        let mut config = test_strategy_config("update-1");
+        config.strategy_type = "grid".to_string();
+        let body = serde_json::to_string(&config).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/strategies/update-1")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn update_running_strategy_returns_409() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_running_strategy_status("running-update-1"));
+        }
+        let app = rest_router(state);
+
+        let config = test_strategy_config("running-update-1");
+        let body = serde_json::to_string(&config).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/strategies/running-update-1")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn delete_stopped_strategy_returns_ok() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_strategy_status("delete-1"));
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/strategies/delete-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn delete_running_strategy_returns_409() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_running_strategy_status("running-del-1"));
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/strategies/running-del-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_strategy_returns_404() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/strategies/no-such-strategy")
                     .body(Body::empty())
                     .unwrap(),
             )
