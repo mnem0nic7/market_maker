@@ -1,6 +1,6 @@
 import type {
   ApiResponse, HealthResponse, Position, Order, PortfolioRisk,
-  StrategyStatus, OrderBook, KillSwitchResponse,
+  StrategyConfig, StrategyStatus, OrderBook, KillSwitchResponse,
 } from "./types";
 
 const BASE = "/api/v1";
@@ -45,4 +45,18 @@ export const api = {
     fetchApi<KillSwitchResponse>("/risk/kill-switch", { method: "DELETE" }),
   orderbook: (exchange: string, symbol: string) =>
     fetchApi<OrderBook>(`/market-data/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/orderbook`),
+  createStrategy: (config: StrategyConfig) =>
+    fetchApi<string>("/strategies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    }),
+  updateStrategy: (id: string, config: StrategyConfig) =>
+    fetchApi<string>(`/strategies/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    }),
+  deleteStrategy: (id: string) =>
+    fetchApi<string>(`/strategies/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

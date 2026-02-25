@@ -12,6 +12,7 @@ import { PriceChartPanel } from "@/components/panels/PriceChart";
 import { RiskDashboardPanel } from "@/components/panels/RiskDashboard";
 import { ActiveOrdersPanel } from "@/components/panels/ActiveOrders";
 import { EventLogPanel } from "@/components/panels/EventLog";
+import { StrategyFormPanel } from "@/components/panels/StrategyForm";
 
 export default function DashboardPage() {
   const { connected, loading } = useDashboard();
@@ -39,6 +40,7 @@ export default function DashboardPage() {
         <div key="risk"><Panel title="Risk Dashboard"><RiskDashboardPanel /></Panel></div>
         <div key="orders"><Panel title="Active Orders"><ActiveOrdersPanel /></Panel></div>
         <div key="event-log"><Panel title="Event Log"><EventLogPanel /></Panel></div>
+        <div key="strategy-form"><Panel title="New Strategy"><StrategyFormPanel /></Panel></div>
       </DashboardGrid>
     </main>
   );
