@@ -82,4 +82,49 @@ export const api = {
       results?: OptimizationResult[];
       progress?: { completed: number; total: number };
     }>(`/backtest/optimize/${encodeURIComponent(jobId)}`),
+
+  assistantChat: async function* (
+    messages: Array<{ role: string; content: string }>
+  ): AsyncGenerator<string> {
+    const res = await fetch(`${BASE}/assistant/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    });
+    if (res.status === 503) {
+      throw new Error(
+        "AI assistant not configured. Set MM_ASSISTANT__ANTHROPIC_API_KEY."
+      );
+    }
+    if (!res.ok) {
+      throw new Error(`Assistant error: ${res.status}`);
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE events from buffer
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ")) {
+          const jsonStr = trimmed.slice(6);
+          try {
+            const event = JSON.parse(jsonStr);
+            if (event.text) yield event.text;
+            if (event.error) throw new Error(event.error);
+          } catch {
+            // Skip malformed SSE lines
+          }
+        }
+      }
+    }
+  },
 };
