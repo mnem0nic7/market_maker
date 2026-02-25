@@ -9,6 +9,7 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
+use futures::StreamExt;
 use mm_backtest::{
     OptimizationConfig, OptimizationProgress, OptimizationResult, ParameterOptimizer,
 };
@@ -16,6 +17,8 @@ use mm_core::{Exchange, MetricsRegistry, Order, OrderBook, PortfolioRisk, Positi
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
+
+use crate::assistant::{AssistantConfig, ChatRequest, ClaudeClient, build_system_context};
 
 // ---------------------------------------------------------------------------
 // API Response wrapper
@@ -131,6 +134,9 @@ pub struct ApiState {
 
     /// Parameter optimisation jobs keyed by job_id.
     pub optimization_jobs: RwLock<HashMap<String, OptimizationJobState>>,
+
+    /// Optional Claude AI assistant configuration.
+    pub assistant_config: Option<AssistantConfig>,
 }
 
 /// State of an optimisation job (running, completed, or failed).
@@ -163,6 +169,7 @@ impl ApiState {
             metrics: None,
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
+            assistant_config: AssistantConfig::from_env(),
         })
     }
 
@@ -178,6 +185,7 @@ impl ApiState {
             metrics: Some(metrics),
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
+            assistant_config: AssistantConfig::from_env(),
         })
     }
 }
@@ -194,6 +202,7 @@ impl Default for ApiState {
             metrics: None,
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
+            assistant_config: AssistantConfig::from_env(),
         }
     }
 }
@@ -233,6 +242,8 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         // Backtest optimisation
         .route("/api/v1/backtest/optimize", post(start_optimization))
         .route("/api/v1/backtest/optimize/{job_id}", get(get_optimization_job))
+        // AI assistant
+        .route("/api/v1/assistant/chat", post(assistant_chat))
         .with_state(state)
 }
 
@@ -841,6 +852,57 @@ async fn get_optimization_job(
 }
 
 // ---------------------------------------------------------------------------
+// AI Assistant — SSE streaming chat
+// ---------------------------------------------------------------------------
+
+async fn assistant_chat(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<ChatRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let config = match &state.assistant_config {
+        Some(config) => config.clone(),
+        None => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiResponse {
+                    status: "error",
+                    data: None,
+                    error: Some("AI assistant not configured. Set MM_ASSISTANT__ANTHROPIC_API_KEY.".into()),
+                }),
+            ));
+        }
+    };
+
+    let client = ClaudeClient::new(config);
+    let system_ctx = build_system_context(&state).await;
+
+    let stream = client
+        .stream_chat(&system_ctx, &req.messages)
+        .await
+        .map_err(|e| {
+            ApiResponse::error(format!("assistant error: {e}"))
+        })?;
+
+    // Convert text chunks into SSE-formatted events.
+    let sse_stream = stream.map(|chunk| {
+        match chunk {
+            Ok(text) => Ok::<_, std::convert::Infallible>(
+                format!("data: {}\n\n", serde_json::json!({"text": text})),
+            ),
+            Err(e) => Ok(format!(
+                "data: {}\n\n",
+                serde_json::json!({"error": e.to_string()})
+            )),
+        }
+    });
+
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+        axum::body::Body::from_stream(sse_stream),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -849,6 +911,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use crate::assistant::ChatMessage;
     use mm_core::types::Symbol;
     use tower::ServiceExt;
 
@@ -1132,5 +1195,37 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- AI Assistant tests ---
+
+    #[tokio::test]
+    async fn assistant_returns_503_without_api_key() {
+        // Ensure no API key is set so assistant_config will be None.
+        std::env::remove_var("MM_ASSISTANT__ANTHROPIC_API_KEY");
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let body = serde_json::to_string(&ChatRequest {
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            }],
+        })
+        .unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/assistant/chat")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

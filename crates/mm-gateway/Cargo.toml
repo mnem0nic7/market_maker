@@ -21,6 +21,9 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
+bytes = { workspace = true }
+reqwest = { workspace = true }
+async-stream = { workspace = true }
 prometheus = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
