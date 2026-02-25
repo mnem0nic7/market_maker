@@ -43,8 +43,10 @@ use mm_risk::{
     PositionLimitCheck, PositionLimitConfig, RateLimitCheck, RateLimitConfig, RiskEngine,
 };
 use mm_strategy::{
-    AvellanedaStoikovConfig, AvellanedaStoikovStrategy, GridConfig, GridStrategy, SpreadConfig,
-    SpreadStrategy, StrategyEngine,
+    AvellanedaStoikovConfig, AvellanedaStoikovStrategy, GridConfig, GridStrategy,
+    MeanReversionConfig, MeanReversionStrategy, MomentumConfig, MomentumStrategy, SpreadConfig,
+    SpreadStrategy, StatArbConfig, StatArbStrategy, StrategyEngine, TwapConfig, TwapStrategy,
+    VwapConfig, VwapStrategy,
 };
 
 use crate::config::{parse_exchange, parse_symbol};
@@ -368,6 +370,112 @@ async fn main() -> Result<()> {
                 grid_cfg.exchange = exchange;
                 grid_cfg.symbol = symbol.clone();
                 strategy_engine.add_strategy(Box::new(GridStrategy::new(grid_cfg)))
+            }
+            "twap" => {
+                let mut twap_cfg: TwapConfig =
+                    serde_json::from_value(strat_cfg.params.clone()).unwrap_or_else(|e| {
+                        warn!(error = %e, "failed to parse TWAP params, using defaults");
+                        serde_json::from_value(serde_json::json!({
+                            "strategy_id": strat_cfg.strategy_id,
+                            "exchange": exchange,
+                            "symbol": symbol,
+                            "target_quantity": "1.0",
+                            "duration_secs": 3600,
+                            "slice_interval_secs": 60,
+                            "side": "Buy",
+                            "max_deviation_bps": "10"
+                        }))
+                        .expect("default TWAP config should parse")
+                    });
+                twap_cfg.strategy_id = strat_cfg.strategy_id.clone();
+                twap_cfg.exchange = exchange;
+                twap_cfg.symbol = symbol.clone();
+                strategy_engine.add_strategy(Box::new(TwapStrategy::new(twap_cfg)))
+            }
+            "vwap" => {
+                let mut vwap_cfg: VwapConfig =
+                    serde_json::from_value(strat_cfg.params.clone()).unwrap_or_else(|e| {
+                        warn!(error = %e, "failed to parse VWAP params, using defaults");
+                        serde_json::from_value(serde_json::json!({
+                            "strategy_id": strat_cfg.strategy_id,
+                            "exchange": exchange,
+                            "symbol": symbol,
+                            "target_quantity": "1.0",
+                            "duration_secs": 3600,
+                            "side": "Buy",
+                            "volume_profile": ["0.1", "0.2", "0.3", "0.25", "0.15"],
+                            "max_deviation_bps": "10"
+                        }))
+                        .expect("default VWAP config should parse")
+                    });
+                vwap_cfg.strategy_id = strat_cfg.strategy_id.clone();
+                vwap_cfg.exchange = exchange;
+                vwap_cfg.symbol = symbol.clone();
+                strategy_engine.add_strategy(Box::new(VwapStrategy::new(vwap_cfg)))
+            }
+            "momentum" => {
+                let mut momentum_cfg: MomentumConfig =
+                    serde_json::from_value(strat_cfg.params.clone()).unwrap_or_else(|e| {
+                        warn!(error = %e, "failed to parse Momentum params, using defaults");
+                        serde_json::from_value(serde_json::json!({
+                            "strategy_id": strat_cfg.strategy_id,
+                            "exchange": exchange,
+                            "symbol": symbol,
+                            "lookback_periods": 20,
+                            "entry_threshold_bps": "50",
+                            "exit_threshold_bps": "10",
+                            "order_size": "0.01",
+                            "trailing_stop_bps": "30",
+                            "max_position": "1.0"
+                        }))
+                        .expect("default Momentum config should parse")
+                    });
+                momentum_cfg.strategy_id = strat_cfg.strategy_id.clone();
+                momentum_cfg.exchange = exchange;
+                momentum_cfg.symbol = symbol.clone();
+                strategy_engine.add_strategy(Box::new(MomentumStrategy::new(momentum_cfg)))
+            }
+            "mean_reversion" => {
+                let mut mr_cfg: MeanReversionConfig =
+                    serde_json::from_value(strat_cfg.params.clone()).unwrap_or_else(|e| {
+                        warn!(error = %e, "failed to parse Mean Reversion params, using defaults");
+                        serde_json::from_value(serde_json::json!({
+                            "strategy_id": strat_cfg.strategy_id,
+                            "exchange": exchange,
+                            "symbol": symbol,
+                            "window_periods": 20,
+                            "num_std_dev": "2.0",
+                            "order_size": "0.01",
+                            "max_position": "1.0",
+                            "exit_at_mean": true
+                        }))
+                        .expect("default Mean Reversion config should parse")
+                    });
+                mr_cfg.strategy_id = strat_cfg.strategy_id.clone();
+                mr_cfg.exchange = exchange;
+                mr_cfg.symbol = symbol.clone();
+                strategy_engine.add_strategy(Box::new(MeanReversionStrategy::new(mr_cfg)))
+            }
+            "stat_arb" => {
+                let mut sa_cfg: StatArbConfig =
+                    serde_json::from_value(strat_cfg.params.clone()).unwrap_or_else(|e| {
+                        warn!(error = %e, "failed to parse Stat Arb params, using defaults");
+                        serde_json::from_value(serde_json::json!({
+                            "strategy_id": strat_cfg.strategy_id,
+                            "leg_a_exchange": exchange,
+                            "leg_a_symbol": symbol,
+                            "leg_b_exchange": exchange,
+                            "leg_b_symbol": symbol,
+                            "lookback_periods": 20,
+                            "entry_z_score": "2.0",
+                            "exit_z_score": "0.5",
+                            "order_size": "0.01",
+                            "max_position": "1.0"
+                        }))
+                        .expect("default Stat Arb config should parse")
+                    });
+                sa_cfg.strategy_id = strat_cfg.strategy_id.clone();
+                strategy_engine.add_strategy(Box::new(StatArbStrategy::new(sa_cfg)))
             }
             unknown => {
                 warn!(

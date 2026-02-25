@@ -19,7 +19,9 @@ use mm_core::traits::Strategy;
 use mm_core::{Exchange, PriceLevel, Side, Symbol};
 use mm_strategy::{
     AvellanedaStoikovConfig, AvellanedaStoikovStrategy, GridConfig, GridStrategy, GridType,
-    SpreadConfig, SpreadStrategy,
+    MeanReversionConfig, MeanReversionStrategy, MomentumConfig, MomentumStrategy, SpreadConfig,
+    SpreadStrategy, StatArbConfig, StatArbStrategy, TwapConfig, TwapStrategy, VwapConfig,
+    VwapStrategy,
 };
 
 // ---------------------------------------------------------------------------
@@ -346,9 +348,77 @@ fn create_strategy(cfg: &CliConfig) -> Result<Box<dyn Strategy>> {
             };
             Ok(Box::new(AvellanedaStoikovStrategy::new(as_config)))
         }
+        "twap" => {
+            let twap_config = TwapConfig {
+                strategy_id: "backtest-twap".to_string(),
+                exchange,
+                symbol,
+                target_quantity: cfg.order_size * Decimal::from(cfg.num_levels as u64 * 10),
+                duration_secs: 3600,
+                slice_interval_secs: 60,
+                side: Side::Buy,
+                max_deviation_bps: cfg.spread_bps,
+            };
+            Ok(Box::new(TwapStrategy::new(twap_config)))
+        }
+        "vwap" => {
+            let vwap_config = VwapConfig {
+                strategy_id: "backtest-vwap".to_string(),
+                exchange,
+                symbol,
+                target_quantity: cfg.order_size * Decimal::from(cfg.num_levels as u64 * 10),
+                duration_secs: 3600,
+                side: Side::Buy,
+                volume_profile: vec![dec!(0.1), dec!(0.2), dec!(0.3), dec!(0.25), dec!(0.15)],
+                max_deviation_bps: cfg.spread_bps,
+            };
+            Ok(Box::new(VwapStrategy::new(vwap_config)))
+        }
+        "momentum" => {
+            let momentum_config = MomentumConfig {
+                strategy_id: "backtest-momentum".to_string(),
+                exchange,
+                symbol,
+                lookback_periods: cfg.num_levels.max(2),
+                entry_threshold_bps: cfg.spread_bps * dec!(5),
+                exit_threshold_bps: cfg.spread_bps,
+                order_size: cfg.order_size,
+                trailing_stop_bps: cfg.spread_bps * dec!(3),
+                max_position: cfg.order_size * Decimal::from(cfg.num_levels as u64 * 2),
+            };
+            Ok(Box::new(MomentumStrategy::new(momentum_config)))
+        }
+        "mean_reversion" => {
+            let mr_config = MeanReversionConfig {
+                strategy_id: "backtest-mean-reversion".to_string(),
+                exchange,
+                symbol,
+                window_periods: cfg.num_levels.max(2),
+                num_std_dev: dec!(2),
+                order_size: cfg.order_size,
+                max_position: cfg.order_size * Decimal::from(cfg.num_levels as u64 * 2),
+                exit_at_mean: true,
+            };
+            Ok(Box::new(MeanReversionStrategy::new(mr_config)))
+        }
+        "stat_arb" => {
+            let sa_config = StatArbConfig {
+                strategy_id: "backtest-stat-arb".to_string(),
+                leg_a_exchange: exchange,
+                leg_a_symbol: symbol.clone(),
+                leg_b_exchange: exchange,
+                leg_b_symbol: symbol,
+                lookback_periods: cfg.num_levels.max(2),
+                entry_z_score: dec!(2),
+                exit_z_score: dec!(0.5),
+                order_size: cfg.order_size,
+                max_position: cfg.order_size * Decimal::from(cfg.num_levels as u64 * 2),
+            };
+            Ok(Box::new(StatArbStrategy::new(sa_config)))
+        }
         other => {
             anyhow::bail!(
-                "unknown strategy type: '{}'. Supported: spread, grid, avellaneda",
+                "unknown strategy type: '{}'. Supported: spread, grid, avellaneda, twap, vwap, momentum, mean_reversion, stat_arb",
                 other
             );
         }
