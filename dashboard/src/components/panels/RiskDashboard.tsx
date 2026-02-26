@@ -26,7 +26,7 @@ function MetricRow({ label, value, colorClass = "text-text-primary" }: MetricRow
 }
 
 export function RiskDashboardPanel() {
-  const { risk } = useDashboard();
+  const { risk, loading: storeLoading } = useDashboard();
   const [killSwitchActive, setKillSwitchActive] = useState(false);
   const [confirmArm, setConfirmArm] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -92,6 +92,15 @@ export function RiskDashboardPanel() {
               value={risk.total_var_99}
               colorClass="text-accent-red"
             />
+          </div>
+        ) : storeLoading ? (
+          <div className="flex flex-col gap-2 animate-pulse">
+            <div className="h-3 w-full bg-bg-secondary rounded" />
+            <div className="h-3 w-4/5 bg-bg-secondary rounded" />
+            <div className="h-3 w-3/5 bg-bg-secondary rounded" />
+            <div className="h-3 w-full bg-bg-secondary rounded" />
+            <div className="h-3 w-2/3 bg-bg-secondary rounded" />
+            <div className="h-3 w-3/4 bg-bg-secondary rounded" />
           </div>
         ) : (
           <p className="text-text-muted text-sm">No risk data available</p>

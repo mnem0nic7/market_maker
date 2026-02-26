@@ -99,7 +99,7 @@ function MetricsDetail({ m }: { m: StrategyMetrics }) {
 }
 
 export function StrategiesPanel() {
-  const { strategies, metrics } = useDashboard();
+  const { strategies, metrics, loading: storeLoading } = useDashboard();
   const dispatch = useDashboardDispatch();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
@@ -157,6 +157,15 @@ export function StrategiesPanel() {
     },
     [optimizeTarget, dispatch]
   );
+
+  if (storeLoading) {
+    return (
+      <div className="flex flex-col gap-2 animate-pulse">
+        <div className="h-10 w-full bg-bg-secondary rounded-lg" />
+        <div className="h-10 w-full bg-bg-secondary rounded-lg" />
+      </div>
+    );
+  }
 
   if (strategies.length === 0) {
     return <p className="text-text-muted text-sm">No strategies configured</p>;
