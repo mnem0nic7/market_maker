@@ -130,6 +130,12 @@ services:
       timescaledb:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # gateway — REST / WebSocket API server
@@ -185,6 +191,11 @@ services:
       timescaledb:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f data-pipeline || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 # ---------------------------------------------------------------------------
 # Volumes
