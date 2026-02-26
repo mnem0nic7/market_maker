@@ -504,7 +504,7 @@ async fn main() -> Result<()> {
     );
 
     // ----- (j) Initialize gateway (REST API + WebSocket) -----
-    let metrics = Arc::new(MetricsRegistry::new());
+    let metrics = Arc::new(MetricsRegistry::new().expect("Failed to initialize metrics"));
     let api_state = ApiState::with_param_updates(
         Arc::clone(&metrics),
         Arc::clone(&strategy_engine_shared),

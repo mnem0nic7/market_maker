@@ -9,6 +9,8 @@ use prometheus::{
     TextEncoder,
 };
 
+use crate::errors::MmError;
+
 // ---------------------------------------------------------------------------
 // MetricsRegistry
 // ---------------------------------------------------------------------------
@@ -71,7 +73,10 @@ pub struct MetricsRegistry {
 
 impl MetricsRegistry {
     /// Create a new registry with all metrics pre-registered.
-    pub fn new() -> Self {
+    ///
+    /// Returns an error if any metric fails to register with the Prometheus
+    /// registry (e.g. due to a duplicate metric name).
+    pub fn new() -> Result<Self, MmError> {
         let registry = Registry::new();
 
         // -- Counters (using GaugeVec so we can call .inc()) --
@@ -188,40 +193,88 @@ impl MetricsRegistry {
         .expect("metric: order_latency");
 
         // Register everything.
-        registry.register(Box::new(orders_total.clone())).unwrap();
-        registry.register(Box::new(fills_total.clone())).unwrap();
+        registry
+            .register(Box::new(orders_total.clone()))
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register orders_total metric: {e}"))
+            })?;
+        registry
+            .register(Box::new(fills_total.clone()))
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register fills_total metric: {e}"))
+            })?;
         registry
             .register(Box::new(risk_checks_total.clone()))
-            .unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register risk_checks_total metric: {e}"))
+            })?;
         registry
             .register(Box::new(position_quantity.clone()))
-            .unwrap();
-        registry.register(Box::new(pnl_realized.clone())).unwrap();
-        registry.register(Box::new(pnl_unrealized.clone())).unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register position_quantity metric: {e}"))
+            })?;
+        registry
+            .register(Box::new(pnl_realized.clone()))
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register pnl_realized metric: {e}"))
+            })?;
+        registry
+            .register(Box::new(pnl_unrealized.clone()))
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register pnl_unrealized metric: {e}"))
+            })?;
         registry
             .register(Box::new(order_book_spread_bps.clone()))
-            .unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!(
+                    "failed to register order_book_spread_bps metric: {e}"
+                ))
+            })?;
         registry
             .register(Box::new(kill_switch_active.clone()))
-            .unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register kill_switch_active metric: {e}"))
+            })?;
         registry
             .register(Box::new(websocket_connected.clone()))
-            .unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!(
+                    "failed to register websocket_connected metric: {e}"
+                ))
+            })?;
         registry
             .register(Box::new(api_requests_total.clone()))
-            .unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register api_requests_total metric: {e}"))
+            })?;
         registry
             .register(Box::new(api_request_duration_seconds.clone()))
-            .unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!(
+                    "failed to register api_request_duration_seconds metric: {e}"
+                ))
+            })?;
         registry
             .register(Box::new(ws_active_connections.clone()))
-            .unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!(
+                    "failed to register ws_active_connections metric: {e}"
+                ))
+            })?;
         registry
             .register(Box::new(strategy_tick_duration.clone()))
-            .unwrap();
-        registry.register(Box::new(order_latency.clone())).unwrap();
+            .map_err(|e| {
+                MmError::Internal(format!(
+                    "failed to register strategy_tick_duration metric: {e}"
+                ))
+            })?;
+        registry
+            .register(Box::new(order_latency.clone()))
+            .map_err(|e| {
+                MmError::Internal(format!("failed to register order_latency metric: {e}"))
+            })?;
 
-        Self {
+        Ok(Self {
             registry,
             orders_total,
             fills_total,
@@ -237,7 +290,7 @@ impl MetricsRegistry {
             ws_active_connections,
             strategy_tick_duration,
             order_latency,
-        }
+        })
     }
 
     /// Encode all metrics as Prometheus text exposition format.
@@ -255,7 +308,7 @@ impl MetricsRegistry {
 
 impl Default for MetricsRegistry {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("failed to initialize default MetricsRegistry")
     }
 }
 
@@ -269,7 +322,7 @@ mod tests {
 
     #[test]
     fn metrics_registry_creates_successfully() {
-        let registry = MetricsRegistry::new();
+        let registry = MetricsRegistry::new().unwrap();
 
         // Increment a counter and verify it serializes.
         registry
@@ -284,7 +337,7 @@ mod tests {
 
     #[test]
     fn metrics_encode_contains_all_families() {
-        let registry = MetricsRegistry::new();
+        let registry = MetricsRegistry::new().unwrap();
 
         // GaugeVec / HistogramVec families only appear in the text output
         // once at least one label set has been initialised.
@@ -349,5 +402,86 @@ mod tests {
         assert!(output.contains("mm_api_requests_total"));
         assert!(output.contains("mm_api_request_duration_seconds"));
         assert!(output.contains("mm_ws_active_connections"));
+    }
+
+    #[test]
+    fn test_metrics_registry_creation() {
+        // Verify that MetricsRegistry::new() succeeds and returns Ok.
+        let result = MetricsRegistry::new();
+        assert!(
+            result.is_ok(),
+            "MetricsRegistry::new() should succeed, got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_metrics_registry_has_expected_metrics() {
+        // Verify key metrics exist by gathering from the registry
+        // and checking that the expected metric families are present.
+        //
+        // Prometheus only includes vector metrics in gather() output once
+        // at least one label set has been initialised, so we touch each one.
+        let m = MetricsRegistry::new().unwrap();
+
+        m.orders_total
+            .with_label_values(&["test", "buy", "submitted"])
+            .inc();
+        m.fills_total.with_label_values(&["test", "buy"]).inc();
+        m.risk_checks_total
+            .with_label_values(&["test", "pass"])
+            .inc();
+        m.position_quantity
+            .with_label_values(&["test", "BTC/USD"])
+            .set(0.0);
+        m.pnl_realized
+            .with_label_values(&["test", "BTC/USD"])
+            .set(0.0);
+        m.pnl_unrealized
+            .with_label_values(&["test", "BTC/USD"])
+            .set(0.0);
+        m.order_book_spread_bps
+            .with_label_values(&["test", "BTC/USD"])
+            .set(0.0);
+        m.websocket_connected.with_label_values(&["test"]).set(0.0);
+        m.api_requests_total
+            .with_label_values(&["/health", "GET", "200"])
+            .inc();
+        m.api_request_duration_seconds
+            .with_label_values(&["/health", "GET"])
+            .observe(0.001);
+        m.strategy_tick_duration
+            .with_label_values(&["test"])
+            .observe(0.001);
+        m.order_latency.with_label_values(&["test"]).observe(0.001);
+
+        let families = m.registry.gather();
+        let family_names: Vec<&str> = families.iter().map(|f| f.get_name()).collect();
+
+        let expected = [
+            "mm_orders_total",
+            "mm_fills_total",
+            "mm_risk_checks_total",
+            "mm_position_quantity",
+            "mm_pnl_realized",
+            "mm_pnl_unrealized",
+            "mm_order_book_spread_bps",
+            "mm_kill_switch_active",
+            "mm_websocket_connected",
+            "mm_api_requests_total",
+            "mm_api_request_duration_seconds",
+            "mm_ws_active_connections",
+            "mm_strategy_tick_duration_seconds",
+            "mm_order_latency_seconds",
+        ];
+
+        for name in &expected {
+            assert!(
+                family_names.contains(name),
+                "expected metric family '{}' not found in registry; found: {:?}",
+                name,
+                family_names
+            );
+        }
     }
 }
