@@ -64,6 +64,10 @@ pub enum MmError {
     #[error("stale data: last update was {age_ms}ms ago (threshold: {threshold_ms}ms)")]
     StaleData { age_ms: u64, threshold_ms: u64 },
 
+    // -- DEX safety --
+    #[error("DEX connector not production-ready ({exchange}): {message}")]
+    DexNotReady { exchange: Exchange, message: String },
+
     // -- Infrastructure --
     #[error("database error: {0}")]
     Database(String),
