@@ -1,0 +1,1343 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - heading "MARKET MAKER" [level=1] [ref=e4]
+      - generic [ref=e6]: CONNECTED
+    - generic [ref=e10]:
+      - generic [ref=e12]:
+        - generic [ref=e14]: Market Data
+        - table [ref=e163]:
+          - rowgroup [ref=e164]:
+            - row "Symbol Exchange Bid Ask Mid Spread" [ref=e165]:
+              - columnheader "Symbol" [ref=e166]
+              - columnheader "Exchange" [ref=e167]
+              - columnheader "Bid" [ref=e168]
+              - columnheader "Ask" [ref=e169]
+              - columnheader "Mid" [ref=e170]
+              - columnheader "Spread" [ref=e171]
+          - rowgroup [ref=e172]:
+            - row "BTC/USDT Binance 68234.38000000 68261.65000000 68248.01500000 4.0 bps" [ref=e1524]:
+              - cell "BTC/USDT" [ref=e174]
+              - cell "Binance" [ref=e175]
+              - cell "68234.38000000" [ref=e1525]
+              - cell "68261.65000000" [ref=e1526]
+              - cell "68248.01500000" [ref=e1527]
+              - cell "4.0 bps" [ref=e1528]
+            - row "ETH/USDT Binance 2067.90000000 2068.48000000 2068.19000000 2.8 bps" [ref=e1529]:
+              - cell "ETH/USDT" [ref=e181]
+              - cell "Binance" [ref=e182]
+              - cell "2067.90000000" [ref=e1530]
+              - cell "2068.48000000" [ref=e1531]
+              - cell "2068.19000000" [ref=e1532]
+              - cell "2.8 bps" [ref=e1533]
+      - generic [ref=e19]:
+        - generic [ref=e21]: Positions & PnL
+        - generic [ref=e23]:
+          - generic [ref=e24]:
+            - generic [ref=e25]: "Positions: 0"
+            - generic [ref=e26]: "Unrealized: 0.0000"
+            - generic [ref=e27]: "Realized: 0.0000"
+          - paragraph [ref=e28]: No open positions
+      - generic [ref=e31]:
+        - generic [ref=e33]: Order Book
+        - generic [ref=e35]:
+          - combobox [ref=e36]:
+            - option "Binance:BTC/USDT" [selected]
+            - option "Binance:ETH/USDT"
+          - generic [ref=e187]:
+            - generic [ref=e188]:
+              - generic [ref=e189]: ASKS
+              - generic [ref=e1534]:
+                - generic [ref=e1535]: "68269.75000000"
+                - generic [ref=e1536]: "0.0000"
+              - generic [ref=e1537]:
+                - generic [ref=e1538]: "68268.31000000"
+                - generic [ref=e1539]: "0.0000"
+              - generic [ref=e1540]:
+                - generic [ref=e1541]: "68262.25000000"
+                - generic [ref=e1542]: "0.0000"
+              - generic [ref=e1543]:
+                - generic [ref=e1545]: "68261.92000000"
+                - generic [ref=e1546]: "0.0079"
+            - generic [ref=e198]: "Spread: N/A"
+            - generic [ref=e200]: BIDS
+      - generic [ref=e40]:
+        - generic [ref=e42]: Order Entry
+        - generic [ref=e44]:
+          - generic [ref=e45]:
+            - generic [ref=e46]: Exchange
+            - combobox [ref=e47]:
+              - option "Binance" [selected]
+              - option "Coinbase"
+              - option "Kraken"
+              - option "Alpaca"
+              - option "Simulated"
+          - generic [ref=e48]:
+            - generic [ref=e49]: Symbol
+            - textbox "BTC/USDT" [ref=e50]
+          - generic [ref=e51]:
+            - generic [ref=e52]: Side
+            - generic [ref=e53]:
+              - button "BUY" [ref=e54]
+              - button "SELL" [ref=e55]
+          - generic [ref=e56]:
+            - generic [ref=e57]: Order Type
+            - generic [ref=e58]:
+              - button "LIMIT" [ref=e59]
+              - button "MARKET" [ref=e60]
+          - generic [ref=e61]:
+            - generic [ref=e62]: Price
+            - textbox "0.00" [ref=e63]
+          - generic [ref=e64]:
+            - generic [ref=e65]: Quantity
+            - textbox "0.00" [ref=e66]
+          - button "BUY ..." [ref=e67]
+      - generic [ref=e70]:
+        - generic [ref=e72]: Strategies
+        - generic [ref=e201]:
+          - generic [ref=e202]:
+            - generic [ref=e203]:
+              - generic [ref=e205]:
+                - generic [ref=e206]: spread-test-1
+                - generic [ref=e207]: spread | Coinbase | BTC/USD
+              - button "[+]" [ref=e208]
+              - button "OPT" [ref=e209]
+              - button "START" [ref=e210]
+            - generic [ref=e211]:
+              - generic [ref=e212]:
+                - generic [ref=e213]: "PnL:"
+                - generic [ref=e214]: "+0.0000"
+              - generic [ref=e215]:
+                - generic [ref=e216]: "Fills:"
+                - generic [ref=e217]: "0"
+              - generic [ref=e218]:
+                - generic [ref=e219]: "Vol:"
+                - generic [ref=e220]: "0.0000"
+              - generic [ref=e221]:
+                - generic [ref=e222]: "Up:"
+                - generic [ref=e223]: 00:14:40
+          - generic [ref=e1480]:
+            - generic [ref=e1482]:
+              - generic [ref=e1483]: spread-2h9m8y
+              - generic [ref=e1484]: spread | Binance | BTC/USDT
+            - button "[+]" [ref=e1485]
+            - button "OPT" [ref=e1486]
+            - button "START" [ref=e1487]
+      - generic [ref=e77]:
+        - generic [ref=e79]: Price Chart
+        - generic [ref=e81]:
+          - combobox [ref=e82]:
+            - option "Binance:BTC/USDT" [selected]
+            - option "Binance:ETH/USDT"
+          - generic [ref=e83]:
+            - table [ref=e225]:
+              - row [ref=e226]:
+                - cell
+                - cell [ref=e227]:
+                  - link "Charting by TradingView" [ref=e231] [cursor=pointer]:
+                    - /url: https://www.tradingview.com/?utm_medium=lwc-link&utm_campaign=lwc-chart&utm_source=localhost/
+                    - img [ref=e232]
+                - cell [ref=e236]
+              - row [ref=e240]:
+                - cell
+                - cell [ref=e241]
+                - cell [ref=e245]
+            - table [ref=e249]:
+              - row [ref=e250]:
+                - cell
+                - cell [ref=e251]:
+                  - link "Charting by TradingView" [ref=e255] [cursor=pointer]:
+                    - /url: https://www.tradingview.com/?utm_medium=lwc-link&utm_campaign=lwc-chart&utm_source=localhost/
+                    - img [ref=e256]
+                - cell [ref=e260]
+              - row [ref=e264]:
+                - cell
+                - cell [ref=e265]
+                - cell [ref=e269]
+      - generic [ref=e87]:
+        - generic [ref=e89]: Risk Dashboard
+        - generic [ref=e91]:
+          - paragraph [ref=e93]: No risk data available
+          - generic [ref=e94]:
+            - generic [ref=e95]: Emergency Kill Switch
+            - button "ACTIVATE KILL SWITCH" [ref=e96]
+      - generic [ref=e99]:
+        - generic [ref=e101]: Active Orders
+        - table [ref=e273]:
+          - rowgroup [ref=e274]:
+            - row "ID Exchange Symbol Side Type Price Qty Filled Status" [ref=e275]:
+              - columnheader "ID" [ref=e276]
+              - columnheader "Exchange" [ref=e277]
+              - columnheader "Symbol" [ref=e278]
+              - columnheader "Side" [ref=e279]
+              - columnheader "Type" [ref=e280]
+              - columnheader "Price" [ref=e281]
+              - columnheader "Qty" [ref=e282]
+              - columnheader "Filled" [ref=e283]
+              - columnheader "Status" [ref=e284]
+          - rowgroup [ref=e285]:
+            - row "325b4e09 Coinbase BTC/USD SELL Limit 68556.78460000000 0.005 0 Submitted" [ref=e286]:
+              - cell "325b4e09" [ref=e287]
+              - cell "Coinbase" [ref=e288]
+              - cell "BTC/USD" [ref=e289]
+              - cell "SELL" [ref=e290]
+              - cell "Limit" [ref=e291]
+              - cell "68556.78460000000" [ref=e292]
+              - cell "0.005" [ref=e293]
+              - cell "0" [ref=e294]
+              - cell "Submitted" [ref=e295]
+            - row "e0e9e994 Coinbase BTC/USD BUY Limit 68010.51540000000 0.005 0 Submitted" [ref=e296]:
+              - cell "e0e9e994" [ref=e297]
+              - cell "Coinbase" [ref=e298]
+              - cell "BTC/USD" [ref=e299]
+              - cell "BUY" [ref=e300]
+              - cell "Limit" [ref=e301]
+              - cell "68010.51540000000" [ref=e302]
+              - cell "0.005" [ref=e303]
+              - cell "0" [ref=e304]
+              - cell "Submitted" [ref=e305]
+            - row "34ef1025 Coinbase BTC/USD SELL Limit 68420.21730000000 0.005 0 Submitted" [ref=e306]:
+              - cell "34ef1025" [ref=e307]
+              - cell "Coinbase" [ref=e308]
+              - cell "BTC/USD" [ref=e309]
+              - cell "SELL" [ref=e310]
+              - cell "Limit" [ref=e311]
+              - cell "68420.21730000000" [ref=e312]
+              - cell "0.005" [ref=e313]
+              - cell "0" [ref=e314]
+              - cell "Submitted" [ref=e315]
+            - row "073d2379 Coinbase BTC/USD BUY Limit 68147.08270000000 0.005 0 Submitted" [ref=e316]:
+              - cell "073d2379" [ref=e317]
+              - cell "Coinbase" [ref=e318]
+              - cell "BTC/USD" [ref=e319]
+              - cell "BUY" [ref=e320]
+              - cell "Limit" [ref=e321]
+              - cell "68147.08270000000" [ref=e322]
+              - cell "0.005" [ref=e323]
+              - cell "0" [ref=e324]
+              - cell "Submitted" [ref=e325]
+            - row "e42d9991 Coinbase BTC/USD SELL Limit 2076.6685800 0.005 0 Submitted" [ref=e326]:
+              - cell "e42d9991" [ref=e327]
+              - cell "Coinbase" [ref=e328]
+              - cell "BTC/USD" [ref=e329]
+              - cell "SELL" [ref=e330]
+              - cell "Limit" [ref=e331]
+              - cell "2076.6685800" [ref=e332]
+              - cell "0.005" [ref=e333]
+              - cell "0" [ref=e334]
+              - cell "Submitted" [ref=e335]
+            - row "1a255deb Coinbase BTC/USD BUY Limit 2060.1214200 0.005 0 Submitted" [ref=e336]:
+              - cell "1a255deb" [ref=e337]
+              - cell "Coinbase" [ref=e338]
+              - cell "BTC/USD" [ref=e339]
+              - cell "BUY" [ref=e340]
+              - cell "Limit" [ref=e341]
+              - cell "2060.1214200" [ref=e342]
+              - cell "0.005" [ref=e343]
+              - cell "0" [ref=e344]
+              - cell "Submitted" [ref=e345]
+            - row "8d04ffcd Coinbase BTC/USD SELL Limit 2072.5317900 0.005 0 Submitted" [ref=e346]:
+              - cell "8d04ffcd" [ref=e347]
+              - cell "Coinbase" [ref=e348]
+              - cell "BTC/USD" [ref=e349]
+              - cell "SELL" [ref=e350]
+              - cell "Limit" [ref=e351]
+              - cell "2072.5317900" [ref=e352]
+              - cell "0.005" [ref=e353]
+              - cell "0" [ref=e354]
+              - cell "Submitted" [ref=e355]
+            - row "70df355d Coinbase BTC/USD BUY Limit 2064.2582100 0.005 0 Submitted" [ref=e356]:
+              - cell "70df355d" [ref=e357]
+              - cell "Coinbase" [ref=e358]
+              - cell "BTC/USD" [ref=e359]
+              - cell "BUY" [ref=e360]
+              - cell "Limit" [ref=e361]
+              - cell "2064.2582100" [ref=e362]
+              - cell "0.005" [ref=e363]
+              - cell "0" [ref=e364]
+              - cell "Submitted" [ref=e365]
+            - row "97979591 Coinbase BTC/USD SELL Limit 68597.37632 0.005 0 Submitted" [ref=e366]:
+              - cell "97979591" [ref=e367]
+              - cell "Coinbase" [ref=e368]
+              - cell "BTC/USD" [ref=e369]
+              - cell "SELL" [ref=e370]
+              - cell "Limit" [ref=e371]
+              - cell "68597.37632" [ref=e372]
+              - cell "0.005" [ref=e373]
+              - cell "0" [ref=e374]
+              - cell "Submitted" [ref=e375]
+            - row "67355c52 Coinbase BTC/USD BUY Limit 68050.78368 0.005 0 Submitted" [ref=e376]:
+              - cell "67355c52" [ref=e377]
+              - cell "Coinbase" [ref=e378]
+              - cell "BTC/USD" [ref=e379]
+              - cell "BUY" [ref=e380]
+              - cell "Limit" [ref=e381]
+              - cell "68050.78368" [ref=e382]
+              - cell "0.005" [ref=e383]
+              - cell "0" [ref=e384]
+              - cell "Submitted" [ref=e385]
+            - row "cfd95446 Coinbase BTC/USD SELL Limit 68460.72816 0.005 0 Submitted" [ref=e386]:
+              - cell "cfd95446" [ref=e387]
+              - cell "Coinbase" [ref=e388]
+              - cell "BTC/USD" [ref=e389]
+              - cell "SELL" [ref=e390]
+              - cell "Limit" [ref=e391]
+              - cell "68460.72816" [ref=e392]
+              - cell "0.005" [ref=e393]
+              - cell "0" [ref=e394]
+              - cell "Submitted" [ref=e395]
+            - row "72541a5d Coinbase BTC/USD BUY Limit 68187.43184 0.005 0 Submitted" [ref=e396]:
+              - cell "72541a5d" [ref=e397]
+              - cell "Coinbase" [ref=e398]
+              - cell "BTC/USD" [ref=e399]
+              - cell "BUY" [ref=e400]
+              - cell "Limit" [ref=e401]
+              - cell "68187.43184" [ref=e402]
+              - cell "0.005" [ref=e403]
+              - cell "0" [ref=e404]
+              - cell "Submitted" [ref=e405]
+            - row "7d9810e0 Coinbase BTC/USD SELL Limit 2076.87942000000 0.005 0 Submitted" [ref=e406]:
+              - cell "7d9810e0" [ref=e407]
+              - cell "Coinbase" [ref=e408]
+              - cell "BTC/USD" [ref=e409]
+              - cell "SELL" [ref=e410]
+              - cell "Limit" [ref=e411]
+              - cell "2076.87942000000" [ref=e412]
+              - cell "0.005" [ref=e413]
+              - cell "0" [ref=e414]
+              - cell "Submitted" [ref=e415]
+            - row "27cd930b Coinbase BTC/USD BUY Limit 2060.33058000000 0.005 0 Submitted" [ref=e416]:
+              - cell "27cd930b" [ref=e417]
+              - cell "Coinbase" [ref=e418]
+              - cell "BTC/USD" [ref=e419]
+              - cell "BUY" [ref=e420]
+              - cell "Limit" [ref=e421]
+              - cell "2060.33058000000" [ref=e422]
+              - cell "0.005" [ref=e423]
+              - cell "0" [ref=e424]
+              - cell "Submitted" [ref=e425]
+            - row "f00dc4ea Coinbase BTC/USD SELL Limit 2072.74221000000 0.005 0 Submitted" [ref=e426]:
+              - cell "f00dc4ea" [ref=e427]
+              - cell "Coinbase" [ref=e428]
+              - cell "BTC/USD" [ref=e429]
+              - cell "SELL" [ref=e430]
+              - cell "Limit" [ref=e431]
+              - cell "2072.74221000000" [ref=e432]
+              - cell "0.005" [ref=e433]
+              - cell "0" [ref=e434]
+              - cell "Submitted" [ref=e435]
+            - row "2dcae93b Coinbase BTC/USD BUY Limit 2064.46779000000 0.005 0 Submitted" [ref=e436]:
+              - cell "2dcae93b" [ref=e437]
+              - cell "Coinbase" [ref=e438]
+              - cell "BTC/USD" [ref=e439]
+              - cell "BUY" [ref=e440]
+              - cell "Limit" [ref=e441]
+              - cell "2064.46779000000" [ref=e442]
+              - cell "0.005" [ref=e443]
+              - cell "0" [ref=e444]
+              - cell "Submitted" [ref=e445]
+            - row "95302160 Coinbase BTC/USD SELL Limit 68556.78460000000 0.005 0 Submitted" [ref=e446]:
+              - cell "95302160" [ref=e447]
+              - cell "Coinbase" [ref=e448]
+              - cell "BTC/USD" [ref=e449]
+              - cell "SELL" [ref=e450]
+              - cell "Limit" [ref=e451]
+              - cell "68556.78460000000" [ref=e452]
+              - cell "0.005" [ref=e453]
+              - cell "0" [ref=e454]
+              - cell "Submitted" [ref=e455]
+            - row "e34c2df4 Coinbase BTC/USD BUY Limit 68010.51540000000 0.005 0 Submitted" [ref=e456]:
+              - cell "e34c2df4" [ref=e457]
+              - cell "Coinbase" [ref=e458]
+              - cell "BTC/USD" [ref=e459]
+              - cell "BUY" [ref=e460]
+              - cell "Limit" [ref=e461]
+              - cell "68010.51540000000" [ref=e462]
+              - cell "0.005" [ref=e463]
+              - cell "0" [ref=e464]
+              - cell "Submitted" [ref=e465]
+            - row "e59c93cd Coinbase BTC/USD SELL Limit 68420.21730000000 0.005 0 Submitted" [ref=e466]:
+              - cell "e59c93cd" [ref=e467]
+              - cell "Coinbase" [ref=e468]
+              - cell "BTC/USD" [ref=e469]
+              - cell "SELL" [ref=e470]
+              - cell "Limit" [ref=e471]
+              - cell "68420.21730000000" [ref=e472]
+              - cell "0.005" [ref=e473]
+              - cell "0" [ref=e474]
+              - cell "Submitted" [ref=e475]
+            - row "9466604e Coinbase BTC/USD BUY Limit 68147.08270000000 0.005 0 Submitted" [ref=e476]:
+              - cell "9466604e" [ref=e477]
+              - cell "Coinbase" [ref=e478]
+              - cell "BTC/USD" [ref=e479]
+              - cell "BUY" [ref=e480]
+              - cell "Limit" [ref=e481]
+              - cell "68147.08270000000" [ref=e482]
+              - cell "0.005" [ref=e483]
+              - cell "0" [ref=e484]
+              - cell "Submitted" [ref=e485]
+            - row "ec424fc3 Coinbase BTC/USD SELL Limit 2076.6685800 0.005 0 Submitted" [ref=e486]:
+              - cell "ec424fc3" [ref=e487]
+              - cell "Coinbase" [ref=e488]
+              - cell "BTC/USD" [ref=e489]
+              - cell "SELL" [ref=e490]
+              - cell "Limit" [ref=e491]
+              - cell "2076.6685800" [ref=e492]
+              - cell "0.005" [ref=e493]
+              - cell "0" [ref=e494]
+              - cell "Submitted" [ref=e495]
+            - row "52979b83 Coinbase BTC/USD BUY Limit 2060.1214200 0.005 0 Submitted" [ref=e496]:
+              - cell "52979b83" [ref=e497]
+              - cell "Coinbase" [ref=e498]
+              - cell "BTC/USD" [ref=e499]
+              - cell "BUY" [ref=e500]
+              - cell "Limit" [ref=e501]
+              - cell "2060.1214200" [ref=e502]
+              - cell "0.005" [ref=e503]
+              - cell "0" [ref=e504]
+              - cell "Submitted" [ref=e505]
+            - row "e13f608e Coinbase BTC/USD SELL Limit 2072.5317900 0.005 0 Submitted" [ref=e506]:
+              - cell "e13f608e" [ref=e507]
+              - cell "Coinbase" [ref=e508]
+              - cell "BTC/USD" [ref=e509]
+              - cell "SELL" [ref=e510]
+              - cell "Limit" [ref=e511]
+              - cell "2072.5317900" [ref=e512]
+              - cell "0.005" [ref=e513]
+              - cell "0" [ref=e514]
+              - cell "Submitted" [ref=e515]
+            - row "f0ce477c Coinbase BTC/USD BUY Limit 2064.2582100 0.005 0 Submitted" [ref=e516]:
+              - cell "f0ce477c" [ref=e517]
+              - cell "Coinbase" [ref=e518]
+              - cell "BTC/USD" [ref=e519]
+              - cell "BUY" [ref=e520]
+              - cell "Limit" [ref=e521]
+              - cell "2064.2582100" [ref=e522]
+              - cell "0.005" [ref=e523]
+              - cell "0" [ref=e524]
+              - cell "Submitted" [ref=e525]
+            - row "0ff898f5 Coinbase BTC/USD SELL Limit 68597.37632 0.005 0 Submitted" [ref=e526]:
+              - cell "0ff898f5" [ref=e527]
+              - cell "Coinbase" [ref=e528]
+              - cell "BTC/USD" [ref=e529]
+              - cell "SELL" [ref=e530]
+              - cell "Limit" [ref=e531]
+              - cell "68597.37632" [ref=e532]
+              - cell "0.005" [ref=e533]
+              - cell "0" [ref=e534]
+              - cell "Submitted" [ref=e535]
+            - row "1128959b Coinbase BTC/USD BUY Limit 68050.78368 0.005 0 Submitted" [ref=e536]:
+              - cell "1128959b" [ref=e537]
+              - cell "Coinbase" [ref=e538]
+              - cell "BTC/USD" [ref=e539]
+              - cell "BUY" [ref=e540]
+              - cell "Limit" [ref=e541]
+              - cell "68050.78368" [ref=e542]
+              - cell "0.005" [ref=e543]
+              - cell "0" [ref=e544]
+              - cell "Submitted" [ref=e545]
+            - row "84520993 Coinbase BTC/USD SELL Limit 68460.72816 0.005 0 Submitted" [ref=e546]:
+              - cell "84520993" [ref=e547]
+              - cell "Coinbase" [ref=e548]
+              - cell "BTC/USD" [ref=e549]
+              - cell "SELL" [ref=e550]
+              - cell "Limit" [ref=e551]
+              - cell "68460.72816" [ref=e552]
+              - cell "0.005" [ref=e553]
+              - cell "0" [ref=e554]
+              - cell "Submitted" [ref=e555]
+            - row "5658b1f3 Coinbase BTC/USD BUY Limit 68187.43184 0.005 0 Submitted" [ref=e556]:
+              - cell "5658b1f3" [ref=e557]
+              - cell "Coinbase" [ref=e558]
+              - cell "BTC/USD" [ref=e559]
+              - cell "BUY" [ref=e560]
+              - cell "Limit" [ref=e561]
+              - cell "68187.43184" [ref=e562]
+              - cell "0.005" [ref=e563]
+              - cell "0" [ref=e564]
+              - cell "Submitted" [ref=e565]
+            - row "c0fe82e4 Coinbase BTC/USD SELL Limit 2076.87942000000 0.005 0 Submitted" [ref=e566]:
+              - cell "c0fe82e4" [ref=e567]
+              - cell "Coinbase" [ref=e568]
+              - cell "BTC/USD" [ref=e569]
+              - cell "SELL" [ref=e570]
+              - cell "Limit" [ref=e571]
+              - cell "2076.87942000000" [ref=e572]
+              - cell "0.005" [ref=e573]
+              - cell "0" [ref=e574]
+              - cell "Submitted" [ref=e575]
+            - row "d7231b13 Coinbase BTC/USD BUY Limit 2060.33058000000 0.005 0 Submitted" [ref=e576]:
+              - cell "d7231b13" [ref=e577]
+              - cell "Coinbase" [ref=e578]
+              - cell "BTC/USD" [ref=e579]
+              - cell "BUY" [ref=e580]
+              - cell "Limit" [ref=e581]
+              - cell "2060.33058000000" [ref=e582]
+              - cell "0.005" [ref=e583]
+              - cell "0" [ref=e584]
+              - cell "Submitted" [ref=e585]
+            - row "15e99a4f Coinbase BTC/USD SELL Limit 2072.74221000000 0.005 0 Submitted" [ref=e586]:
+              - cell "15e99a4f" [ref=e587]
+              - cell "Coinbase" [ref=e588]
+              - cell "BTC/USD" [ref=e589]
+              - cell "SELL" [ref=e590]
+              - cell "Limit" [ref=e591]
+              - cell "2072.74221000000" [ref=e592]
+              - cell "0.005" [ref=e593]
+              - cell "0" [ref=e594]
+              - cell "Submitted" [ref=e595]
+            - row "0f66e8df Coinbase BTC/USD BUY Limit 2064.46779000000 0.005 0 Submitted" [ref=e596]:
+              - cell "0f66e8df" [ref=e597]
+              - cell "Coinbase" [ref=e598]
+              - cell "BTC/USD" [ref=e599]
+              - cell "BUY" [ref=e600]
+              - cell "Limit" [ref=e601]
+              - cell "2064.46779000000" [ref=e602]
+              - cell "0.005" [ref=e603]
+              - cell "0" [ref=e604]
+              - cell "Submitted" [ref=e605]
+            - row "c9f934f0 Coinbase BTC/USD SELL Limit 68556.78460000000 0.005 0 Submitted" [ref=e606]:
+              - cell "c9f934f0" [ref=e607]
+              - cell "Coinbase" [ref=e608]
+              - cell "BTC/USD" [ref=e609]
+              - cell "SELL" [ref=e610]
+              - cell "Limit" [ref=e611]
+              - cell "68556.78460000000" [ref=e612]
+              - cell "0.005" [ref=e613]
+              - cell "0" [ref=e614]
+              - cell "Submitted" [ref=e615]
+            - row "1ec80f81 Coinbase BTC/USD BUY Limit 68010.51540000000 0.005 0 Submitted" [ref=e616]:
+              - cell "1ec80f81" [ref=e617]
+              - cell "Coinbase" [ref=e618]
+              - cell "BTC/USD" [ref=e619]
+              - cell "BUY" [ref=e620]
+              - cell "Limit" [ref=e621]
+              - cell "68010.51540000000" [ref=e622]
+              - cell "0.005" [ref=e623]
+              - cell "0" [ref=e624]
+              - cell "Submitted" [ref=e625]
+            - row "ae22868e Coinbase BTC/USD SELL Limit 68420.21730000000 0.005 0 Submitted" [ref=e626]:
+              - cell "ae22868e" [ref=e627]
+              - cell "Coinbase" [ref=e628]
+              - cell "BTC/USD" [ref=e629]
+              - cell "SELL" [ref=e630]
+              - cell "Limit" [ref=e631]
+              - cell "68420.21730000000" [ref=e632]
+              - cell "0.005" [ref=e633]
+              - cell "0" [ref=e634]
+              - cell "Submitted" [ref=e635]
+            - row "29666608 Coinbase BTC/USD BUY Limit 68147.08270000000 0.005 0 Submitted" [ref=e636]:
+              - cell "29666608" [ref=e637]
+              - cell "Coinbase" [ref=e638]
+              - cell "BTC/USD" [ref=e639]
+              - cell "BUY" [ref=e640]
+              - cell "Limit" [ref=e641]
+              - cell "68147.08270000000" [ref=e642]
+              - cell "0.005" [ref=e643]
+              - cell "0" [ref=e644]
+              - cell "Submitted" [ref=e645]
+            - row "4bf7f5db Coinbase BTC/USD SELL Limit 2076.6685800 0.005 0 Submitted" [ref=e646]:
+              - cell "4bf7f5db" [ref=e647]
+              - cell "Coinbase" [ref=e648]
+              - cell "BTC/USD" [ref=e649]
+              - cell "SELL" [ref=e650]
+              - cell "Limit" [ref=e651]
+              - cell "2076.6685800" [ref=e652]
+              - cell "0.005" [ref=e653]
+              - cell "0" [ref=e654]
+              - cell "Submitted" [ref=e655]
+            - row "88cf2c2b Coinbase BTC/USD BUY Limit 2060.1214200 0.005 0 Submitted" [ref=e656]:
+              - cell "88cf2c2b" [ref=e657]
+              - cell "Coinbase" [ref=e658]
+              - cell "BTC/USD" [ref=e659]
+              - cell "BUY" [ref=e660]
+              - cell "Limit" [ref=e661]
+              - cell "2060.1214200" [ref=e662]
+              - cell "0.005" [ref=e663]
+              - cell "0" [ref=e664]
+              - cell "Submitted" [ref=e665]
+            - row "8e6ee41a Coinbase BTC/USD SELL Limit 2072.5317900 0.005 0 Submitted" [ref=e666]:
+              - cell "8e6ee41a" [ref=e667]
+              - cell "Coinbase" [ref=e668]
+              - cell "BTC/USD" [ref=e669]
+              - cell "SELL" [ref=e670]
+              - cell "Limit" [ref=e671]
+              - cell "2072.5317900" [ref=e672]
+              - cell "0.005" [ref=e673]
+              - cell "0" [ref=e674]
+              - cell "Submitted" [ref=e675]
+            - row "cc8470d4 Coinbase BTC/USD BUY Limit 2064.2582100 0.005 0 Submitted" [ref=e676]:
+              - cell "cc8470d4" [ref=e677]
+              - cell "Coinbase" [ref=e678]
+              - cell "BTC/USD" [ref=e679]
+              - cell "BUY" [ref=e680]
+              - cell "Limit" [ref=e681]
+              - cell "2064.2582100" [ref=e682]
+              - cell "0.005" [ref=e683]
+              - cell "0" [ref=e684]
+              - cell "Submitted" [ref=e685]
+            - row "23ca417a Coinbase BTC/USD SELL Limit 68597.37632 0.005 0 Submitted" [ref=e686]:
+              - cell "23ca417a" [ref=e687]
+              - cell "Coinbase" [ref=e688]
+              - cell "BTC/USD" [ref=e689]
+              - cell "SELL" [ref=e690]
+              - cell "Limit" [ref=e691]
+              - cell "68597.37632" [ref=e692]
+              - cell "0.005" [ref=e693]
+              - cell "0" [ref=e694]
+              - cell "Submitted" [ref=e695]
+            - row "91deee2f Coinbase BTC/USD BUY Limit 68050.78368 0.005 0 Submitted" [ref=e696]:
+              - cell "91deee2f" [ref=e697]
+              - cell "Coinbase" [ref=e698]
+              - cell "BTC/USD" [ref=e699]
+              - cell "BUY" [ref=e700]
+              - cell "Limit" [ref=e701]
+              - cell "68050.78368" [ref=e702]
+              - cell "0.005" [ref=e703]
+              - cell "0" [ref=e704]
+              - cell "Submitted" [ref=e705]
+            - row "42f94023 Coinbase BTC/USD SELL Limit 68460.72816 0.005 0 Submitted" [ref=e706]:
+              - cell "42f94023" [ref=e707]
+              - cell "Coinbase" [ref=e708]
+              - cell "BTC/USD" [ref=e709]
+              - cell "SELL" [ref=e710]
+              - cell "Limit" [ref=e711]
+              - cell "68460.72816" [ref=e712]
+              - cell "0.005" [ref=e713]
+              - cell "0" [ref=e714]
+              - cell "Submitted" [ref=e715]
+            - row "d7199ac2 Coinbase BTC/USD BUY Limit 68187.43184 0.005 0 Submitted" [ref=e716]:
+              - cell "d7199ac2" [ref=e717]
+              - cell "Coinbase" [ref=e718]
+              - cell "BTC/USD" [ref=e719]
+              - cell "BUY" [ref=e720]
+              - cell "Limit" [ref=e721]
+              - cell "68187.43184" [ref=e722]
+              - cell "0.005" [ref=e723]
+              - cell "0" [ref=e724]
+              - cell "Submitted" [ref=e725]
+            - row "a959889c Coinbase BTC/USD SELL Limit 2076.87942000000 0.005 0 Submitted" [ref=e726]:
+              - cell "a959889c" [ref=e727]
+              - cell "Coinbase" [ref=e728]
+              - cell "BTC/USD" [ref=e729]
+              - cell "SELL" [ref=e730]
+              - cell "Limit" [ref=e731]
+              - cell "2076.87942000000" [ref=e732]
+              - cell "0.005" [ref=e733]
+              - cell "0" [ref=e734]
+              - cell "Submitted" [ref=e735]
+            - row "679f914f Coinbase BTC/USD BUY Limit 2060.33058000000 0.005 0 Submitted" [ref=e736]:
+              - cell "679f914f" [ref=e737]
+              - cell "Coinbase" [ref=e738]
+              - cell "BTC/USD" [ref=e739]
+              - cell "BUY" [ref=e740]
+              - cell "Limit" [ref=e741]
+              - cell "2060.33058000000" [ref=e742]
+              - cell "0.005" [ref=e743]
+              - cell "0" [ref=e744]
+              - cell "Submitted" [ref=e745]
+            - row "4577a2be Coinbase BTC/USD SELL Limit 2072.74221000000 0.005 0 Submitted" [ref=e746]:
+              - cell "4577a2be" [ref=e747]
+              - cell "Coinbase" [ref=e748]
+              - cell "BTC/USD" [ref=e749]
+              - cell "SELL" [ref=e750]
+              - cell "Limit" [ref=e751]
+              - cell "2072.74221000000" [ref=e752]
+              - cell "0.005" [ref=e753]
+              - cell "0" [ref=e754]
+              - cell "Submitted" [ref=e755]
+            - row "3e1dcc77 Coinbase BTC/USD BUY Limit 2064.46779000000 0.005 0 Submitted" [ref=e756]:
+              - cell "3e1dcc77" [ref=e757]
+              - cell "Coinbase" [ref=e758]
+              - cell "BTC/USD" [ref=e759]
+              - cell "BUY" [ref=e760]
+              - cell "Limit" [ref=e761]
+              - cell "2064.46779000000" [ref=e762]
+              - cell "0.005" [ref=e763]
+              - cell "0" [ref=e764]
+              - cell "Submitted" [ref=e765]
+            - row "39fcd368 Coinbase BTC/USD SELL Limit 68556.78460000000 0.005 0 Submitted" [ref=e766]:
+              - cell "39fcd368" [ref=e767]
+              - cell "Coinbase" [ref=e768]
+              - cell "BTC/USD" [ref=e769]
+              - cell "SELL" [ref=e770]
+              - cell "Limit" [ref=e771]
+              - cell "68556.78460000000" [ref=e772]
+              - cell "0.005" [ref=e773]
+              - cell "0" [ref=e774]
+              - cell "Submitted" [ref=e775]
+            - row "3d529534 Coinbase BTC/USD BUY Limit 68010.51540000000 0.005 0 Submitted" [ref=e776]:
+              - cell "3d529534" [ref=e777]
+              - cell "Coinbase" [ref=e778]
+              - cell "BTC/USD" [ref=e779]
+              - cell "BUY" [ref=e780]
+              - cell "Limit" [ref=e781]
+              - cell "68010.51540000000" [ref=e782]
+              - cell "0.005" [ref=e783]
+              - cell "0" [ref=e784]
+              - cell "Submitted" [ref=e785]
+            - row "83286f69 Coinbase BTC/USD SELL Limit 68420.21730000000 0.005 0 Submitted" [ref=e786]:
+              - cell "83286f69" [ref=e787]
+              - cell "Coinbase" [ref=e788]
+              - cell "BTC/USD" [ref=e789]
+              - cell "SELL" [ref=e790]
+              - cell "Limit" [ref=e791]
+              - cell "68420.21730000000" [ref=e792]
+              - cell "0.005" [ref=e793]
+              - cell "0" [ref=e794]
+              - cell "Submitted" [ref=e795]
+            - row "257acdfd Coinbase BTC/USD BUY Limit 68147.08270000000 0.005 0 Submitted" [ref=e796]:
+              - cell "257acdfd" [ref=e797]
+              - cell "Coinbase" [ref=e798]
+              - cell "BTC/USD" [ref=e799]
+              - cell "BUY" [ref=e800]
+              - cell "Limit" [ref=e801]
+              - cell "68147.08270000000" [ref=e802]
+              - cell "0.005" [ref=e803]
+              - cell "0" [ref=e804]
+              - cell "Submitted" [ref=e805]
+      - generic [ref=e106]:
+        - generic [ref=e108]: Event Log
+        - generic [ref=e110]:
+          - generic [ref=e111]:
+            - button "ALL" [ref=e112]
+            - button "MarketDataTick" [ref=e113]
+            - button "Order" [ref=e114]
+            - button "Position" [ref=e115]
+            - button "Risk" [ref=e116]
+            - button "Error" [ref=e117]
+          - generic [ref=e806]:
+            - generic [ref=e807]:
+              - generic [ref=e808]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e809]:
+              - generic [ref=e810]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e811]:
+              - generic [ref=e812]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e813]:
+              - generic [ref=e814]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e815]:
+              - generic [ref=e816]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e817]:
+              - generic [ref=e818]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e819]:
+              - generic [ref=e820]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e821]:
+              - generic [ref=e822]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e823]:
+              - generic [ref=e824]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":880,\"last_fill_at\":null}}"
+            - generic [ref=e825]:
+              - generic [ref=e826]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e827]:
+              - generic [ref=e828]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e829]:
+              - generic [ref=e830]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e831]:
+              - generic [ref=e832]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e833]:
+              - generic [ref=e834]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e835]:
+              - generic [ref=e836]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e837]:
+              - generic [ref=e838]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e839]:
+              - generic [ref=e840]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e841]:
+              - generic [ref=e842]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e843]:
+              - generic [ref=e844]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":879,\"last_fill_at\":null}}"
+            - generic [ref=e845]:
+              - generic [ref=e846]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.90000000 ask=2068.48000000 spread=2.8043845101272126835542190000bps
+            - generic [ref=e847]:
+              - generic [ref=e848]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e849]:
+              - generic [ref=e850]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e851]:
+              - generic [ref=e852]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e853]:
+              - generic [ref=e854]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e855]:
+              - generic [ref=e856]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68234.38000000 ask=68261.65000000 spread=3.995720608137833752380930000bps
+            - generic [ref=e857]:
+              - generic [ref=e858]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.92000000 ask=2068.48000000 spread=2.7076685040131515327337780000bps
+            - generic [ref=e859]:
+              - generic [ref=e860]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e861]:
+              - generic [ref=e862]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.09000000 ask=2068.87000000 spread=3.770884900990099009900990000bps
+            - generic [ref=e863]:
+              - generic [ref=e864]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e865]:
+              - generic [ref=e866]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e867]:
+              - generic [ref=e868]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e869]:
+              - generic [ref=e870]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e871]:
+              - generic [ref=e872]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":878,\"last_fill_at\":null}}"
+            - generic [ref=e873]:
+              - generic [ref=e874]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e875]:
+              - generic [ref=e876]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e877]:
+              - generic [ref=e878]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e879]:
+              - generic [ref=e880]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e881]:
+              - generic [ref=e882]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e883]:
+              - generic [ref=e884]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e885]:
+              - generic [ref=e886]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e887]:
+              - generic [ref=e888]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e889]:
+              - generic [ref=e890]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68240.91000000 ask=68259.24000000 spread=2.6857113343831490295065610000bps
+            - generic [ref=e891]:
+              - generic [ref=e892]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.28000000 ask=2068.97000000 spread=3.335548975768928636171370000bps
+            - generic [ref=e893]:
+              - generic [ref=e894]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e895]:
+              - generic [ref=e896]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.45000000 ask=2069.04000000 spread=2.8519706392039618222642230000bps
+            - generic [ref=e897]:
+              - generic [ref=e898]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":877,\"last_fill_at\":null}}"
+            - generic [ref=e899]:
+              - generic [ref=e900]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68240.91000000 ask=68263.29000000 spread=3.2790199861982268677447290000bps
+            - generic [ref=e931]:
+              - generic [ref=e932]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.45000000 ask=2068.86000000 spread=1.9819641264493112674660590000bps
+            - generic [ref=e933]:
+              - generic [ref=e934]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e935]:
+              - generic [ref=e936]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e937]:
+              - generic [ref=e938]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e939]:
+              - generic [ref=e940]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e941]:
+              - generic [ref=e942]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68177.96000000 ask=68259.17000000 spread=11.904384092512060316718770000bps
+            - generic [ref=e943]:
+              - generic [ref=e944]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e945]:
+              - generic [ref=e946]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.19000000 ask=2068.86000000 spread=3.2390229753084927665848850000bps
+            - generic [ref=e947]:
+              - generic [ref=e948]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e949]:
+              - generic [ref=e950]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68234.22000000 ask=68256.86000000 spread=3.3174329047729712447143070000bps
+            - generic [ref=e951]:
+              - generic [ref=e952]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e953]:
+              - generic [ref=e954]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.12000000 ask=2068.45000000 spread=1.5955247946970557732614220000bps
+            - generic [ref=e955]:
+              - generic [ref=e956]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e957]:
+              - generic [ref=e958]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68234.23000000 ask=68257.42000000 spread=3.3980100614213396936735690000bps
+            - generic [ref=e959]:
+              - generic [ref=e960]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.06000000 ask=2068.45000000 spread=1.8856475628005250803213340000bps
+            - generic [ref=e961]:
+              - generic [ref=e962]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e963]:
+              - generic [ref=e964]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":876,\"last_fill_at\":null}}"
+            - generic [ref=e965]:
+              - generic [ref=e966]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e967]:
+              - generic [ref=e968]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68234.23000000 ask=68265.95000000 spread=4.6476129188987150053575020000bps
+            - generic [ref=e969]:
+              - generic [ref=e970]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e971]:
+              - generic [ref=e972]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.06000000 ask=2069.44000000 spread=6.670694864048338368580060000bps
+            - generic [ref=e973]:
+              - generic [ref=e974]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e975]:
+              - generic [ref=e976]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.10000000 ask=2069.38000000 spread=6.1873410868451327861403560000bps
+            - generic [ref=e977]:
+              - generic [ref=e978]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e979]:
+              - generic [ref=e980]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.73000000 ask=2068.84000000 spread=5.3667652185264603282429650000bps
+            - generic [ref=e981]:
+              - generic [ref=e982]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e983]:
+              - generic [ref=e984]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.27000000 ask=2068.84000000 spread=2.7555467464002649192310570000bps
+            - generic [ref=e985]:
+              - generic [ref=e986]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68234.12000000 ask=68256.86000000 spread=3.3320883182170719266577180000bps
+            - generic [ref=e987]:
+              - generic [ref=e988]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e989]:
+              - generic [ref=e990]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e991]:
+              - generic [ref=e992]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e993]:
+              - generic [ref=e994]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e995]:
+              - generic [ref=e996]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68234.11000000 ask=68263.13000000 spread=4.2521006285548337827197090000bps
+            - generic [ref=e997]:
+              - generic [ref=e998]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":875,\"last_fill_at\":null}}"
+            - generic [ref=e999]:
+              - generic [ref=e1000]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1001]:
+              - generic [ref=e1002]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1003]:
+              - generic [ref=e1004]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68244.47000000 ask=68281.65000000 spread=5.4465768162165598787982840000bps
+            - generic [ref=e1005]:
+              - generic [ref=e1006]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1007]:
+              - generic [ref=e1008]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.32000000 ask=2069.38000000 spread=5.1236194020832829832999010000bps
+            - generic [ref=e1009]:
+              - generic [ref=e1010]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1011]:
+              - generic [ref=e1012]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1013]:
+              - generic [ref=e1014]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.61000000 ask=2069.23000000 spread=7.83206505448603281731950000bps
+            - generic [ref=e1015]:
+              - generic [ref=e1016]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1017]:
+              - generic [ref=e1018]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1019]:
+              - generic [ref=e1020]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68244.47000000 ask=68268.11000000 spread=3.4634170711593026811155430000bps
+            - generic [ref=e1021]:
+              - generic [ref=e1022]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1023]:
+              - generic [ref=e1024]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1025]:
+              - generic [ref=e1026]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68248.29000000 ask=68285.04000000 spread=5.3833009126782449384337140000bps
+            - generic [ref=e1027]:
+              - generic [ref=e1028]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":874,\"last_fill_at\":null}}"
+            - generic [ref=e1029]:
+              - generic [ref=e1030]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.81000000 ask=2069.01000000 spread=0.9666926062516010846291040000bps
+            - generic [ref=e1031]:
+              - generic [ref=e1032]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68248.29000000 ask=68276.36000000 spread=4.1120779287842891375293770000bps
+            - generic [ref=e1033]:
+              - generic [ref=e1034]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1035]:
+              - generic [ref=e1036]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68248.29000000 ask=68274.80000000 spread=3.8835921454751720020400940000bps
+            - generic [ref=e1037]:
+              - generic [ref=e1038]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1039]:
+              - generic [ref=e1040]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68255.63000000 ask=68281.65000000 spread=3.8114132638353422596378070000bps
+            - generic [ref=e1041]:
+              - generic [ref=e1042]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.67000000 ask=2069.17000000 spread=2.4167198345030257332327980000bps
+            - generic [ref=e1043]:
+              - generic [ref=e1044]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1045]:
+              - generic [ref=e1046]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1047]:
+              - generic [ref=e1048]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1049]:
+              - generic [ref=e1050]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.63000000 ask=2069.38000000 spread=3.6249308242367708149569480000bps
+            - generic [ref=e1051]:
+              - generic [ref=e1052]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68255.64000000 ask=68286.36000000 spread=4.4997143735993320736476690000bps
+            - generic [ref=e1053]:
+              - generic [ref=e1054]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1055]:
+              - generic [ref=e1056]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1057]:
+              - generic [ref=e1058]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1059]:
+              - generic [ref=e1060]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.67000000 ask=2069.87000000 spread=5.7991465589314105940742390000bps
+            - generic [ref=e1061]:
+              - generic [ref=e1062]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1063]:
+              - generic [ref=e1064]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":873,\"last_fill_at\":null}}"
+            - generic [ref=e1087]:
+              - generic [ref=e1088]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1089]:
+              - generic [ref=e1090]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1091]:
+              - generic [ref=e1092]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1093]:
+              - generic [ref=e1094]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2065.04000000 ask=2069.85000000 spread=23.265431486690093327754789000bps
+            - generic [ref=e1095]:
+              - generic [ref=e1096]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1097]:
+              - generic [ref=e1098]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.81000000 ask=2069.34000000 spread=2.5615311189782873989584720000bps
+            - generic [ref=e1099]:
+              - generic [ref=e1100]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1101]:
+              - generic [ref=e1102]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68212.97000000 ask=68284.46000000 spread=10.474922494877742386798052000bps
+            - generic [ref=e1103]:
+              - generic [ref=e1104]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.63000000 ask=2069.34000000 spread=3.4316343521098509655700740000bps
+            - generic [ref=e1105]:
+              - generic [ref=e1106]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1107]:
+              - generic [ref=e1108]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2069.01000000 ask=2069.51000000 spread=2.4163227433961899422982130000bps
+            - generic [ref=e1109]:
+              - generic [ref=e1110]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1111]:
+              - generic [ref=e1112]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1113]:
+              - generic [ref=e1114]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68262.77000000 ask=68291.51000000 spread=4.2093151529194105084073530000bps
+            - generic [ref=e1115]:
+              - generic [ref=e1116]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.31000000 ask=2070.02000000 spread=8.264203193075467640328345000bps
+            - generic [ref=e1117]:
+              - generic [ref=e1118]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1119]:
+              - generic [ref=e1120]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.16000000 ask=2070.06000000 spread=14.019075611159184186482711000bps
+            - generic [ref=e1121]:
+              - generic [ref=e1122]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68244.47000000 ask=68290.66000000 spread=6.7660242459211779415305060000bps
+            - generic [ref=e1123]:
+              - generic [ref=e1124]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":872,\"last_fill_at\":null}}"
+            - generic [ref=e1125]:
+              - generic [ref=e1126]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2069.01000000 ask=2069.16000000 spread=0.7249581336677806856654030000bps
+            - generic [ref=e1127]:
+              - generic [ref=e1128]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68256.00000000 ask=68275.83000000 spread=2.9048171404426352448363140000bps
+            - generic [ref=e1129]:
+              - generic [ref=e1130]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1131]:
+              - generic [ref=e1132]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.50000000 ask=2068.99000000 spread=2.3685857851015954117109650000bps
+            - generic [ref=e1133]:
+              - generic [ref=e1134]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1135]:
+              - generic [ref=e1136]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1137]:
+              - generic [ref=e1138]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.40000000 ask=2069.16000000 spread=3.6736627384255454905789890000bps
+            - generic [ref=e1139]:
+              - generic [ref=e1140]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1141]:
+              - generic [ref=e1142]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.48000000 ask=2069.00000000 spread=2.513607316530835194369520000bps
+            - generic [ref=e1143]:
+              - generic [ref=e1144]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1145]:
+              - generic [ref=e1146]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.48000000 ask=2069.45000000 spread=4.6883345054169596875732550000bps
+            - generic [ref=e1147]:
+              - generic [ref=e1148]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1149]:
+              - generic [ref=e1150]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1151]:
+              - generic [ref=e1152]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1153]:
+              - generic [ref=e1154]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1155]:
+              - generic [ref=e1156]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":871,\"last_fill_at\":null}}"
+            - generic [ref=e1157]:
+              - generic [ref=e1158]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1159]:
+              - generic [ref=e1160]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1161]:
+              - generic [ref=e1162]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1163]:
+              - generic [ref=e1164]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1165]:
+              - generic [ref=e1166]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1167]:
+              - generic [ref=e1168]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1169]:
+              - generic [ref=e1170]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1171]:
+              - generic [ref=e1172]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1173]:
+              - generic [ref=e1174]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1175]:
+              - generic [ref=e1176]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":870,\"last_fill_at\":null}}"
+            - generic [ref=e1177]:
+              - generic [ref=e1178]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1179]:
+              - generic [ref=e1180]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.31000000 ask=2069.27000000 spread=4.6403936600621619400712490000bps
+            - generic [ref=e1181]:
+              - generic [ref=e1182]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1183]:
+              - generic [ref=e1184]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2059.52000000 ask=2068.77000000 spread=44.812743290805636231950759000bps
+            - generic [ref=e1185]:
+              - generic [ref=e1186]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1187]:
+              - generic [ref=e1188]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.14000000 ask=2068.77000000 spread=3.0457515391922956989637190000bps
+            - generic [ref=e1189]:
+              - generic [ref=e1190]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1191]:
+              - generic [ref=e1192]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1193]:
+              - generic [ref=e1194]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.40000000 ask=2068.97000000 spread=2.7553735827349258103577880000bps
+            - generic [ref=e1195]:
+              - generic [ref=e1196]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1197]:
+              - generic [ref=e1198]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1199]:
+              - generic [ref=e1200]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1201]:
+              - generic [ref=e1202]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1203]:
+              - generic [ref=e1204]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":869,\"last_fill_at\":null}}"
+            - generic [ref=e1205]:
+              - generic [ref=e1206]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2068.40000000 ask=2068.93000000 spread=2.5620388028027737695566950000bps
+            - generic [ref=e1207]:
+              - generic [ref=e1208]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1209]:
+              - generic [ref=e1210]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2066.22000000 ask=2068.74000000 spread=12.188751523593940449242556000bps
+            - generic [ref=e1211]:
+              - generic [ref=e1212]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1213]:
+              - generic [ref=e1214]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.88000000 ask=2068.55000000 spread=3.2395084650290226112855770000bps
+            - generic [ref=e1215]:
+              - generic [ref=e1216]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1217]:
+              - generic [ref=e1218]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1219]:
+              - generic [ref=e1220]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68236.95000000 ask=68255.81000000 spread=2.7635165410971248584906630000bps
+            - generic [ref=e1221]:
+              - generic [ref=e1222]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.72000000 ask=2068.47000000 spread=3.6265258607559130504159630000bps
+            - generic [ref=e1223]:
+              - generic [ref=e1224]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1225]:
+              - generic [ref=e1226]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.72000000 ask=2068.27000000 spread=2.6595808984064274816912030000bps
+            - generic [ref=e1227]:
+              - generic [ref=e1228]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1229]:
+              - generic [ref=e1230]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1231]:
+              - generic [ref=e1232]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68165.84000000 ask=68265.11000000 spread=14.552416442163599974932374000bps
+            - generic [ref=e1233]:
+              - generic [ref=e1234]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1235]:
+              - generic [ref=e1236]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.55000000 ask=2068.27000000 spread=3.4817762862020107258052820000bps
+            - generic [ref=e1237]:
+              - generic [ref=e1238]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68165.83000000 ask=68265.11000000 spread=14.553883451950122164371220000bps
+            - generic [ref=e1239]:
+              - generic [ref=e1240]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1241]:
+              - generic [ref=e1242]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2066.51000000 ask=2068.44000000 spread=9.335058465035852912368952000bps
+            - generic [ref=e1243]:
+              - generic [ref=e1244]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":868,\"last_fill_at\":null}}"
+            - generic [ref=e1245]:
+              - generic [ref=e1246]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.63000000 ask=2068.25000000 spread=2.9981527510469355977446150000bps
+            - generic [ref=e1247]:
+              - generic [ref=e1248]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2067.63000000 ask=2068.25000000 spread=2.9981527510469355977446150000bps
+            - generic [ref=e1249]:
+              - generic [ref=e1250]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":867,\"last_fill_at\":null}}"
+            - generic [ref=e1251]:
+              - generic [ref=e1252]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":867,\"last_fill_at\":null}}"
+            - generic [ref=e1253]:
+              - generic [ref=e1254]: "[StrategyMetrics]"
+              - text: "{\"type\":\"StrategyMetrics\",\"strategy_id\":\"spread-test-1\",\"metrics\":{\"strategy_id\":\"spread-test-1\",\"realized_pnl\":\"0\",\"unrealized_pnl\":\"0\",\"total_fills\":0,\"total_orders_placed\":52,\"total_orders_cancelled\":0,\"total_orders_rejected\":0,\"avg_spread_captured_bps\":\"0\",\"volume_traded\":\"0\",\"uptime_secs\":867,\"last_fill_at\":null}}"
+            - generic [ref=e1284]:
+              - generic [ref=e1285]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2065.80000000 ask=2068.67000000 spread=13.883278872503609894375821000bps
+            - generic [ref=e1286]:
+              - generic [ref=e1287]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68229.22000000 ask=68255.81000000 spread=3.8963980152255525752531250000bps
+      - generic [ref=e122]:
+        - generic [ref=e124]: New Strategy
+        - generic [ref=e125]:
+          - generic:
+            - generic [ref=e126]:
+              - generic [ref=e128]: "1"
+              - generic [ref=e131]: "2"
+              - generic [ref=e134]: "3"
+            - generic [ref=e1488]:
+              - generic [ref=e1489]: Strategy Type
+              - combobox [ref=e1490]:
+                - option "Select a strategy type..." [selected]
+                - option "Spread Market Making"
+                - option "Avellaneda-Stoikov"
+                - option "Grid Trading"
+                - option "TWAP Execution"
+                - option "VWAP Execution"
+                - option "Momentum"
+                - option "Mean Reversion"
+                - option "Statistical Arbitrage"
+              - button "Next" [disabled] [ref=e1491]
+            - generic [ref=e1492]: Strategy "spread-2h9m8y" created successfully
+      - generic [ref=e141]:
+        - generic [ref=e143]: AI Assistant
+        - generic [ref=e144]:
+          - generic:
+            - generic [ref=e145]: "Context: positions, strategies, market data, risk state"
+            - paragraph [ref=e147]: Ask about strategies, parameters, or market conditions.
+            - generic [ref=e148]:
+              - textbox "Ask the AI assistant..." [ref=e149]
+              - button "Send" [disabled] [ref=e150]
+  - button "Open Next.js Dev Tools" [ref=e157] [cursor=pointer]:
+    - img [ref=e158]
+  - alert [ref=e161]
