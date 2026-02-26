@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use mm_core::events::OrderUpdate;
 use mm_core::traits::Strategy;
 use mm_core::types::{Fill, MarketSnapshot, OrderAction};
 use mm_core::StrategyConfig;
 use tokio::sync::mpsc;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::build_strategy_from_config;
 
@@ -27,6 +28,9 @@ pub struct StrategyEngine {
     id_index: HashMap<String, usize>,
     /// Receiver for hot parameter updates from the API layer.
     param_update_rx: Option<mpsc::Receiver<StrategyParamUpdate>>,
+    /// Strategy IDs that have panicked during `on_tick`. The caller can inspect
+    /// this set to decide whether to deactivate or remove the affected strategies.
+    panicked_strategies: HashSet<String>,
 }
 
 impl StrategyEngine {
@@ -36,6 +40,7 @@ impl StrategyEngine {
             strategies: Vec::new(),
             id_index: HashMap::new(),
             param_update_rx: None,
+            panicked_strategies: HashSet::new(),
         }
     }
 
@@ -107,15 +112,39 @@ impl StrategyEngine {
                 continue;
             }
 
-            let actions = strategy.on_tick(snapshot);
-            if !actions.is_empty() {
-                debug!(
-                    strategy_id = %strategy.strategy_id(),
-                    action_count = actions.len(),
-                    "strategy produced order actions"
-                );
+            let strategy_id = strategy.strategy_id().to_string();
+
+            let result = catch_unwind(AssertUnwindSafe(|| strategy.on_tick(snapshot)));
+
+            match result {
+                Ok(actions) => {
+                    if !actions.is_empty() {
+                        debug!(
+                            strategy_id = %strategy_id,
+                            action_count = actions.len(),
+                            "strategy produced order actions"
+                        );
+                    }
+                    all_actions.extend(actions);
+                }
+                Err(panic_info) => {
+                    let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        (*s).to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown panic payload".to_string()
+                    };
+
+                    error!(
+                        strategy_id = %strategy_id,
+                        panic_message = %panic_msg,
+                        "strategy panicked during on_tick, skipping"
+                    );
+
+                    self.panicked_strategies.insert(strategy_id);
+                }
             }
-            all_actions.extend(actions);
         }
 
         all_actions
@@ -250,6 +279,13 @@ impl StrategyEngine {
     /// Get a list of all strategy ids currently registered.
     pub fn strategy_ids(&self) -> Vec<String> {
         self.id_index.keys().cloned().collect()
+    }
+
+    /// Return the set of strategy IDs that have panicked during `on_tick`.
+    /// The caller can use this to decide whether to deactivate or remove
+    /// the affected strategies.
+    pub fn panicked_strategies(&self) -> &HashSet<String> {
+        &self.panicked_strategies
     }
 }
 
@@ -661,5 +697,154 @@ mod tests {
         let mut engine = StrategyEngine::new();
         // No receiver attached — should be a no-op.
         engine.try_apply_updates();
+    }
+
+    // -----------------------------------------------------------------------
+    // Panic isolation mocks
+    // -----------------------------------------------------------------------
+
+    /// A strategy that unconditionally panics in `on_tick`. Used to verify
+    /// that the engine's `catch_unwind` isolation works correctly.
+    struct PanickingStrategy {
+        id: String,
+    }
+
+    impl PanickingStrategy {
+        fn new(id: &str) -> Self {
+            Self { id: id.to_string() }
+        }
+    }
+
+    impl Strategy for PanickingStrategy {
+        fn name(&self) -> &str {
+            "panicking"
+        }
+
+        fn strategy_id(&self) -> &str {
+            &self.id
+        }
+
+        fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
+            panic!("test panic");
+        }
+
+        fn on_fill(&mut self, _fill: &Fill) {}
+
+        fn on_order_update(&mut self, _update: &OrderUpdate) {}
+
+        fn is_active(&self) -> bool {
+            true
+        }
+
+        fn stop(&mut self) -> Vec<OrderAction> {
+            Vec::new()
+        }
+    }
+
+    /// A strategy that returns a known action on every tick. Used alongside
+    /// `PanickingStrategy` to verify that the engine continues processing
+    /// after a panic.
+    struct WorkingStrategy {
+        id: String,
+        tick_actions: Vec<OrderAction>,
+    }
+
+    impl WorkingStrategy {
+        fn new(id: &str, actions: Vec<OrderAction>) -> Self {
+            Self {
+                id: id.to_string(),
+                tick_actions: actions,
+            }
+        }
+    }
+
+    impl Strategy for WorkingStrategy {
+        fn name(&self) -> &str {
+            "working"
+        }
+
+        fn strategy_id(&self) -> &str {
+            &self.id
+        }
+
+        fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
+            self.tick_actions.clone()
+        }
+
+        fn on_fill(&mut self, _fill: &Fill) {}
+
+        fn on_order_update(&mut self, _update: &OrderUpdate) {}
+
+        fn is_active(&self) -> bool {
+            true
+        }
+
+        fn stop(&mut self) -> Vec<OrderAction> {
+            Vec::new()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Panic isolation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tick_isolates_panicking_strategy() {
+        let mut engine = StrategyEngine::new();
+
+        // Add a panicking strategy first, then a working one.
+        let panicker = PanickingStrategy::new("panicker");
+        let worker = WorkingStrategy::new(
+            "worker",
+            vec![make_place_action("worker"), make_place_action("worker")],
+        );
+
+        engine.add_strategy(Box::new(panicker)).unwrap();
+        engine.add_strategy(Box::new(worker)).unwrap();
+
+        let snapshot = make_snapshot();
+
+        // This must not crash — the panicking strategy is caught.
+        let actions = engine.tick(&snapshot);
+
+        // The working strategy's 2 actions should still be returned.
+        assert_eq!(actions.len(), 2);
+
+        // The panicking strategy should be recorded.
+        assert!(engine.panicked_strategies().contains("panicker"));
+        assert!(!engine.panicked_strategies().contains("worker"));
+    }
+
+    #[test]
+    fn test_panicking_strategy_logged() {
+        let mut engine = StrategyEngine::new();
+
+        // Add two working strategies and one panicking strategy in the middle.
+        let w1 = WorkingStrategy::new("w1", vec![make_place_action("w1")]);
+        let panicker = PanickingStrategy::new("bad_strat");
+        let w2 = WorkingStrategy::new("w2", vec![make_cancel_all_action()]);
+
+        engine.add_strategy(Box::new(w1)).unwrap();
+        engine.add_strategy(Box::new(panicker)).unwrap();
+        engine.add_strategy(Box::new(w2)).unwrap();
+
+        let snapshot = make_snapshot();
+
+        // Engine should return the actions from both working strategies
+        // and gracefully handle the panic from the middle one.
+        let actions = engine.tick(&snapshot);
+
+        // w1 produces 1 action, w2 produces 1 action => 2 total.
+        // The panicking strategy's actions are skipped.
+        assert_eq!(actions.len(), 2);
+
+        // Verify the panicked strategy is tracked.
+        assert_eq!(engine.panicked_strategies().len(), 1);
+        assert!(engine.panicked_strategies().contains("bad_strat"));
+
+        // A second tick should still work — the panicked strategy panics again
+        // but the engine remains stable.
+        let actions2 = engine.tick(&snapshot);
+        assert_eq!(actions2.len(), 2);
     }
 }

@@ -3259,7 +3259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_middleware_records_request_count() {
-        let metrics = Arc::new(MetricsRegistry::new());
+        let metrics = Arc::new(MetricsRegistry::new().unwrap());
         let state = ApiState::with_metrics(metrics.clone());
         let app = rest_router(state);
 
@@ -3284,7 +3284,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_middleware_records_duration() {
-        let metrics = Arc::new(MetricsRegistry::new());
+        let metrics = Arc::new(MetricsRegistry::new().unwrap());
         let state = ApiState::with_metrics(metrics.clone());
         let app = rest_router(state);
 
@@ -3315,7 +3315,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_middleware_labels_correct_for_post() {
-        let metrics = Arc::new(MetricsRegistry::new());
+        let metrics = Arc::new(MetricsRegistry::new().unwrap());
         let state = ApiState::with_metrics(metrics.clone());
         let app = rest_router(state);
 
@@ -3351,7 +3351,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_middleware_records_404_status() {
-        let metrics = Arc::new(MetricsRegistry::new());
+        let metrics = Arc::new(MetricsRegistry::new().unwrap());
         let state = ApiState::with_metrics(metrics.clone());
         let app = rest_router(state);
 
@@ -3376,7 +3376,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ws_active_connections_gauge() {
-        let metrics = Arc::new(MetricsRegistry::new());
+        let metrics = Arc::new(MetricsRegistry::new().unwrap());
 
         // Simulate increment/decrement as done in ws.rs handler.
         assert_eq!(metrics.ws_active_connections.get(), 0);
@@ -4873,5 +4873,266 @@ mod tests {
             StatusCode::OK,
             "/api/openapi.json must be exempt from authentication"
         );
+    }
+
+    // --- Order book endpoint tests ---
+
+    #[tokio::test]
+    async fn test_get_orderbook_returns_data() {
+        use mm_core::{OrderBook, PriceLevel};
+        use rust_decimal_macros::dec;
+
+        let state = ApiState::new();
+
+        // Pre-populate the order book for (Simulated, "BTC/USDT").
+        {
+            let mut books = state.order_books.write().await;
+            let book = OrderBook {
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![
+                    PriceLevel {
+                        price: dec!(50000),
+                        quantity: dec!(1.5),
+                    },
+                    PriceLevel {
+                        price: dec!(49999),
+                        quantity: dec!(2.0),
+                    },
+                ],
+                asks: vec![
+                    PriceLevel {
+                        price: dec!(50001),
+                        quantity: dec!(1.0),
+                    },
+                    PriceLevel {
+                        price: dec!(50002),
+                        quantity: dec!(3.0),
+                    },
+                ],
+                timestamp: Utc::now(),
+                sequence: 42,
+            };
+            books.insert(
+                (Exchange::Simulated, "BTC/USDT".to_string()),
+                Arc::new(book),
+            );
+        }
+
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/market-data/simulated/BTC-USDT/orderbook")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+
+        let data = &json["data"];
+        assert!(data["bids"].is_array(), "bids should be an array");
+        assert!(data["asks"].is_array(), "asks should be an array");
+        assert_eq!(data["bids"].as_array().unwrap().len(), 2);
+        assert_eq!(data["asks"].as_array().unwrap().len(), 2);
+        assert_eq!(data["sequence"], 42);
+
+        // Verify the best bid and best ask prices.
+        assert_eq!(data["bids"][0]["price"], "50000");
+        assert_eq!(data["asks"][0]["price"], "50001");
+    }
+
+    #[tokio::test]
+    async fn test_get_orderbook_not_found() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/market-data/simulated/NONEXIST-PAIR/orderbook")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "error");
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("order book not found"),
+            "error message should mention 'order book not found', got: {}",
+            json["error"]
+        );
+    }
+
+    // --- Strategy start/stop endpoint tests ---
+
+    #[tokio::test]
+    async fn test_start_strategy_success() {
+        let state = ApiState::new();
+
+        // Add a stopped strategy with valid params so it can be started.
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(StrategyStatus {
+                config: test_valid_strategy_config("start-me"),
+                running: false,
+                started_at: None,
+                stopped_at: None,
+            });
+        }
+
+        let app = rest_router(state.clone());
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/strategies/start-me/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        assert!(
+            json["data"].as_str().unwrap().contains("started"),
+            "response should confirm the strategy was started, got: {}",
+            json["data"]
+        );
+
+        // Verify the strategy is now marked as running in the state.
+        let strategies = state.strategies.read().await;
+        let s = strategies
+            .iter()
+            .find(|s| s.config.strategy_id == "start-me")
+            .expect("strategy should exist");
+        assert!(s.running, "strategy should be marked as running");
+        assert!(s.started_at.is_some(), "started_at should be set");
+    }
+
+    #[tokio::test]
+    async fn test_start_strategy_without_engine() {
+        // When strategy_engine is None (default from ApiState::new()),
+        // start should still succeed — it just skips engine registration.
+        let state = ApiState::new();
+
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(StrategyStatus {
+                config: test_valid_strategy_config("no-engine"),
+                running: false,
+                started_at: None,
+                stopped_at: None,
+            });
+        }
+
+        let app = rest_router(state.clone());
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/strategies/no-engine/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+
+        // Verify the strategy is running even without an engine.
+        let strategies = state.strategies.read().await;
+        let s = strategies
+            .iter()
+            .find(|s| s.config.strategy_id == "no-engine")
+            .expect("strategy should exist");
+        assert!(
+            s.running,
+            "strategy should be running even without an engine"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stop_strategy_success() {
+        let state = ApiState::new();
+
+        // Add a running strategy.
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_running_strategy_status("stop-me"));
+        }
+
+        let app = rest_router(state.clone());
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/strategies/stop-me/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        assert!(
+            json["data"].as_str().unwrap().contains("stopped"),
+            "response should confirm the strategy was stopped, got: {}",
+            json["data"]
+        );
+
+        // Verify the strategy is now stopped.
+        let strategies = state.strategies.read().await;
+        let s = strategies
+            .iter()
+            .find(|s| s.config.strategy_id == "stop-me")
+            .expect("strategy should exist");
+        assert!(!s.running, "strategy should be marked as stopped");
+        assert!(s.stopped_at.is_some(), "stopped_at should be set");
     }
 }
