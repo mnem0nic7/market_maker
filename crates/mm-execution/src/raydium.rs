@@ -65,18 +65,19 @@ use mm_core::{
 // ---------------------------------------------------------------------------
 
 /// Raydium AMM V4 program ID on Solana mainnet.
-#[allow(dead_code)]
+/// Required for building swap instructions (see `build_and_submit_swap` TODO).
 const RAYDIUM_AMM_PROGRAM_ID: &str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 
 /// SPL Token program ID.
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 /// System program ID.
-#[allow(dead_code)]
+/// Required for building swap transactions that allocate or transfer SOL.
 const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
 
 /// Serum DEX program ID (used by Raydium for order book routing).
-#[allow(dead_code)]
+/// Required as an account in the Raydium AMM V4 swap instruction
+/// (see account list in `build_and_submit_swap`).
 const SERUM_PROGRAM_ID: &str = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
 
 /// Default slippage tolerance in basis points (50 bps = 0.5%).
@@ -355,7 +356,7 @@ impl RaydiumExecutionConnector {
                 result.push(TokenAccountInfo {
                     mint,
                     amount,
-                    decimals,
+                    _decimals: decimals,
                 });
             }
         }
@@ -714,12 +715,14 @@ impl RaydiumExecutionConnector {
 // SPL token account info (for balance queries)
 // ---------------------------------------------------------------------------
 
+/// Information about an SPL token account, parsed from `getTokenAccountsByOwner`.
 #[derive(Debug, Clone)]
 struct TokenAccountInfo {
     mint: String,
     amount: Decimal,
-    #[allow(dead_code)]
-    decimals: u8,
+    /// Number of decimals for this token. Retained for future use when
+    /// computing raw amounts for swap instructions.
+    _decimals: u8,
 }
 
 // ---------------------------------------------------------------------------

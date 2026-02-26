@@ -23,11 +23,55 @@ use mm_core::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{info, warn};
+use utoipa::OpenApi;
 
 use mm_core::traits::Strategy;
 use mm_strategy::{build_strategy_from_config, StrategyEngine, StrategyParamUpdate};
 
 use crate::assistant::{build_system_context, AssistantConfig, ChatRequest, ClaudeClient};
+
+// ---------------------------------------------------------------------------
+// OpenAPI documentation
+// ---------------------------------------------------------------------------
+
+/// OpenAPI specification for the Market Maker REST API.
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Market Maker API",
+        version = "1.0.0",
+        description = "REST API for the multi-market automated trading platform. \
+            Supports crypto CEX (Binance, Coinbase, Kraken), DEX, and equities.",
+        license(name = "MIT")
+    ),
+    paths(
+        health_check,
+        list_positions,
+        list_orders,
+        get_order,
+        place_order,
+        cancel_order,
+        cancel_all_orders,
+        list_strategies,
+        get_portfolio_risk,
+    ),
+    components(schemas(
+        PlaceOrderRequest,
+        CancelAllRequest,
+        CancelAllResponse,
+        HealthResponse,
+        ComponentHealth,
+        ComponentStatus,
+    )),
+    tags(
+        (name = "health", description = "System health and readiness checks"),
+        (name = "positions", description = "Position management"),
+        (name = "orders", description = "Order management — place, cancel, and query orders"),
+        (name = "strategies", description = "Strategy lifecycle management"),
+        (name = "risk", description = "Risk controls and portfolio risk")
+    )
+)]
+pub struct ApiDoc;
 
 // ---------------------------------------------------------------------------
 // Rate limiting
@@ -131,7 +175,7 @@ impl RateLimiter {
 // ---------------------------------------------------------------------------
 
 /// Consistent JSON envelope returned by every endpoint.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiResponse<T: Serialize> {
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -599,7 +643,7 @@ pub struct OrderQuery {
 }
 
 /// Optional request body for cancelling all orders with filters.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, utoipa::ToSchema)]
 struct CancelAllRequest {
     /// Filter by exchange name (e.g. "binance").
     pub exchange: Option<String>,
@@ -608,7 +652,7 @@ struct CancelAllRequest {
 }
 
 /// Response body for the cancel-all endpoint.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct CancelAllResponse {
     /// Number of cancellation requests sent.
     pub cancelled: usize,
@@ -617,7 +661,7 @@ struct CancelAllResponse {
 }
 
 /// Request body for placing a new order.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct PlaceOrderRequest {
     exchange: String,
     symbol: String,
@@ -641,7 +685,7 @@ fn default_time_in_force() -> String {
 // Health check
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct HealthResponse {
     status: String,
     uptime_secs: u64,
@@ -650,7 +694,7 @@ struct HealthResponse {
     components: ComponentHealth,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct ComponentHealth {
     strategy_engine: ComponentStatus,
     order_manager: ComponentStatus,
@@ -658,13 +702,21 @@ struct ComponentHealth {
     risk_engine: ComponentStatus,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct ComponentStatus {
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     details: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/health",
+    tag = "health",
+    responses(
+        (status = 200, description = "System health status", body = serde_json::Value)
+    )
+)]
 async fn health_check(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let uptime_secs = state.startup_time.elapsed().as_secs();
 
@@ -796,6 +848,14 @@ async fn prometheus_metrics(State(state): State<Arc<ApiState>>) -> impl IntoResp
 // Positions
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/positions",
+    tag = "positions",
+    responses(
+        (status = 200, description = "List of all tracked positions", body = serde_json::Value)
+    )
+)]
 async fn list_positions(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let positions = state.positions.read().await;
     ApiResponse::ok(positions.clone())
@@ -805,6 +865,19 @@ async fn list_positions(State(state): State<Arc<ApiState>>) -> impl IntoResponse
 // Orders
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/orders",
+    tag = "orders",
+    params(
+        ("exchange" = Option<String>, Query, description = "Filter by exchange name"),
+        ("symbol" = Option<String>, Query, description = "Filter by symbol"),
+        ("strategy_id" = Option<String>, Query, description = "Filter by strategy ID")
+    ),
+    responses(
+        (status = 200, description = "List of orders", body = serde_json::Value)
+    )
+)]
 async fn list_orders(
     State(state): State<Arc<ApiState>>,
     Query(params): Query<OrderQuery>,
@@ -838,6 +911,18 @@ async fn list_orders(
     ApiResponse::ok(filtered)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/orders/{order_id}",
+    tag = "orders",
+    params(
+        ("order_id" = String, Path, description = "Client order ID or exchange order ID")
+    ),
+    responses(
+        (status = 200, description = "Order details", body = serde_json::Value),
+        (status = 404, description = "Order not found")
+    )
+)]
 async fn get_order(
     State(state): State<Arc<ApiState>>,
     Path(order_id): Path<String>,
@@ -856,6 +941,16 @@ async fn get_order(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/orders",
+    tag = "orders",
+    request_body = PlaceOrderRequest,
+    responses(
+        (status = 201, description = "Order placed successfully", body = serde_json::Value),
+        (status = 400, description = "Invalid order parameters")
+    )
+)]
 async fn place_order(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<PlaceOrderRequest>,
@@ -973,6 +1068,19 @@ async fn place_order(
 // Cancel order
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/orders/{order_id}",
+    tag = "orders",
+    params(
+        ("order_id" = String, Path, description = "Client order ID or exchange order ID")
+    ),
+    responses(
+        (status = 200, description = "Order cancelled successfully", body = serde_json::Value),
+        (status = 404, description = "Order not found"),
+        (status = 409, description = "Order is in a non-cancellable state")
+    )
+)]
 async fn cancel_order(
     State(state): State<Arc<ApiState>>,
     Path(order_id): Path<String>,
@@ -1015,6 +1123,15 @@ async fn cancel_order(
 // Cancel all orders
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/orders/cancel-all",
+    tag = "orders",
+    request_body = CancelAllRequest,
+    responses(
+        (status = 200, description = "Orders cancelled", body = serde_json::Value)
+    )
+)]
 async fn cancel_all_orders(
     State(state): State<Arc<ApiState>>,
     body: Option<Json<CancelAllRequest>>,
@@ -1066,6 +1183,15 @@ async fn cancel_all_orders(
 // Portfolio risk
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/portfolio/risk",
+    tag = "risk",
+    responses(
+        (status = 200, description = "Portfolio risk summary", body = serde_json::Value),
+        (status = 404, description = "No portfolio risk data available")
+    )
+)]
 async fn get_portfolio_risk(
     State(state): State<Arc<ApiState>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
@@ -1095,6 +1221,14 @@ const VALID_STRATEGY_TYPES: &[&str] = &[
     "stat_arb",
 ];
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/strategies",
+    tag = "strategies",
+    responses(
+        (status = 200, description = "List of all strategies and their status", body = serde_json::Value)
+    )
+)]
 async fn list_strategies(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let strategies = state.strategies.read().await;
     ApiResponse::ok(strategies.clone())
@@ -3403,5 +3537,136 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // --- OpenAPI specification tests ---
+
+    #[test]
+    fn test_openapi_spec_is_valid_json() {
+        let spec_json = ApiDoc::openapi()
+            .to_json()
+            .expect("OpenAPI spec should serialize to JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&spec_json).expect("OpenAPI spec should be valid JSON");
+        // Verify it has the required OpenAPI fields.
+        assert!(
+            parsed.get("openapi").is_some(),
+            "spec must contain 'openapi' version field"
+        );
+        assert!(
+            parsed.get("info").is_some(),
+            "spec must contain 'info' section"
+        );
+        assert!(
+            parsed.get("paths").is_some(),
+            "spec must contain 'paths' section"
+        );
+    }
+
+    #[test]
+    fn test_openapi_contains_health_path() {
+        let spec_json = ApiDoc::openapi()
+            .to_json()
+            .expect("OpenAPI spec should serialize to JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&spec_json).unwrap();
+        let paths = parsed["paths"]
+            .as_object()
+            .expect("paths should be an object");
+        assert!(
+            paths.contains_key("/api/v1/health"),
+            "spec must contain /api/v1/health path, found: {:?}",
+            paths.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_openapi_contains_orders_path() {
+        let spec_json = ApiDoc::openapi()
+            .to_json()
+            .expect("OpenAPI spec should serialize to JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&spec_json).unwrap();
+        let paths = parsed["paths"]
+            .as_object()
+            .expect("paths should be an object");
+        assert!(
+            paths.contains_key("/api/v1/orders"),
+            "spec must contain /api/v1/orders path, found: {:?}",
+            paths.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_openapi_contains_positions_path() {
+        let spec_json = ApiDoc::openapi()
+            .to_json()
+            .expect("OpenAPI spec should serialize to JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&spec_json).unwrap();
+        let paths = parsed["paths"]
+            .as_object()
+            .expect("paths should be an object");
+        assert!(
+            paths.contains_key("/api/v1/positions"),
+            "spec must contain /api/v1/positions path"
+        );
+    }
+
+    #[test]
+    fn test_openapi_contains_strategies_path() {
+        let spec_json = ApiDoc::openapi()
+            .to_json()
+            .expect("OpenAPI spec should serialize to JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&spec_json).unwrap();
+        let paths = parsed["paths"]
+            .as_object()
+            .expect("paths should be an object");
+        assert!(
+            paths.contains_key("/api/v1/strategies"),
+            "spec must contain /api/v1/strategies path"
+        );
+    }
+
+    #[test]
+    fn test_openapi_info_metadata() {
+        let spec_json = ApiDoc::openapi()
+            .to_json()
+            .expect("OpenAPI spec should serialize to JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&spec_json).unwrap();
+        let info = &parsed["info"];
+        assert_eq!(info["title"], "Market Maker API");
+        assert_eq!(info["version"], "1.0.0");
+        assert!(
+            info["description"]
+                .as_str()
+                .unwrap()
+                .contains("trading platform"),
+            "description should mention 'trading platform'"
+        );
+    }
+
+    #[test]
+    fn test_openapi_contains_schemas() {
+        let spec_json = ApiDoc::openapi()
+            .to_json()
+            .expect("OpenAPI spec should serialize to JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&spec_json).unwrap();
+        let schemas = parsed["components"]["schemas"]
+            .as_object()
+            .expect("should have component schemas");
+        assert!(
+            schemas.contains_key("PlaceOrderRequest"),
+            "schemas must contain PlaceOrderRequest"
+        );
+        assert!(
+            schemas.contains_key("HealthResponse"),
+            "schemas must contain HealthResponse"
+        );
+        assert!(
+            schemas.contains_key("CancelAllRequest"),
+            "schemas must contain CancelAllRequest"
+        );
+        assert!(
+            schemas.contains_key("CancelAllResponse"),
+            "schemas must contain CancelAllResponse"
+        );
     }
 }

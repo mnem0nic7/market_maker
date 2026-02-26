@@ -458,13 +458,33 @@ async fn main() -> Result<()> {
         };
         let gw_state = Arc::clone(&api_state);
         let gw_broadcaster = Arc::clone(&broadcaster);
+
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+
         tokio::spawn(async move {
-            let server = GatewayServer::with_broadcaster(gw_config, gw_state, gw_broadcaster);
+            let server = GatewayServer::with_broadcaster(gw_config, gw_state, gw_broadcaster)
+                .with_ready_signal(ready_tx);
             if let Err(e) = server.start().await {
                 error!(error = %e, "gateway server exited with error");
             }
         });
-        info!(host = %cfg.gateway.host, port = cfg.gateway.port, "gateway started");
+
+        // Wait for the gateway to signal readiness (with a timeout).
+        match tokio::time::timeout(Duration::from_secs(5), ready_rx).await {
+            Ok(Ok(())) => {
+                info!(host = %cfg.gateway.host, port = cfg.gateway.port, "gateway ready");
+            }
+            Ok(Err(_)) => {
+                warn!("gateway readiness channel closed without signal");
+            }
+            Err(_) => {
+                warn!(
+                    host = %cfg.gateway.host,
+                    port = cfg.gateway.port,
+                    "gateway readiness timeout — continuing without confirmation"
+                );
+            }
+        }
     } else {
         info!("gateway disabled");
     }
