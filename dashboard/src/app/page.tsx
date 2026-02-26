@@ -17,7 +17,7 @@ import { AiAssistantPanel } from "@/components/panels/AiAssistant";
 import { BacktestResultsPanel } from "@/components/panels/BacktestResults";
 
 export default function DashboardPage() {
-  const { connected, loading, error } = useDashboard();
+  const { connectionStatus, loading, error } = useDashboard();
   const dispatch = useDashboardDispatch();
   return (
     <main className="min-h-screen">
@@ -25,20 +25,20 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between px-4 py-2 border-b border-border-panel bg-bg-panel/50">
         <h1 className="text-sm font-bold text-accent-cyan font-mono tracking-wider">MARKET MAKER</h1>
         <div className="flex items-center gap-3 text-xs">
-          {connected ? (
+          {connectionStatus === "connected" ? (
             <span className="flex items-center gap-1.5 text-accent-green">
               <span className="w-2 h-2 rounded-full bg-accent-green animate-pulse" />
               CONNECTED
             </span>
-          ) : loading ? (
+          ) : connectionStatus === "reconnecting" ? (
             <span className="flex items-center gap-1.5 text-accent-amber">
               <span className="w-2 h-2 rounded-full bg-accent-amber animate-pulse" />
-              CONNECTING...
+              RECONNECTING...
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-accent-red">
-              <span className="w-2 h-2 rounded-full bg-accent-red animate-pulse" />
-              RECONNECTING...
+              <span className="w-2 h-2 rounded-full bg-accent-red" />
+              DISCONNECTED
             </span>
           )}
           {loading && <span className="text-accent-amber animate-pulse">Loading...</span>}

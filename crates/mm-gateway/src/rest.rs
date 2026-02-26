@@ -4701,4 +4701,177 @@ mod tests {
             json["error"]
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Authentication enforcement tests
+    // -----------------------------------------------------------------------
+    //
+    // These tests exercise the bearer-token auth middleware defined in
+    // `server.rs`.  They build the full router via `GatewayServer::build_router`
+    // (which applies the auth layer) rather than using `rest_router` directly.
+
+    /// Helper: build a full app router with bearer-token auth enabled.
+    fn app_with_auth(token: &str) -> Router {
+        use crate::server::{GatewayConfig, GatewayServer};
+        use crate::ws::DashboardBroadcaster;
+
+        let config = GatewayConfig {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            cors_origins: vec![],
+            api_token: Some(token.to_string()),
+            rate_limit_rps: None,
+        };
+        let state = ApiState::new();
+        let broadcaster = DashboardBroadcaster::new(64, 16);
+        let server = GatewayServer::with_broadcaster(config, state, broadcaster);
+        server.build_router()
+    }
+
+    #[tokio::test]
+    async fn test_auth_required_on_protected_endpoints() {
+        let app = app_with_auth("secret-token-123");
+
+        // Request to a protected endpoint without Authorization header.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/positions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "protected endpoint must return 401 without bearer token"
+        );
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "error");
+        assert!(
+            json["error"].as_str().unwrap().contains("bearer token"),
+            "error should mention bearer token, got: {}",
+            json["error"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_accepts_valid_token() {
+        let token = "my-secret-api-key";
+        let app = app_with_auth(token);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/positions")
+                    .header("authorization", format!("Bearer {}", token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "valid bearer token should grant access (200)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_rejects_invalid_token() {
+        let app = app_with_auth("correct-token");
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/positions")
+                    .header("authorization", "Bearer wrong-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "invalid bearer token must return 401"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_exempt_health_endpoint() {
+        let app = app_with_auth("secret-token");
+
+        // Health endpoint should be accessible without any auth header.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "/api/v1/health must be exempt from authentication"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_exempt_metrics_endpoint() {
+        let app = app_with_auth("secret-token");
+
+        // Metrics endpoint should be accessible without any auth header.
+        // Note: the handler returns 503 when no MetricsRegistry is configured,
+        // but the critical assertion is that we do NOT get a 401 (Unauthorized),
+        // which would indicate the auth middleware blocked the request.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "/metrics must be exempt from authentication"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_exempt_openapi_endpoint() {
+        let app = app_with_auth("secret-token");
+
+        // OpenAPI spec endpoint should be accessible without any auth header.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "/api/openapi.json must be exempt from authentication"
+        );
+    }
 }

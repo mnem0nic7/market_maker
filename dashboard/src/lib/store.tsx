@@ -5,7 +5,7 @@ import {
   type ReactNode, type Dispatch,
 } from "react";
 import { api } from "./api";
-import { WebSocketManager } from "./websocket";
+import { WebSocketManager, type ConnectionStatus } from "./websocket";
 import type {
   Position, Order, PortfolioRisk, StrategyStatus, ServerMessage, MarketDataTickMsg,
   StrategyMetrics,
@@ -13,6 +13,7 @@ import type {
 
 export interface DashboardState {
   connected: boolean;
+  connectionStatus: ConnectionStatus;
   positions: Position[];
   orders: Order[];
   risk: PortfolioRisk | null;
@@ -26,6 +27,7 @@ export interface DashboardState {
 
 const initialState: DashboardState = {
   connected: false,
+  connectionStatus: "disconnected",
   positions: [],
   orders: [],
   risk: null,
@@ -38,7 +40,7 @@ const initialState: DashboardState = {
 };
 
 export type Action =
-  | { type: "SET_CONNECTED"; connected: boolean }
+  | { type: "SET_CONNECTED"; status: ConnectionStatus }
   | { type: "SET_POSITIONS"; positions: Position[] }
   | { type: "SET_ORDERS"; orders: Order[] }
   | { type: "SET_RISK"; risk: PortfolioRisk }
@@ -56,7 +58,7 @@ function tickKey(exchange: string, symbol: { base: string; quote: string }): str
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
     case "SET_CONNECTED":
-      return { ...state, connected: action.connected };
+      return { ...state, connected: action.status === "connected", connectionStatus: action.status };
     case "SET_POSITIONS":
       return { ...state, positions: action.positions };
     case "SET_ORDERS":
@@ -124,8 +126,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "WS_MESSAGE", msg });
   }, []);
 
-  const handleStatus = useCallback((connected: boolean) => {
-    dispatch({ type: "SET_CONNECTED", connected });
+  const handleStatus = useCallback((status: ConnectionStatus) => {
+    dispatch({ type: "SET_CONNECTED", status });
   }, []);
 
   useEffect(() => {
