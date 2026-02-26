@@ -665,6 +665,22 @@ async fn main() -> Result<()> {
                             }
                         };
 
+                        // Skip stale order books to avoid trading on outdated data.
+                        let book_age = Utc::now() - book.timestamp;
+                        let stale_threshold = chrono::Duration::milliseconds(cfg.trading_loop.order_book_stale_ms as i64);
+                        if book_age > stale_threshold {
+                            warn!(
+                                exchange = %exchange,
+                                symbol = %symbol,
+                                age_ms = book_age.num_milliseconds(),
+                                "skipping stale order book"
+                            );
+                            metrics.websocket_connected
+                                .with_label_values(&[&exchange.to_string()])
+                                .set(0.0);
+                            continue;
+                        }
+
                         let last_trade = latest_trades.get(&key).cloned();
 
                         let position = {

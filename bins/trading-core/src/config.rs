@@ -441,16 +441,27 @@ pub struct TradingLoopConfig {
     /// Interval in milliseconds between strategy tick evaluations.
     #[serde(default = "default_tick_interval")]
     pub tick_interval_ms: u64,
+
+    /// Maximum age in milliseconds for an order book to be considered fresh.
+    /// Books older than this threshold are skipped to prevent trading on stale
+    /// data. Defaults to 5000 (5 seconds).
+    #[serde(default = "default_order_book_stale_ms")]
+    pub order_book_stale_ms: u64,
 }
 
 fn default_tick_interval() -> u64 {
     100
 }
 
+fn default_order_book_stale_ms() -> u64 {
+    5000
+}
+
 impl Default for TradingLoopConfig {
     fn default() -> Self {
         Self {
             tick_interval_ms: default_tick_interval(),
+            order_book_stale_ms: default_order_book_stale_ms(),
         }
     }
 }
