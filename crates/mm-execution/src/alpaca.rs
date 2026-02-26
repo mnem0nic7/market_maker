@@ -668,3 +668,290 @@ impl ExecutionConnector for AlpacaExecutionConnector {
         self.connected.load(Ordering::SeqCst)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    fn test_config() -> AlpacaExecutionConfig {
+        AlpacaExecutionConfig {
+            api_key: "test-api-key".into(),
+            secret_key: "test-secret-key".into(),
+            base_url: default_base_url(),
+            ws_url: default_ws_url(),
+        }
+    }
+
+    fn test_connector() -> AlpacaExecutionConnector {
+        AlpacaExecutionConnector::new(test_config())
+    }
+
+    // -- Config defaults --
+
+    #[test]
+    fn test_config_defaults() {
+        let json = r#"{"api_key":"k","secret_key":"s"}"#;
+        let cfg: AlpacaExecutionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.base_url, "https://paper-api.alpaca.markets");
+        assert_eq!(cfg.ws_url, "wss://paper-api.alpaca.markets/stream");
+    }
+
+    #[test]
+    fn test_config_custom_urls() {
+        let json = r#"{
+            "api_key":"k",
+            "secret_key":"s",
+            "base_url":"https://api.alpaca.markets",
+            "ws_url":"wss://api.alpaca.markets/stream"
+        }"#;
+        let cfg: AlpacaExecutionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.base_url, "https://api.alpaca.markets");
+        assert_eq!(cfg.ws_url, "wss://api.alpaca.markets/stream");
+    }
+
+    // -- Symbol conversion --
+
+    #[test]
+    fn test_to_alpaca_symbol() {
+        let sym = Symbol::new("AAPL", "USD");
+        assert_eq!(AlpacaExecutionConnector::to_alpaca_symbol(&sym), "AAPL");
+    }
+
+    #[test]
+    fn test_from_alpaca_symbol() {
+        let sym = AlpacaExecutionConnector::from_alpaca_symbol("TSLA");
+        assert_eq!(sym.base, "TSLA");
+        assert_eq!(sym.quote, "USD");
+    }
+
+    // -- Side / OrderType / TimeInForce mapping --
+
+    #[test]
+    fn test_side_to_str() {
+        assert_eq!(AlpacaExecutionConnector::side_to_str(Side::Buy), "buy");
+        assert_eq!(AlpacaExecutionConnector::side_to_str(Side::Sell), "sell");
+    }
+
+    #[test]
+    fn test_order_type_to_str() {
+        assert_eq!(
+            AlpacaExecutionConnector::order_type_to_str(mm_core::OrderType::Market),
+            "market"
+        );
+        assert_eq!(
+            AlpacaExecutionConnector::order_type_to_str(mm_core::OrderType::Limit),
+            "limit"
+        );
+        assert_eq!(
+            AlpacaExecutionConnector::order_type_to_str(mm_core::OrderType::StopLimit),
+            "stop_limit"
+        );
+        assert_eq!(
+            AlpacaExecutionConnector::order_type_to_str(mm_core::OrderType::StopMarket),
+            "stop"
+        );
+    }
+
+    #[test]
+    fn test_tif_to_str() {
+        assert_eq!(
+            AlpacaExecutionConnector::tif_to_str(mm_core::TimeInForce::GTC),
+            "gtc"
+        );
+        assert_eq!(
+            AlpacaExecutionConnector::tif_to_str(mm_core::TimeInForce::IOC),
+            "ioc"
+        );
+        assert_eq!(
+            AlpacaExecutionConnector::tif_to_str(mm_core::TimeInForce::FOK),
+            "fok"
+        );
+        // GTD falls back to GTC on Alpaca.
+        assert_eq!(
+            AlpacaExecutionConnector::tif_to_str(mm_core::TimeInForce::GTD),
+            "gtc"
+        );
+    }
+
+    // -- Trade update parsing --
+
+    #[test]
+    fn test_parse_trade_update_fill() {
+        let data = serde_json::json!({
+            "event": "fill",
+            "price": "150.25",
+            "qty": "10",
+            "order": {
+                "id": "order-uuid-123",
+                "client_order_id": "my-client-456",
+                "symbol": "AAPL",
+                "qty": "100",
+                "filled_qty": "100",
+                "filled_avg_price": "150.25",
+                "status": "filled",
+                "updated_at": "2024-01-15T12:00:00Z"
+            }
+        });
+
+        let update = AlpacaExecutionConnector::parse_trade_update(&data).unwrap();
+
+        assert_eq!(update.client_order_id, "my-client-456");
+        assert_eq!(update.exchange_order_id, Some("order-uuid-123".to_string()));
+        assert_eq!(update.exchange, Exchange::Alpaca);
+        assert_eq!(update.symbol, Symbol::new("AAPL", "USD"));
+        assert_eq!(update.status, OrderStatus::Filled);
+        assert_eq!(update.filled_quantity, dec!(100));
+        assert_eq!(update.remaining_quantity, dec!(0));
+        assert_eq!(update.average_fill_price, dec!(150.25));
+        assert_eq!(update.last_fill_price, Some(dec!(150.25)));
+        assert_eq!(update.last_fill_quantity, Some(dec!(10)));
+        // Alpaca does not report fees in trade updates.
+        assert_eq!(update.fee, None);
+        assert_eq!(update.fee_currency, None);
+    }
+
+    #[test]
+    fn test_parse_trade_update_partial_fill() {
+        let data = serde_json::json!({
+            "event": "partial_fill",
+            "price": "200.00",
+            "qty": "25",
+            "order": {
+                "id": "order-789",
+                "client_order_id": "client-789",
+                "symbol": "MSFT",
+                "qty": "100",
+                "filled_qty": "50",
+                "filled_avg_price": "200.00",
+                "status": "partially_filled",
+                "updated_at": "2024-01-15T12:00:00Z"
+            }
+        });
+
+        let update = AlpacaExecutionConnector::parse_trade_update(&data).unwrap();
+        assert_eq!(update.status, OrderStatus::PartiallyFilled);
+        assert_eq!(update.filled_quantity, dec!(50));
+        assert_eq!(update.remaining_quantity, dec!(50));
+    }
+
+    #[test]
+    fn test_parse_trade_update_all_event_statuses() {
+        let events = vec![
+            ("new", OrderStatus::New),
+            ("partially_filled", OrderStatus::PartiallyFilled),
+            ("partial_fill", OrderStatus::PartiallyFilled),
+            ("fill", OrderStatus::Filled),
+            ("filled", OrderStatus::Filled),
+            ("canceled", OrderStatus::Cancelled),
+            ("cancelled", OrderStatus::Cancelled),
+            ("rejected", OrderStatus::Rejected),
+            ("expired", OrderStatus::Expired),
+            ("pending_new", OrderStatus::Submitted),
+            ("accepted", OrderStatus::New),
+            ("pending_cancel", OrderStatus::PendingCancel),
+            ("replaced", OrderStatus::New),
+        ];
+
+        for (event, expected) in events {
+            let data = serde_json::json!({
+                "event": event,
+                "order": {
+                    "id": "oid",
+                    "client_order_id": "coid",
+                    "symbol": "AAPL",
+                    "qty": "10",
+                    "filled_qty": "0",
+                    "filled_avg_price": "0",
+                    "status": "",
+                    "updated_at": "2024-01-15T12:00:00Z"
+                }
+            });
+            let update = AlpacaExecutionConnector::parse_trade_update(&data).unwrap();
+            assert_eq!(
+                update.status, expected,
+                "status mismatch for Alpaca event '{}'",
+                event
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_trade_update_fallback_to_order_status_field() {
+        // When the event field is unrecognized, it falls back to order["status"].
+        let data = serde_json::json!({
+            "event": "some_unknown_event",
+            "order": {
+                "id": "oid",
+                "client_order_id": "coid",
+                "symbol": "TSLA",
+                "qty": "10",
+                "filled_qty": "10",
+                "filled_avg_price": "250.00",
+                "status": "filled",
+                "updated_at": "2024-01-15T12:00:00Z"
+            }
+        });
+        let update = AlpacaExecutionConnector::parse_trade_update(&data).unwrap();
+        assert_eq!(update.status, OrderStatus::Filled);
+    }
+
+    #[test]
+    fn test_parse_trade_update_unknown_event_and_status_errors() {
+        let data = serde_json::json!({
+            "event": "totally_unknown",
+            "order": {
+                "id": "oid",
+                "client_order_id": "coid",
+                "symbol": "AAPL",
+                "qty": "10",
+                "filled_qty": "0",
+                "filled_avg_price": "0",
+                "status": "also_unknown"
+            }
+        });
+        let result = AlpacaExecutionConnector::parse_trade_update(&data);
+        assert!(
+            result.is_err(),
+            "completely unknown event+status should error"
+        );
+    }
+
+    #[test]
+    fn test_parse_trade_update_uses_created_at_fallback() {
+        let data = serde_json::json!({
+            "event": "new",
+            "order": {
+                "id": "oid",
+                "client_order_id": "coid",
+                "symbol": "GOOG",
+                "qty": "5",
+                "filled_qty": "0",
+                "filled_avg_price": "0",
+                "status": "new",
+                "created_at": "2024-06-01T09:30:00Z"
+            }
+        });
+        let update = AlpacaExecutionConnector::parse_trade_update(&data).unwrap();
+        // Should parse the created_at timestamp since updated_at is missing.
+        assert_eq!(
+            update.timestamp,
+            chrono::DateTime::parse_from_rfc3339("2024-06-01T09:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+    }
+
+    // -- Connector state --
+
+    #[test]
+    fn test_connector_initial_state() {
+        let connector = test_connector();
+        assert!(!connector.is_connected());
+        assert_eq!(connector.exchange(), Exchange::Alpaca);
+    }
+}

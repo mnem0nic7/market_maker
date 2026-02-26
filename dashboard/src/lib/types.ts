@@ -269,6 +269,18 @@ export interface BacktestRequest {
   params?: Record<string, unknown>;
 }
 
+export interface PlaceOrderRequest {
+  exchange: string;
+  symbol: string;
+  side: Side;
+  order_type: OrderType;
+  price?: string | null;
+  quantity: string;
+  time_in_force?: TimeInForce;
+  strategy_id?: string;
+  reduce_only?: boolean;
+}
+
 export const STRATEGY_TYPES: StrategyTypeInfo[] = [
   {
     type: "spread",

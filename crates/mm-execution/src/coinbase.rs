@@ -866,3 +866,270 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
         self.connected.load(Ordering::SeqCst)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    fn test_config() -> CoinbaseExecutionConfig {
+        CoinbaseExecutionConfig {
+            api_key: "test-api-key".into(),
+            secret_key: "not-a-real-pem".into(),
+            base_url: default_base_url(),
+            ws_url: default_ws_url(),
+        }
+    }
+
+    fn test_connector() -> CoinbaseExecutionConnector {
+        CoinbaseExecutionConnector::new(test_config())
+    }
+
+    // A minimal EC private key in SEC1 PEM format for testing JWT construction.
+    // This is NOT a real production key -- generated solely for unit tests.
+    fn test_ec_pem() -> String {
+        // Generate a fresh p256 key each time.
+        use p256::ecdsa::SigningKey;
+        use p256::pkcs8::EncodePrivateKey;
+        let sk = SigningKey::random(&mut rand::thread_rng());
+        let pem = sk
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("failed to encode test key");
+        pem.to_string()
+    }
+
+    // -- Config defaults --
+
+    #[test]
+    fn test_config_defaults() {
+        let json = r#"{"api_key":"k","secret_key":"s"}"#;
+        let cfg: CoinbaseExecutionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.base_url, "https://api.coinbase.com");
+        assert_eq!(cfg.ws_url, "wss://advanced-trade-ws.coinbase.com");
+    }
+
+    #[test]
+    fn test_config_custom_urls() {
+        let json = r#"{
+            "api_key":"k",
+            "secret_key":"s",
+            "base_url":"https://custom.example.com",
+            "ws_url":"wss://custom.example.com/ws"
+        }"#;
+        let cfg: CoinbaseExecutionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.base_url, "https://custom.example.com");
+        assert_eq!(cfg.ws_url, "wss://custom.example.com/ws");
+    }
+
+    // -- JWT building --
+
+    #[test]
+    fn test_build_jwt_with_uri_produces_three_part_token() {
+        let pem = test_ec_pem();
+        let jwt = CoinbaseExecutionConnector::build_jwt(
+            "test-key-name",
+            &pem,
+            Some("GET api.coinbase.com/api/v3/brokerage/accounts"),
+        )
+        .unwrap();
+
+        // A JWT has three dot-separated parts: header.payload.signature
+        let parts: Vec<&str> = jwt.split('.').collect();
+        assert_eq!(parts.len(), 3, "JWT must have 3 dot-separated parts");
+
+        // Decode and verify the header.
+        let header_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, parts[0])
+                .unwrap();
+        let header: serde_json::Value = serde_json::from_slice(&header_bytes).unwrap();
+        assert_eq!(header["alg"], "ES256");
+        assert_eq!(header["kid"], "test-key-name");
+        assert_eq!(header["typ"], "JWT");
+
+        // Decode and verify the payload.
+        let payload_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, parts[1])
+                .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).unwrap();
+        assert_eq!(payload["iss"], "cdp");
+        assert_eq!(payload["sub"], "test-key-name");
+        assert!(payload["nbf"].as_u64().is_some());
+        assert!(payload["exp"].as_u64().is_some());
+        // exp should be nbf + 120
+        let nbf = payload["nbf"].as_u64().unwrap();
+        let exp = payload["exp"].as_u64().unwrap();
+        assert_eq!(exp - nbf, 120);
+        // URI claim must be present.
+        assert_eq!(
+            payload["uri"],
+            "GET api.coinbase.com/api/v3/brokerage/accounts"
+        );
+    }
+
+    #[test]
+    fn test_build_jwt_without_uri_omits_uri_claim() {
+        let pem = test_ec_pem();
+        let jwt = CoinbaseExecutionConnector::build_jwt("ws-key", &pem, None).unwrap();
+
+        let parts: Vec<&str> = jwt.split('.').collect();
+        let payload_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, parts[1])
+                .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).unwrap();
+        assert!(
+            payload.get("uri").is_none(),
+            "WebSocket JWT must NOT contain a uri claim"
+        );
+    }
+
+    #[test]
+    fn test_build_jwt_rejects_non_pem_key() {
+        let result = CoinbaseExecutionConnector::build_jwt(
+            "key",
+            "this-is-not-a-pem-key",
+            Some("GET host/path"),
+        );
+        assert!(result.is_err(), "non-PEM key should be rejected");
+    }
+
+    #[test]
+    fn test_build_jwt_each_call_produces_different_signature() {
+        // Each JWT is signed with ES256 which uses a random k value, so even
+        // identical payloads will produce different signatures.
+        let pem = test_ec_pem();
+        let jwt1 = CoinbaseExecutionConnector::build_jwt("k", &pem, None).unwrap();
+        let jwt2 = CoinbaseExecutionConnector::build_jwt("k", &pem, None).unwrap();
+
+        // Extract the signature part (third segment).
+        let sig1 = jwt1.split('.').nth(2).unwrap();
+        let sig2 = jwt2.split('.').nth(2).unwrap();
+
+        assert_ne!(
+            sig1, sig2,
+            "each JWT should have a different ES256 signature"
+        );
+    }
+
+    // -- Symbol conversion --
+
+    #[test]
+    fn test_to_coinbase_product_id() {
+        let sym = Symbol::new("BTC", "USD");
+        assert_eq!(
+            CoinbaseExecutionConnector::to_coinbase_product_id(&sym),
+            "BTC-USD"
+        );
+    }
+
+    #[test]
+    fn test_from_coinbase_product_id() {
+        let sym = CoinbaseExecutionConnector::from_coinbase_product_id("ETH-USDT");
+        assert_eq!(sym.base, "ETH");
+        assert_eq!(sym.quote, "USDT");
+    }
+
+    #[test]
+    fn test_from_coinbase_product_id_no_dash_fallback() {
+        let sym = CoinbaseExecutionConnector::from_coinbase_product_id("FOOBAR");
+        assert_eq!(sym.base, "FOOBAR");
+        assert_eq!(sym.quote, "UNKNOWN");
+    }
+
+    // -- Side mapping --
+
+    #[test]
+    fn test_side_to_str() {
+        assert_eq!(CoinbaseExecutionConnector::side_to_str(Side::Buy), "BUY");
+        assert_eq!(CoinbaseExecutionConnector::side_to_str(Side::Sell), "SELL");
+    }
+
+    // -- Order event parsing --
+
+    #[test]
+    fn test_parse_order_event_filled() {
+        let order = serde_json::json!({
+            "client_order_id": "abc-123",
+            "order_id": "exchange-456",
+            "product_id": "BTC-USD",
+            "status": "FILLED",
+            "cumulative_quantity": "2.5",
+            "leaves_quantity": "0",
+            "average_filled_price": "30000.50",
+            "total_fees": "1.25",
+            "creation_time": "2024-01-15T12:00:00Z"
+        });
+
+        let result = CoinbaseExecutionConnector::parse_order_event("snapshot", &order).unwrap();
+        let update = result.expect("should produce an OrderUpdate");
+
+        assert_eq!(update.client_order_id, "abc-123");
+        assert_eq!(update.exchange_order_id, Some("exchange-456".to_string()));
+        assert_eq!(update.exchange, Exchange::Coinbase);
+        assert_eq!(update.symbol, Symbol::new("BTC", "USD"));
+        assert_eq!(update.status, OrderStatus::Filled);
+        assert_eq!(update.filled_quantity, dec!(2.5));
+        assert_eq!(update.remaining_quantity, dec!(0));
+        assert_eq!(update.average_fill_price, dec!(30000.50));
+        assert_eq!(update.fee, Some(dec!(1.25)));
+    }
+
+    #[test]
+    fn test_parse_order_event_all_statuses() {
+        let statuses = vec![
+            ("OPEN", OrderStatus::New),
+            ("FILLED", OrderStatus::Filled),
+            ("CANCELLED", OrderStatus::Cancelled),
+            ("EXPIRED", OrderStatus::Expired),
+            ("FAILED", OrderStatus::Rejected),
+            ("PENDING", OrderStatus::Submitted),
+        ];
+
+        for (cb_status, expected) in statuses {
+            let order = serde_json::json!({
+                "client_order_id": "t",
+                "order_id": "e",
+                "product_id": "BTC-USD",
+                "status": cb_status,
+                "cumulative_quantity": "0",
+                "leaves_quantity": "1",
+                "average_filled_price": "0",
+                "creation_time": "2024-01-15T12:00:00Z"
+            });
+            let result = CoinbaseExecutionConnector::parse_order_event("update", &order).unwrap();
+            let update = result.expect("should produce an OrderUpdate");
+            assert_eq!(
+                update.status, expected,
+                "status mismatch for Coinbase status '{}'",
+                cb_status
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_order_event_unknown_status_returns_none() {
+        let order = serde_json::json!({
+            "client_order_id": "t",
+            "order_id": "e",
+            "product_id": "BTC-USD",
+            "status": "UNKNOWN_THING",
+            "cumulative_quantity": "0",
+            "leaves_quantity": "0",
+            "average_filled_price": "0"
+        });
+        let result = CoinbaseExecutionConnector::parse_order_event("update", &order).unwrap();
+        assert!(result.is_none(), "unknown status should return None");
+    }
+
+    // -- Connector state --
+
+    #[test]
+    fn test_connector_initial_state() {
+        let connector = test_connector();
+        assert!(!connector.is_connected());
+        assert_eq!(connector.exchange(), Exchange::Coinbase);
+    }
+}

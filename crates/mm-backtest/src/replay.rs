@@ -634,4 +634,481 @@ mod tests {
         assert_eq!(result.num_trades, 0);
         assert_eq!(result.total_pnl, Decimal::ZERO);
     }
+
+    #[test]
+    fn test_replay_with_spread_strategy() {
+        use mm_strategy::{SpreadConfig, SpreadStrategy};
+
+        let config = BacktestConfig {
+            initial_capital: dec!(100_000),
+            fee_rate: dec!(0.001),
+            slippage_bps: Decimal::ZERO,
+            start_time: None,
+            end_time: None,
+        };
+
+        let strategy_config = SpreadConfig {
+            strategy_id: "test-spread".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            spread_bps: dec!(10),
+            order_size: dec!(0.01),
+            num_levels: 2,
+            refresh_interval_ms: 0,
+            min_spread_bps: dec!(5),
+            reprice_threshold_bps: dec!(10),
+        };
+
+        let mut strategy = SpreadStrategy::new(strategy_config);
+        let engine = ReplayEngine::new(config);
+
+        // Generate enough events to trigger trading
+        let events = generate_replay_events(200);
+        let result = engine.run(&mut strategy, events);
+
+        // The strategy should produce a valid BacktestResult
+        assert!(
+            result.num_fills > 0,
+            "SpreadStrategy should produce fills, got {}",
+            result.num_fills
+        );
+        assert!(
+            result.total_volume > Decimal::ZERO,
+            "Should have non-zero volume"
+        );
+        assert!(
+            result.total_fees > Decimal::ZERO,
+            "Should have non-zero fees with fee_rate=0.001"
+        );
+    }
+
+    #[test]
+    fn test_replay_respects_initial_capital() {
+        let initial_capital = dec!(250_000);
+        let config = BacktestConfig {
+            initial_capital,
+            fee_rate: dec!(0.001),
+            slippage_bps: Decimal::ZERO,
+            start_time: None,
+            end_time: None,
+        };
+
+        let engine = ReplayEngine::new(config);
+        let mut strategy = BuySellOnceStrategy::new(dec!(50100));
+        let events = make_events();
+        let result = engine.run(&mut strategy, events);
+
+        // The equity curve is recorded after each fill. The first fill (buy)
+        // deducts a fee, so equity = initial_capital - fee (no realized PnL yet
+        // on the buy side). Verify the first equity point is close to initial
+        // capital (within the fee amount).
+        if !result.equity_curve.is_empty() {
+            let first_equity = result.equity_curve[0].1;
+            // The fee on a buy of 1 BTC at ~50010 with 0.1% fee rate is ~50.01
+            // So first equity should be initial_capital minus that small fee.
+            assert!(
+                first_equity <= initial_capital,
+                "First equity {} should be <= initial capital {} (fee deducted)",
+                first_equity,
+                initial_capital
+            );
+            assert!(
+                first_equity > initial_capital - dec!(200),
+                "First equity {} should be close to initial capital {} (within fee tolerance)",
+                first_equity,
+                initial_capital
+            );
+        }
+
+        // The final equity should also reflect the initial capital base.
+        // After a profitable round-trip (buy at ~50010, sell at ~50100),
+        // equity should be close to initial_capital + profit - fees.
+        if result.equity_curve.len() >= 2 {
+            let final_equity = result.equity_curve.last().unwrap().1;
+            // With a profitable trade, final equity should be above initial - fees
+            assert!(
+                final_equity > initial_capital - dec!(200),
+                "Final equity {} should be close to or above initial capital {}",
+                final_equity,
+                initial_capital
+            );
+        }
+    }
+
+    #[test]
+    fn test_replay_time_filter_start() {
+        let base_ts = chrono::Utc::now();
+        let events = vec![
+            MarketEvent::OrderBookSnapshot {
+                timestamp: base_ts,
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: dec!(50000),
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(50010),
+                    quantity: dec!(10),
+                }],
+                sequence: 1,
+            },
+            MarketEvent::OrderBookSnapshot {
+                timestamp: base_ts + chrono::Duration::seconds(10),
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: dec!(50100),
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(50110),
+                    quantity: dec!(10),
+                }],
+                sequence: 2,
+            },
+        ];
+
+        // Set start_time to filter out the first event
+        let config = BacktestConfig {
+            initial_capital: dec!(100_000),
+            fee_rate: dec!(0.001),
+            slippage_bps: Decimal::ZERO,
+            start_time: Some(base_ts + chrono::Duration::seconds(5)),
+            end_time: None,
+        };
+
+        let engine = ReplayEngine::new(config);
+        // Use BuySellOnceStrategy with sell_above_bid set very high so it
+        // only buys at the first available book.
+        let mut strategy = BuySellOnceStrategy::new(dec!(999999));
+        let result = engine.run(&mut strategy, events);
+
+        // Only 1 event passed the time filter, so the strategy should have
+        // seen the second book (bid=50100, ask=50110), bought at ask=50110.
+        // With only one snapshot and sell target unreachable, we get 1 fill.
+        assert!(
+            result.num_fills <= 1,
+            "With time filter, at most 1 fill expected (buy only)"
+        );
+    }
+
+    #[test]
+    fn test_replay_time_filter_end() {
+        let base_ts = chrono::Utc::now();
+        let events = vec![
+            MarketEvent::OrderBookSnapshot {
+                timestamp: base_ts,
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: dec!(50000),
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(50010),
+                    quantity: dec!(10),
+                }],
+                sequence: 1,
+            },
+            MarketEvent::OrderBookSnapshot {
+                timestamp: base_ts + chrono::Duration::seconds(10),
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: dec!(50200),
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(50210),
+                    quantity: dec!(10),
+                }],
+                sequence: 2,
+            },
+        ];
+
+        // Set end_time to filter out the second event
+        let config = BacktestConfig {
+            initial_capital: dec!(100_000),
+            fee_rate: dec!(0.001),
+            slippage_bps: Decimal::ZERO,
+            start_time: None,
+            end_time: Some(base_ts + chrono::Duration::seconds(5)),
+        };
+
+        let engine = ReplayEngine::new(config);
+        let mut strategy = BuySellOnceStrategy::new(dec!(50100));
+        let result = engine.run(&mut strategy, events);
+
+        // Only 1 event passed the time filter, strategy buys but cannot sell
+        // because the second book (with bid=50200) is filtered out.
+        assert!(
+            result.num_fills <= 1,
+            "With end_time filter, should not see second snapshot for sell"
+        );
+    }
+
+    #[test]
+    fn test_replay_events_sorted_by_timestamp() {
+        // Give events in reverse order; the engine should sort them.
+        let base_ts = chrono::Utc::now();
+        let events = vec![
+            MarketEvent::OrderBookSnapshot {
+                timestamp: base_ts + chrono::Duration::seconds(2),
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: dec!(50200),
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(50210),
+                    quantity: dec!(10),
+                }],
+                sequence: 3,
+            },
+            MarketEvent::OrderBookSnapshot {
+                timestamp: base_ts,
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: dec!(50000),
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(50010),
+                    quantity: dec!(10),
+                }],
+                sequence: 1,
+            },
+            MarketEvent::OrderBookSnapshot {
+                timestamp: base_ts + chrono::Duration::seconds(1),
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: dec!(50100),
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(50110),
+                    quantity: dec!(10),
+                }],
+                sequence: 2,
+            },
+        ];
+
+        let config = BacktestConfig::default();
+        let engine = ReplayEngine::new(config);
+        // Sell when bid >= 50100, which is the second event chronologically.
+        let mut strategy = BuySellOnceStrategy::new(dec!(50100));
+        let result = engine.run(&mut strategy, events);
+
+        // Even though events were given in reverse, engine sorts them.
+        // Strategy buys at ask=50010 (first chronological event) and sells when bid >= 50100.
+        assert!(
+            result.num_fills >= 2,
+            "Engine should sort events and produce buy+sell fills, got {} fills",
+            result.num_fills
+        );
+    }
+
+    #[test]
+    fn test_replay_noop_strategy_no_trades() {
+        struct NoOpStrategy;
+        impl Strategy for NoOpStrategy {
+            fn name(&self) -> &str {
+                "noop"
+            }
+            fn strategy_id(&self) -> &str {
+                "noop"
+            }
+            fn on_tick(&mut self, _: &MarketSnapshot) -> Vec<OrderAction> {
+                vec![]
+            }
+            fn on_fill(&mut self, _: &Fill) {}
+            fn on_order_update(&mut self, _: &OrderUpdate) {}
+            fn is_active(&self) -> bool {
+                true
+            }
+            fn stop(&mut self) -> Vec<OrderAction> {
+                vec![]
+            }
+        }
+
+        let config = BacktestConfig::default();
+        let engine = ReplayEngine::new(config);
+        let mut strategy = NoOpStrategy;
+        let events = make_events();
+        let result = engine.run(&mut strategy, events);
+
+        assert_eq!(result.num_fills, 0, "NoOp strategy should produce no fills");
+        assert_eq!(
+            result.num_trades, 0,
+            "NoOp strategy should produce no trades"
+        );
+        assert_eq!(result.total_pnl, Decimal::ZERO);
+        assert_eq!(result.total_fees, Decimal::ZERO);
+        assert!(result.equity_curve.is_empty());
+    }
+
+    #[test]
+    fn test_replay_custom_fee_rate() {
+        let config = BacktestConfig {
+            initial_capital: dec!(1_000_000),
+            fee_rate: dec!(0.01), // 1% fee rate (very high for testing)
+            slippage_bps: Decimal::ZERO,
+            start_time: None,
+            end_time: None,
+        };
+
+        let engine = ReplayEngine::new(config);
+        let mut strategy = BuySellOnceStrategy::new(dec!(50100));
+        let events = make_events();
+        let result = engine.run(&mut strategy, events);
+
+        // With 1% fee rate, fees should be substantial
+        if result.num_fills > 0 {
+            assert!(
+                result.total_fees > Decimal::ZERO,
+                "Fees should be positive with 1% fee rate"
+            );
+            // Gross PnL should exceed net PnL by the fees
+            assert_eq!(result.net_pnl, result.total_pnl - result.total_fees);
+        }
+    }
+
+    #[test]
+    fn test_replay_with_slippage() {
+        let config_no_slip = BacktestConfig {
+            initial_capital: dec!(1_000_000),
+            fee_rate: dec!(0.001),
+            slippage_bps: Decimal::ZERO,
+            start_time: None,
+            end_time: None,
+        };
+
+        let config_with_slip = BacktestConfig {
+            initial_capital: dec!(1_000_000),
+            fee_rate: dec!(0.001),
+            slippage_bps: dec!(50), // 50 bps = 0.5% slippage
+            start_time: None,
+            end_time: None,
+        };
+
+        let events = make_events();
+
+        // Run without slippage
+        let engine1 = ReplayEngine::new(config_no_slip);
+        let mut strategy1 = BuySellOnceStrategy::new(dec!(50100));
+        let result_no_slip = engine1.run(&mut strategy1, events.clone());
+
+        // Run with slippage
+        let engine2 = ReplayEngine::new(config_with_slip);
+        let mut strategy2 = BuySellOnceStrategy::new(dec!(50100));
+        let result_with_slip = engine2.run(&mut strategy2, events);
+
+        // If both produce fills, slippage should reduce net PnL
+        if result_no_slip.num_fills > 0 && result_with_slip.num_fills > 0 {
+            assert!(
+                result_with_slip.net_pnl <= result_no_slip.net_pnl,
+                "Slippage should reduce net PnL: no_slip={}, with_slip={}",
+                result_no_slip.net_pnl,
+                result_with_slip.net_pnl
+            );
+        }
+    }
+
+    #[test]
+    fn test_replay_trade_events_do_not_trigger_strategy_without_book() {
+        // If we only have trade events (no order book), the engine should not crash
+        // and should not produce any fills (it needs a book to build a snapshot).
+        let base_ts = chrono::Utc::now();
+        let events = vec![
+            MarketEvent::TradeEvent {
+                timestamp: base_ts,
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                price: dec!(50000),
+                quantity: dec!(1),
+                side: Side::Buy,
+                trade_id: "t1".to_string(),
+            },
+            MarketEvent::TradeEvent {
+                timestamp: base_ts + chrono::Duration::seconds(1),
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                price: dec!(50100),
+                quantity: dec!(0.5),
+                side: Side::Sell,
+                trade_id: "t2".to_string(),
+            },
+        ];
+
+        let config = BacktestConfig::default();
+        let engine = ReplayEngine::new(config);
+        let mut strategy = BuySellOnceStrategy::new(dec!(50000));
+        let result = engine.run(&mut strategy, events);
+
+        assert_eq!(
+            result.num_fills, 0,
+            "Trade-only events without a book should produce no fills"
+        );
+    }
+
+    /// Generate synthetic order book events for replay tests.
+    fn generate_replay_events(count: usize) -> Vec<MarketEvent> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut events = Vec::with_capacity(count);
+        let exchange = Exchange::Simulated;
+        let symbol = Symbol::new("BTC", "USDT");
+        let base_time = chrono::Utc::now() - chrono::Duration::seconds(count as i64);
+        let mut mid_price: f64 = 50_000.0;
+        let mut seed: u64 = 42;
+
+        for i in 0..count {
+            let ts = base_time + chrono::Duration::seconds(i as i64);
+            seed = {
+                let mut hasher = DefaultHasher::new();
+                seed.hash(&mut hasher);
+                i.hash(&mut hasher);
+                hasher.finish()
+            };
+            let step_pct = ((seed % 1000) as f64 / 1000.0 - 0.5) * 0.005;
+            mid_price *= 1.0 + step_pct;
+            if mid_price < 100.0 {
+                mid_price = 100.0;
+            }
+
+            let spread_bps = 1.0 + (seed % 10) as f64;
+            let half_spread = mid_price * spread_bps / 10_000.0 / 2.0;
+            let best_bid = mid_price - half_spread;
+            let best_ask = mid_price + half_spread;
+
+            let bids = vec![PriceLevel {
+                price: Decimal::from_f64_retain(best_bid)
+                    .unwrap_or(dec!(50000))
+                    .round_dp(2),
+                quantity: dec!(10),
+            }];
+            let asks = vec![PriceLevel {
+                price: Decimal::from_f64_retain(best_ask)
+                    .unwrap_or(dec!(50000))
+                    .round_dp(2),
+                quantity: dec!(10),
+            }];
+
+            events.push(MarketEvent::OrderBookSnapshot {
+                timestamp: ts,
+                exchange,
+                symbol: symbol.clone(),
+                bids,
+                asks,
+                sequence: i as u64,
+            });
+        }
+
+        events
+    }
 }

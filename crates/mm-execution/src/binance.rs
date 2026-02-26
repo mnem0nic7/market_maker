@@ -820,3 +820,308 @@ impl ExecutionConnector for BinanceExecutionConnector {
         self.connected.load(Ordering::SeqCst)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    fn test_config() -> BinanceExecutionConfig {
+        BinanceExecutionConfig {
+            api_key: "test-api-key".into(),
+            secret_key: "test-secret-key".into(),
+            base_url: default_base_url(),
+            ws_url: default_ws_url(),
+        }
+    }
+
+    fn test_connector() -> BinanceExecutionConnector {
+        BinanceExecutionConnector::new(test_config())
+    }
+
+    // -- Config defaults --
+
+    #[test]
+    fn test_config_defaults() {
+        let json = r#"{"api_key":"k","secret_key":"s"}"#;
+        let cfg: BinanceExecutionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.base_url, "https://api.binance.us");
+        assert_eq!(cfg.ws_url, "wss://stream.binance.us:9443");
+    }
+
+    #[test]
+    fn test_config_custom_urls() {
+        let json = r#"{
+            "api_key":"k",
+            "secret_key":"s",
+            "base_url":"https://custom.example.com",
+            "ws_url":"wss://custom.example.com/ws"
+        }"#;
+        let cfg: BinanceExecutionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.base_url, "https://custom.example.com");
+        assert_eq!(cfg.ws_url, "wss://custom.example.com/ws");
+    }
+
+    // -- Signature --
+
+    #[test]
+    fn test_sign_query_produces_hex_hmac_sha256() {
+        let connector = test_connector();
+        let signed = connector.sign_query("symbol=BTCUSDT&side=BUY&timestamp=1234567890");
+
+        // The original query must be preserved.
+        assert!(signed.starts_with("symbol=BTCUSDT&side=BUY&timestamp=1234567890&signature="));
+
+        // Extract signature value -- should be a 64-char lowercase hex string.
+        let sig = signed.split("&signature=").nth(1).unwrap();
+        assert_eq!(
+            sig.len(),
+            64,
+            "HMAC-SHA256 hex output must be 64 characters"
+        );
+        assert!(
+            sig.chars().all(|c| c.is_ascii_hexdigit()),
+            "signature must be hex"
+        );
+    }
+
+    #[test]
+    fn test_sign_query_deterministic() {
+        let connector = test_connector();
+        let input = "foo=bar&baz=1";
+        let a = connector.sign_query(input);
+        let b = connector.sign_query(input);
+        assert_eq!(a, b, "same input must produce same signature");
+    }
+
+    #[test]
+    fn test_sign_query_known_vector() {
+        // Pre-computed: HMAC-SHA256("test-secret-key", "foo=bar")
+        let connector = test_connector();
+        let signed = connector.sign_query("foo=bar");
+
+        let sig = signed.split("&signature=").nth(1).unwrap();
+
+        // Independently compute expected:
+        let mut mac = HmacSha256::new_from_slice(b"test-secret-key").unwrap();
+        mac.update(b"foo=bar");
+        let expected = hex::encode(mac.finalize().into_bytes());
+        assert_eq!(sig, expected);
+    }
+
+    #[test]
+    fn test_sign_params_includes_timestamp() {
+        let connector = test_connector();
+        let signed = connector.sign_params(&[("symbol", "BTCUSDT"), ("side", "BUY")]);
+
+        // Must contain the original params plus a timestamp param.
+        assert!(signed.contains("symbol=BTCUSDT"));
+        assert!(signed.contains("side=BUY"));
+        assert!(signed.contains("timestamp="));
+        assert!(signed.contains("&signature="));
+    }
+
+    // -- Symbol conversion --
+
+    #[test]
+    fn test_to_binance_symbol() {
+        let sym = Symbol::new("BTC", "USDT");
+        assert_eq!(
+            BinanceExecutionConnector::to_binance_symbol(&sym),
+            "BTCUSDT"
+        );
+    }
+
+    #[test]
+    fn test_from_binance_symbol_known_quotes() {
+        let cases = vec![
+            ("BTCUSDT", "BTC", "USDT"),
+            ("ETHBUSD", "ETH", "BUSD"),
+            ("SOLUSDC", "SOL", "USDC"),
+            ("ETHBTC", "ETH", "BTC"),
+            ("BNBETH", "BNB", "ETH"),
+            ("LTCBNB", "LTC", "BNB"),
+            ("BTCUSD", "BTC", "USD"),
+        ];
+        for (input, expected_base, expected_quote) in cases {
+            let sym = BinanceExecutionConnector::from_binance_symbol(input);
+            assert_eq!(sym.base, expected_base, "base mismatch for {}", input);
+            assert_eq!(sym.quote, expected_quote, "quote mismatch for {}", input);
+        }
+    }
+
+    #[test]
+    fn test_from_binance_symbol_unknown_fallback() {
+        let sym = BinanceExecutionConnector::from_binance_symbol("XYZABC");
+        assert_eq!(sym.quote, "UNKNOWN");
+    }
+
+    // -- Side / OrderType / TimeInForce string mapping --
+
+    #[test]
+    fn test_side_to_str() {
+        assert_eq!(BinanceExecutionConnector::side_to_str(Side::Buy), "BUY");
+        assert_eq!(BinanceExecutionConnector::side_to_str(Side::Sell), "SELL");
+    }
+
+    #[test]
+    fn test_order_type_to_str() {
+        assert_eq!(
+            BinanceExecutionConnector::order_type_to_str(mm_core::OrderType::Market),
+            "MARKET"
+        );
+        assert_eq!(
+            BinanceExecutionConnector::order_type_to_str(mm_core::OrderType::Limit),
+            "LIMIT"
+        );
+        assert_eq!(
+            BinanceExecutionConnector::order_type_to_str(mm_core::OrderType::StopLimit),
+            "STOP_LOSS_LIMIT"
+        );
+        assert_eq!(
+            BinanceExecutionConnector::order_type_to_str(mm_core::OrderType::StopMarket),
+            "STOP_LOSS"
+        );
+    }
+
+    #[test]
+    fn test_tif_to_str() {
+        assert_eq!(
+            BinanceExecutionConnector::tif_to_str(mm_core::TimeInForce::GTC),
+            "GTC"
+        );
+        assert_eq!(
+            BinanceExecutionConnector::tif_to_str(mm_core::TimeInForce::IOC),
+            "IOC"
+        );
+        assert_eq!(
+            BinanceExecutionConnector::tif_to_str(mm_core::TimeInForce::FOK),
+            "FOK"
+        );
+        // GTD falls back to GTC on Binance.
+        assert_eq!(
+            BinanceExecutionConnector::tif_to_str(mm_core::TimeInForce::GTD),
+            "GTC"
+        );
+    }
+
+    // -- Execution report parsing --
+
+    #[test]
+    fn test_parse_execution_report_filled() {
+        let msg = serde_json::json!({
+            "e": "executionReport",
+            "s": "BTCUSDT",
+            "c": "my-client-id",
+            "i": 12345678,
+            "X": "FILLED",
+            "q": "1.5",
+            "z": "1.5",
+            "Z": "45000.00",
+            "L": "30000.00",
+            "l": "0.5",
+            "n": "0.001",
+            "N": "BTC",
+            "T": 1700000000000_i64
+        });
+        let update = BinanceExecutionConnector::parse_execution_report(&msg).unwrap();
+
+        assert_eq!(update.client_order_id, "my-client-id");
+        assert_eq!(update.exchange_order_id, Some("12345678".to_string()));
+        assert_eq!(update.exchange, Exchange::Binance);
+        assert_eq!(update.symbol, Symbol::new("BTC", "USDT"));
+        assert_eq!(update.status, OrderStatus::Filled);
+        assert_eq!(update.filled_quantity, dec!(1.5));
+        assert_eq!(update.remaining_quantity, dec!(0));
+        assert_eq!(update.average_fill_price, dec!(30000));
+        assert_eq!(update.last_fill_price, Some(dec!(30000)));
+        assert_eq!(update.last_fill_quantity, Some(dec!(0.5)));
+        assert_eq!(update.fee, Some(dec!(0.001)));
+        assert_eq!(update.fee_currency, Some("BTC".to_string()));
+    }
+
+    #[test]
+    fn test_parse_execution_report_partially_filled() {
+        let msg = serde_json::json!({
+            "e": "executionReport",
+            "s": "ETHUSDT",
+            "c": "partial-order",
+            "i": 99999,
+            "X": "PARTIALLY_FILLED",
+            "q": "10.0",
+            "z": "3.0",
+            "Z": "6000.00",
+            "L": "2000.00",
+            "l": "1.0",
+            "T": 1700000000000_i64
+        });
+        let update = BinanceExecutionConnector::parse_execution_report(&msg).unwrap();
+
+        assert_eq!(update.status, OrderStatus::PartiallyFilled);
+        assert_eq!(update.filled_quantity, dec!(3.0));
+        assert_eq!(update.remaining_quantity, dec!(7.0));
+        assert_eq!(update.average_fill_price, dec!(2000));
+    }
+
+    #[test]
+    fn test_parse_execution_report_all_statuses() {
+        let statuses = vec![
+            ("NEW", OrderStatus::New),
+            ("PARTIALLY_FILLED", OrderStatus::PartiallyFilled),
+            ("FILLED", OrderStatus::Filled),
+            ("CANCELED", OrderStatus::Cancelled),
+            ("REJECTED", OrderStatus::Rejected),
+            ("EXPIRED", OrderStatus::Expired),
+        ];
+
+        for (binance_status, expected) in statuses {
+            let msg = serde_json::json!({
+                "e": "executionReport",
+                "s": "BTCUSDT",
+                "c": "test",
+                "i": 1,
+                "X": binance_status,
+                "q": "1",
+                "z": "0",
+                "Z": "0",
+                "T": 1700000000000_i64
+            });
+            let update = BinanceExecutionConnector::parse_execution_report(&msg).unwrap();
+            assert_eq!(
+                update.status, expected,
+                "status mismatch for Binance status '{}'",
+                binance_status
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_execution_report_unknown_status_errors() {
+        let msg = serde_json::json!({
+            "e": "executionReport",
+            "s": "BTCUSDT",
+            "c": "test",
+            "i": 1,
+            "X": "BOGUS_STATUS",
+            "q": "1",
+            "z": "0",
+            "Z": "0",
+            "T": 1700000000000_i64
+        });
+        let result = BinanceExecutionConnector::parse_execution_report(&msg);
+        assert!(result.is_err());
+    }
+
+    // -- Connector state --
+
+    #[test]
+    fn test_connector_initial_state() {
+        let connector = test_connector();
+        assert!(!connector.is_connected());
+        assert_eq!(connector.exchange(), Exchange::Binance);
+    }
+}

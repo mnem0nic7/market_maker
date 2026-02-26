@@ -1,7 +1,7 @@
 import type {
   ApiResponse, HealthResponse, Position, Order, PortfolioRisk,
   StrategyConfig, StrategyStatus, OrderBook, KillSwitchResponse,
-  OptimizationResult, BacktestResult, BacktestRequest,
+  OptimizationResult, BacktestResult, BacktestRequest, PlaceOrderRequest,
 } from "./types";
 
 const BASE = "/api/v1";
@@ -34,6 +34,11 @@ export const api = {
     return fetchApi<Order[]>(`/orders${qs ? `?${qs}` : ""}`);
   },
   order: (id: string) => fetchApi<Order>(`/orders/${encodeURIComponent(id)}`),
+  placeOrder: (req: PlaceOrderRequest) =>
+    fetchApi<Order>("/orders", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
   portfolioRisk: () => fetchApi<PortfolioRisk>("/portfolio/risk"),
   strategies: () => fetchApi<StrategyStatus[]>("/strategies"),
   startStrategy: (id: string) =>

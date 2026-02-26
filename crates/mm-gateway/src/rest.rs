@@ -14,8 +14,8 @@ use mm_backtest::{
     OptimizationConfig, OptimizationProgress, OptimizationResult, ParameterOptimizer,
 };
 use mm_core::{
-    Exchange, MetricsRegistry, Order, OrderBook, PortfolioRisk, Position, StrategyConfig,
-    StrategyMetrics,
+    Exchange, MetricsRegistry, Order, OrderBook, OrderStatus, OrderType, PortfolioRisk, Position,
+    Side, StrategyConfig, StrategyMetrics, TimeInForce,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
@@ -292,7 +292,7 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         // Positions
         .route("/api/v1/positions", get(list_positions))
         // Orders
-        .route("/api/v1/orders", get(list_orders))
+        .route("/api/v1/orders", get(list_orders).post(place_order))
         .route("/api/v1/orders/{order_id}", get(get_order))
         // Portfolio risk
         .route("/api/v1/portfolio/risk", get(get_portfolio_risk))
@@ -340,6 +340,27 @@ pub struct OrderQuery {
     pub exchange: Option<String>,
     pub symbol: Option<String>,
     pub strategy_id: Option<String>,
+}
+
+/// Request body for placing a new order.
+#[derive(Debug, Deserialize)]
+struct PlaceOrderRequest {
+    exchange: String,
+    symbol: String,
+    side: String,
+    order_type: String,
+    #[serde(default)]
+    price: Option<String>,
+    quantity: String,
+    #[serde(default = "default_time_in_force")]
+    time_in_force: String,
+    strategy_id: Option<String>,
+    #[serde(default)]
+    reduce_only: bool,
+}
+
+fn default_time_in_force() -> String {
+    "GTC".to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +463,118 @@ async fn get_order(
             "order not found: {order_id}"
         ))),
     }
+}
+
+async fn place_order(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<PlaceOrderRequest>,
+) -> Result<(StatusCode, impl IntoResponse), (StatusCode, Json<ApiResponse<()>>)> {
+    // Parse exchange
+    let exchange: Exchange =
+        req.exchange.to_lowercase().parse().map_err(|_| {
+            ApiResponse::bad_request(format!("invalid exchange: '{}'", req.exchange))
+        })?;
+
+    // Parse symbol (expected format: "BTC/USDT" or "BTC-USDT")
+    let normalised = req.symbol.replace('-', "/");
+    let parts: Vec<&str> = normalised.split('/').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return Err(ApiResponse::bad_request(format!(
+            "invalid symbol format: '{}'. Expected BASE/QUOTE (e.g. BTC/USDT)",
+            req.symbol
+        )));
+    }
+    let symbol = mm_core::types::Symbol::new(parts[0], parts[1]);
+
+    // Parse side
+    let side: Side = req.side.parse().map_err(|_| {
+        ApiResponse::bad_request(format!("invalid side: '{}'. Must be Buy or Sell", req.side))
+    })?;
+
+    // Parse order type
+    let order_type: OrderType = req.order_type.parse().map_err(|_| {
+        ApiResponse::bad_request(format!(
+            "invalid order_type: '{}'. Must be Market, Limit, StopLimit, or StopMarket",
+            req.order_type
+        ))
+    })?;
+
+    // Parse time in force
+    let time_in_force: TimeInForce = req.time_in_force.parse().map_err(|_| {
+        ApiResponse::bad_request(format!(
+            "invalid time_in_force: '{}'. Must be GTC, IOC, FOK, or GTD",
+            req.time_in_force
+        ))
+    })?;
+
+    // Parse price
+    let price: Option<rust_decimal::Decimal> = match req.price {
+        Some(ref p) => Some(
+            p.parse()
+                .map_err(|e| ApiResponse::bad_request(format!("invalid price: {e}")))?,
+        ),
+        None => None,
+    };
+
+    // Limit orders require a price
+    if order_type == OrderType::Limit && price.is_none() {
+        return Err(ApiResponse::bad_request(
+            "limit orders require a price".to_string(),
+        ));
+    }
+
+    // Parse quantity
+    let quantity: rust_decimal::Decimal = req
+        .quantity
+        .parse()
+        .map_err(|e| ApiResponse::bad_request(format!("invalid quantity: {e}")))?;
+
+    if quantity <= rust_decimal::Decimal::ZERO {
+        return Err(ApiResponse::bad_request("quantity must be positive"));
+    }
+
+    let strategy_id = req.strategy_id.unwrap_or_else(|| "manual".to_string());
+
+    // Build the Order
+    let now = Utc::now();
+    let order = Order {
+        client_order_id: uuid::Uuid::new_v4().to_string(),
+        exchange_order_id: None,
+        exchange,
+        symbol,
+        side,
+        order_type,
+        time_in_force,
+        price,
+        quantity,
+        status: OrderStatus::Pending,
+        filled_quantity: rust_decimal::Decimal::ZERO,
+        remaining_quantity: quantity,
+        average_fill_price: rust_decimal::Decimal::ZERO,
+        strategy_id,
+        reduce_only: req.reduce_only,
+        created_at: now,
+        updated_at: now,
+    };
+
+    let response_order = order.clone();
+
+    // Register the order in state
+    {
+        let mut orders = state.orders.write().await;
+        orders.push(order);
+    }
+
+    info!(
+        client_order_id = %response_order.client_order_id,
+        exchange = %response_order.exchange,
+        symbol = %response_order.symbol,
+        side = %response_order.side,
+        order_type = %response_order.order_type,
+        "Order placed via REST API"
+    );
+
+    Ok((StatusCode::CREATED, ApiResponse::ok(response_order)))
 }
 
 // ---------------------------------------------------------------------------
@@ -1651,5 +1784,162 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // --- Place order tests ---
+
+    #[tokio::test]
+    async fn test_place_order_valid() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let body = serde_json::json!({
+            "exchange": "binance",
+            "symbol": "BTC/USDT",
+            "side": "Buy",
+            "order_type": "Limit",
+            "price": "50000.00",
+            "quantity": "0.1",
+            "time_in_force": "GTC"
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let resp_body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&resp_body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        assert!(json["data"]["client_order_id"].is_string());
+        assert_eq!(json["data"]["status"], "Pending");
+        assert_eq!(json["data"]["side"], "Buy");
+        assert_eq!(json["data"]["order_type"], "Limit");
+    }
+
+    #[tokio::test]
+    async fn test_place_order_market() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let body = serde_json::json!({
+            "exchange": "coinbase",
+            "symbol": "ETH/USD",
+            "side": "Sell",
+            "order_type": "Market",
+            "quantity": "1.5"
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_place_order_invalid_exchange() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let body = serde_json::json!({
+            "exchange": "nonexistent_exchange",
+            "symbol": "BTC/USDT",
+            "side": "Buy",
+            "order_type": "Limit",
+            "price": "50000",
+            "quantity": "0.1"
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_place_order_invalid_symbol() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let body = serde_json::json!({
+            "exchange": "binance",
+            "symbol": "INVALID",
+            "side": "Buy",
+            "order_type": "Limit",
+            "price": "50000",
+            "quantity": "0.1"
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_place_order_limit_without_price() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let body = serde_json::json!({
+            "exchange": "binance",
+            "symbol": "BTC/USDT",
+            "side": "Buy",
+            "order_type": "Limit",
+            "quantity": "0.1"
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }
