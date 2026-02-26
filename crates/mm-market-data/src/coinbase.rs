@@ -582,3 +582,423 @@ where
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    // -- Connector construction tests ----------------------------------------
+
+    #[test]
+    fn connector_default_is_not_connected() {
+        let connector = CoinbaseConnector::default();
+        assert!(!connector.is_connected());
+        assert_eq!(connector.exchange(), Exchange::Coinbase);
+    }
+
+    #[test]
+    fn connector_new_is_not_connected() {
+        let connector = CoinbaseConnector::new();
+        assert!(!connector.is_connected());
+    }
+
+    // -- Deserialization tests -----------------------------------------------
+
+    #[test]
+    fn deserialize_l2_event() {
+        let json = r#"{
+            "type": "update",
+            "product_id": "BTC-USD",
+            "updates": [
+                {"side": "bid", "price_level": "25000.10", "new_quantity": "1.5"},
+                {"side": "offer", "price_level": "25000.20", "new_quantity": "2.0"}
+            ]
+        }"#;
+        let event: CoinbaseL2Event = serde_json::from_str(json).unwrap();
+        assert_eq!(event.event_type, "update");
+        assert_eq!(event.product_id, "BTC-USD");
+        assert_eq!(event.updates.len(), 2);
+        assert_eq!(event.updates[0].side, "bid");
+        assert_eq!(event.updates[0].price_level, "25000.10");
+        assert_eq!(event.updates[0].new_quantity, "1.5");
+        assert_eq!(event.updates[1].side, "offer");
+    }
+
+    #[test]
+    fn deserialize_l2_snapshot_event() {
+        let json = r#"{
+            "type": "snapshot",
+            "product_id": "ETH-USD",
+            "updates": [
+                {"side": "bid", "price_level": "1800.00", "new_quantity": "10.0"},
+                {"side": "bid", "price_level": "1799.50", "new_quantity": "5.0"},
+                {"side": "offer", "price_level": "1800.50", "new_quantity": "3.0"}
+            ]
+        }"#;
+        let event: CoinbaseL2Event = serde_json::from_str(json).unwrap();
+        assert_eq!(event.event_type, "snapshot");
+        assert_eq!(event.product_id, "ETH-USD");
+        assert_eq!(event.updates.len(), 3);
+    }
+
+    #[test]
+    fn deserialize_trade_event() {
+        let json = r#"{
+            "type": "update",
+            "trades": [{
+                "trade_id": "123",
+                "product_id": "BTC-USD",
+                "price": "25000.15",
+                "size": "0.1",
+                "side": "BUY",
+                "time": "2023-01-01T00:00:00Z"
+            }]
+        }"#;
+        let event: CoinbaseTradeEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.event_type, "update");
+        assert_eq!(event.trades.len(), 1);
+        assert_eq!(event.trades[0].trade_id, "123");
+        assert_eq!(event.trades[0].product_id, "BTC-USD");
+        assert_eq!(event.trades[0].price, "25000.15");
+        assert_eq!(event.trades[0].size, "0.1");
+        assert_eq!(event.trades[0].side, "BUY");
+    }
+
+    #[test]
+    fn deserialize_trade_event_multiple_trades() {
+        let json = r#"{
+            "type": "update",
+            "trades": [
+                {
+                    "trade_id": "100",
+                    "product_id": "BTC-USD",
+                    "price": "25000.00",
+                    "size": "0.5",
+                    "side": "BUY",
+                    "time": "2023-01-01T00:00:00Z"
+                },
+                {
+                    "trade_id": "101",
+                    "product_id": "BTC-USD",
+                    "price": "25001.00",
+                    "size": "1.0",
+                    "side": "SELL",
+                    "time": "2023-01-01T00:00:01Z"
+                }
+            ]
+        }"#;
+        let event: CoinbaseTradeEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.trades.len(), 2);
+        assert_eq!(event.trades[0].side, "BUY");
+        assert_eq!(event.trades[1].side, "SELL");
+    }
+
+    #[test]
+    fn deserialize_subscribe_msg_serialization() {
+        let msg = CoinbaseSubscribeMsg {
+            msg_type: "subscribe".to_string(),
+            product_ids: vec!["BTC-USD".to_string(), "ETH-USD".to_string()],
+            channel: "level2".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"subscribe\""));
+        assert!(json.contains("\"product_ids\":[\"BTC-USD\",\"ETH-USD\"]"));
+        assert!(json.contains("\"channel\":\"level2\""));
+    }
+
+    #[test]
+    fn deserialize_ws_message_with_channel() {
+        let json = r#"{
+            "channel": "l2_data",
+            "events": [{"type": "update", "product_id": "BTC-USD", "updates": []}]
+        }"#;
+        let msg: CoinbaseWsMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.channel.as_deref(), Some("l2_data"));
+        assert!(msg.events.is_some());
+    }
+
+    #[test]
+    fn deserialize_ws_message_subscription_confirm() {
+        let json = r#"{
+            "type": "subscriptions",
+            "channels": [{"name": "level2", "product_ids": ["BTC-USD"]}]
+        }"#;
+        let msg: CoinbaseWsMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.msg_type.as_deref(), Some("subscriptions"));
+        // No channel field in subscription confirmations.
+        assert!(msg.channel.is_none());
+    }
+
+    #[test]
+    fn deserialize_order_book_response() {
+        let json = r#"{
+            "pricebook": {
+                "product_id": "BTC-USD",
+                "bids": [
+                    {"price": "25000.00", "size": "1.5"},
+                    {"price": "24999.00", "size": "2.0"}
+                ],
+                "asks": [
+                    {"price": "25001.00", "size": "0.5"}
+                ],
+                "time": "2023-01-01T00:00:00Z"
+            }
+        }"#;
+        let resp: CoinbaseOrderBookResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.pricebook.product_id, "BTC-USD");
+        assert_eq!(resp.pricebook.bids.len(), 2);
+        assert_eq!(resp.pricebook.asks.len(), 1);
+        assert_eq!(resp.pricebook.bids[0].price, "25000.00");
+        assert_eq!(resp.pricebook.bids[0].size, "1.5");
+    }
+
+    // -- Message handling tests (async) --------------------------------------
+
+    #[tokio::test]
+    async fn handle_l2_data_message() {
+        let json = r#"{
+            "channel": "l2_data",
+            "events": [{
+                "type": "update",
+                "product_id": "BTC-USD",
+                "updates": [
+                    {"side": "bid", "price_level": "25000.10", "new_quantity": "1.500"},
+                    {"side": "offer", "price_level": "25000.20", "new_quantity": "2.100"}
+                ]
+            }]
+        }"#;
+
+        let (book_tx, mut book_rx) = mpsc::channel(10);
+        let (trade_tx, _trade_rx) = mpsc::channel(10);
+
+        handle_coinbase_message(json, &book_tx, &trade_tx)
+            .await
+            .unwrap();
+
+        let book = book_rx.recv().await.unwrap();
+        assert_eq!(book.exchange, Exchange::Coinbase);
+        assert_eq!(book.symbol.base, "BTC");
+        assert_eq!(book.symbol.quote, "USD");
+        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.bids[0].price, dec!(25000.10));
+        assert_eq!(book.bids[0].quantity, dec!(1.500));
+        assert_eq!(book.asks.len(), 1);
+        assert_eq!(book.asks[0].price, dec!(25000.20));
+        assert_eq!(book.asks[0].quantity, dec!(2.100));
+    }
+
+    #[tokio::test]
+    async fn handle_l2_data_sorts_bids_desc_asks_asc() {
+        let json = r#"{
+            "channel": "l2_data",
+            "events": [{
+                "type": "update",
+                "product_id": "BTC-USD",
+                "updates": [
+                    {"side": "bid", "price_level": "24999.00", "new_quantity": "1.0"},
+                    {"side": "bid", "price_level": "25000.00", "new_quantity": "2.0"},
+                    {"side": "offer", "price_level": "25002.00", "new_quantity": "0.5"},
+                    {"side": "offer", "price_level": "25001.00", "new_quantity": "1.0"}
+                ]
+            }]
+        }"#;
+
+        let (book_tx, mut book_rx) = mpsc::channel(10);
+        let (trade_tx, _trade_rx) = mpsc::channel(10);
+
+        handle_coinbase_message(json, &book_tx, &trade_tx)
+            .await
+            .unwrap();
+
+        let book = book_rx.recv().await.unwrap();
+        // Bids should be sorted descending by price.
+        assert_eq!(book.bids[0].price, dec!(25000.00));
+        assert_eq!(book.bids[1].price, dec!(24999.00));
+        // Asks should be sorted ascending by price.
+        assert_eq!(book.asks[0].price, dec!(25001.00));
+        assert_eq!(book.asks[1].price, dec!(25002.00));
+    }
+
+    #[tokio::test]
+    async fn handle_market_trades_update_message() {
+        let json = r#"{
+            "channel": "market_trades",
+            "events": [{
+                "type": "update",
+                "trades": [{
+                    "trade_id": "456",
+                    "product_id": "BTC-USD",
+                    "price": "25000.15",
+                    "size": "0.100",
+                    "side": "BUY",
+                    "time": "2023-01-01T00:00:00Z"
+                }]
+            }]
+        }"#;
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, mut trade_rx) = mpsc::channel(10);
+
+        handle_coinbase_message(json, &book_tx, &trade_tx)
+            .await
+            .unwrap();
+
+        let trade = trade_rx.recv().await.unwrap();
+        assert_eq!(trade.exchange, Exchange::Coinbase);
+        assert_eq!(trade.symbol.base, "BTC");
+        assert_eq!(trade.symbol.quote, "USD");
+        assert_eq!(trade.price, dec!(25000.15));
+        assert_eq!(trade.quantity, dec!(0.100));
+        assert_eq!(trade.side, Side::Buy);
+        assert_eq!(trade.trade_id, "456");
+    }
+
+    #[tokio::test]
+    async fn handle_market_trades_sell_side() {
+        let json = r#"{
+            "channel": "market_trades",
+            "events": [{
+                "type": "update",
+                "trades": [{
+                    "trade_id": "789",
+                    "product_id": "ETH-USD",
+                    "price": "1800.00",
+                    "size": "5.0",
+                    "side": "SELL",
+                    "time": "2023-06-15T12:30:00Z"
+                }]
+            }]
+        }"#;
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, mut trade_rx) = mpsc::channel(10);
+
+        handle_coinbase_message(json, &book_tx, &trade_tx)
+            .await
+            .unwrap();
+
+        let trade = trade_rx.recv().await.unwrap();
+        assert_eq!(trade.side, Side::Sell);
+        assert_eq!(trade.symbol.base, "ETH");
+    }
+
+    #[tokio::test]
+    async fn handle_market_trades_snapshot_is_ignored() {
+        let json = r#"{
+            "channel": "market_trades",
+            "events": [{
+                "type": "snapshot",
+                "trades": [{
+                    "trade_id": "1",
+                    "product_id": "BTC-USD",
+                    "price": "25000.00",
+                    "size": "1.0",
+                    "side": "BUY",
+                    "time": "2023-01-01T00:00:00Z"
+                }]
+            }]
+        }"#;
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, mut trade_rx) = mpsc::channel(10);
+
+        handle_coinbase_message(json, &book_tx, &trade_tx)
+            .await
+            .unwrap();
+
+        // Snapshot trades are intentionally not forwarded.
+        assert!(trade_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_subscription_confirmation_is_ignored() {
+        let json = r#"{
+            "channel": "subscriptions",
+            "events": [{"subscriptions": {"level2": ["BTC-USD"]}}]
+        }"#;
+
+        let (book_tx, mut book_rx) = mpsc::channel(10);
+        let (trade_tx, mut trade_rx) = mpsc::channel(10);
+
+        let result = handle_coinbase_message(json, &book_tx, &trade_tx).await;
+        assert!(result.is_ok());
+
+        // No data should be emitted.
+        assert!(book_rx.try_recv().is_err());
+        assert!(trade_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_heartbeat_is_ignored() {
+        let json = r#"{
+            "channel": "heartbeats",
+            "events": [{"current_time": "2023-01-01T00:00:00Z"}]
+        }"#;
+
+        let (book_tx, mut book_rx) = mpsc::channel(10);
+        let (trade_tx, mut trade_rx) = mpsc::channel(10);
+
+        let result = handle_coinbase_message(json, &book_tx, &trade_tx).await;
+        assert!(result.is_ok());
+        assert!(book_rx.try_recv().is_err());
+        assert!(trade_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_invalid_json_returns_error() {
+        let json = "not valid json at all";
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, _trade_rx) = mpsc::channel(10);
+
+        let result = handle_coinbase_message(json, &book_tx, &trade_tx).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_message_without_events_is_ok() {
+        // Some messages (like initial connection acks) have no events field.
+        let json = r#"{"type": "connected"}"#;
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, _trade_rx) = mpsc::channel(10);
+
+        let result = handle_coinbase_message(json, &book_tx, &trade_tx).await;
+        assert!(result.is_ok());
+    }
+
+    // -- Symbol normalization (connector-specific usage) ----------------------
+
+    #[test]
+    fn coinbase_symbol_normalization_btcusd() {
+        let sym = Symbol::new("BTC", "USD");
+        let raw = normalizer::to_exchange_symbol(Exchange::Coinbase, &sym);
+        assert_eq!(raw, "BTC-USD");
+    }
+
+    #[test]
+    fn coinbase_symbol_normalization_ethusd() {
+        let sym = Symbol::new("ETH", "USD");
+        let raw = normalizer::to_exchange_symbol(Exchange::Coinbase, &sym);
+        assert_eq!(raw, "ETH-USD");
+    }
+
+    #[test]
+    fn coinbase_from_exchange_symbol() {
+        let sym = normalizer::from_exchange_symbol(Exchange::Coinbase, "BTC-USD").unwrap();
+        assert_eq!(sym.base, "BTC");
+        assert_eq!(sym.quote, "USD");
+    }
+
+    #[test]
+    fn coinbase_from_exchange_symbol_eth_usdc() {
+        let sym = normalizer::from_exchange_symbol(Exchange::Coinbase, "ETH-USDC").unwrap();
+        assert_eq!(sym.base, "ETH");
+        assert_eq!(sym.quote, "USDC");
+    }
+}

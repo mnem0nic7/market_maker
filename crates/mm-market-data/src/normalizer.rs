@@ -406,4 +406,279 @@ mod tests {
         assert_eq!(sym.base, "BTC");
         assert_eq!(sym.quote, "USD");
     }
+
+    // Binance — additional cases -------------------------------------------
+
+    #[test]
+    fn binance_roundtrip_solusdt() {
+        let sym = Symbol::new("SOL", "USDT");
+        let raw = to_exchange_symbol(Exchange::Binance, &sym);
+        assert_eq!(raw, "SOLUSDT");
+        let back = from_exchange_symbol(Exchange::Binance, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn binance_roundtrip_dogeusdc() {
+        let sym = Symbol::new("DOGE", "USDC");
+        let raw = to_exchange_symbol(Exchange::Binance, &sym);
+        assert_eq!(raw, "DOGEUSDC");
+        let back = from_exchange_symbol(Exchange::Binance, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn binance_from_exchange_fdusd_quote() {
+        let sym = from_exchange_symbol(Exchange::Binance, "BTCFDUSD").unwrap();
+        assert_eq!(sym.base, "BTC");
+        assert_eq!(sym.quote, "FDUSD");
+    }
+
+    #[test]
+    fn binance_from_exchange_empty_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Binance, "").is_none());
+    }
+
+    #[test]
+    fn binance_from_exchange_unknown_quote_returns_none() {
+        // "XYZABC" where "ABC" is not a known quote currency.
+        assert!(from_exchange_symbol(Exchange::Binance, "XYZABC").is_none());
+    }
+
+    #[test]
+    fn binance_from_exchange_just_quote_returns_none() {
+        // Only the quote part, no base.
+        assert!(from_exchange_symbol(Exchange::Binance, "USDT").is_none());
+    }
+
+    // Coinbase — additional cases ------------------------------------------
+
+    #[test]
+    fn coinbase_roundtrip_sol_usd() {
+        let sym = Symbol::new("SOL", "USD");
+        let raw = to_exchange_symbol(Exchange::Coinbase, &sym);
+        assert_eq!(raw, "SOL-USD");
+        let back = from_exchange_symbol(Exchange::Coinbase, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn coinbase_from_exchange_empty_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Coinbase, "").is_none());
+    }
+
+    #[test]
+    fn coinbase_from_exchange_no_dash_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Coinbase, "BTCUSD").is_none());
+    }
+
+    #[test]
+    fn coinbase_from_exchange_dash_only_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Coinbase, "-").is_none());
+    }
+
+    #[test]
+    fn coinbase_from_exchange_trailing_dash_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Coinbase, "BTC-").is_none());
+    }
+
+    // Kraken — additional cases --------------------------------------------
+
+    #[test]
+    fn kraken_roundtrip_btc_usd() {
+        let sym = Symbol::new("BTC", "USD");
+        let raw = to_exchange_symbol(Exchange::Kraken, &sym);
+        assert_eq!(raw, "BTC/USD");
+        let back = from_exchange_symbol(Exchange::Kraken, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn kraken_roundtrip_eth_eur() {
+        let sym = Symbol::new("ETH", "EUR");
+        let raw = to_exchange_symbol(Exchange::Kraken, &sym);
+        assert_eq!(raw, "ETH/EUR");
+        let back = from_exchange_symbol(Exchange::Kraken, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn kraken_roundtrip_sol_usd() {
+        let sym = Symbol::new("SOL", "USD");
+        let raw = to_exchange_symbol(Exchange::Kraken, &sym);
+        assert_eq!(raw, "SOL/USD");
+        let back = from_exchange_symbol(Exchange::Kraken, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn kraken_from_exchange_xbt_usd() {
+        let sym = from_exchange_symbol(Exchange::Kraken, "XBT/USD").unwrap();
+        assert_eq!(sym.base, "BTC");
+        assert_eq!(sym.quote, "USD");
+    }
+
+    #[test]
+    fn kraken_from_exchange_legacy_xethzeur() {
+        let sym = from_exchange_symbol(Exchange::Kraken, "XETHZEUR").unwrap();
+        assert_eq!(sym.base, "ETH");
+        assert_eq!(sym.quote, "EUR");
+    }
+
+    #[test]
+    fn kraken_from_exchange_legacy_xxbtzusd() {
+        let sym = from_exchange_symbol(Exchange::Kraken, "XXBTZUSD").unwrap();
+        assert_eq!(sym.base, "BTC");
+        assert_eq!(sym.quote, "USD");
+    }
+
+    #[test]
+    fn kraken_to_exchange_unknown_asset_passes_through() {
+        // An unknown asset should pass through as-is.
+        let sym = Symbol::new("AVAX", "USD");
+        let raw = to_exchange_symbol(Exchange::Kraken, &sym);
+        assert_eq!(raw, "AVAX/USD");
+    }
+
+    // normalize_kraken_asset -------------------------------------------------
+
+    #[test]
+    fn normalize_kraken_asset_xbt() {
+        assert_eq!(normalize_kraken_asset("XBT"), "BTC");
+    }
+
+    #[test]
+    fn normalize_kraken_asset_xxbt() {
+        assert_eq!(normalize_kraken_asset("XXBT"), "BTC");
+    }
+
+    #[test]
+    fn normalize_kraken_asset_xeth() {
+        assert_eq!(normalize_kraken_asset("XETH"), "ETH");
+    }
+
+    #[test]
+    fn normalize_kraken_asset_zusd() {
+        assert_eq!(normalize_kraken_asset("ZUSD"), "USD");
+    }
+
+    #[test]
+    fn normalize_kraken_asset_zeur() {
+        assert_eq!(normalize_kraken_asset("ZEUR"), "EUR");
+    }
+
+    #[test]
+    fn normalize_kraken_asset_btc_passthrough() {
+        assert_eq!(normalize_kraken_asset("BTC"), "BTC");
+    }
+
+    #[test]
+    fn normalize_kraken_asset_unknown_passthrough() {
+        assert_eq!(normalize_kraken_asset("AVAX"), "AVAX");
+    }
+
+    #[test]
+    fn normalize_kraken_asset_lowercase_input() {
+        assert_eq!(normalize_kraken_asset("xbt"), "BTC");
+    }
+
+    // Alpaca ---------------------------------------------------------------
+
+    #[test]
+    fn alpaca_to_exchange_aapl() {
+        let sym = Symbol::new("AAPL", "USD");
+        let raw = to_exchange_symbol(Exchange::Alpaca, &sym);
+        assert_eq!(raw, "AAPL");
+    }
+
+    #[test]
+    fn alpaca_from_exchange_aapl() {
+        let sym = from_exchange_symbol(Exchange::Alpaca, "AAPL").unwrap();
+        assert_eq!(sym.base, "AAPL");
+        assert_eq!(sym.quote, "USD");
+    }
+
+    #[test]
+    fn alpaca_from_exchange_empty_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Alpaca, "").is_none());
+    }
+
+    #[test]
+    fn alpaca_from_exchange_whitespace_only_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Alpaca, "   ").is_none());
+    }
+
+    // Interactive Brokers --------------------------------------------------
+
+    #[test]
+    fn ib_to_exchange_msft() {
+        let sym = Symbol::new("MSFT", "USD");
+        let raw = to_exchange_symbol(Exchange::InteractiveBrokers, &sym);
+        assert_eq!(raw, "MSFT");
+    }
+
+    #[test]
+    fn ib_from_exchange_msft() {
+        let sym = from_exchange_symbol(Exchange::InteractiveBrokers, "MSFT").unwrap();
+        assert_eq!(sym.base, "MSFT");
+        assert_eq!(sym.quote, "USD");
+    }
+
+    #[test]
+    fn ib_from_exchange_empty_returns_none() {
+        assert!(from_exchange_symbol(Exchange::InteractiveBrokers, "").is_none());
+    }
+
+    // Uniswap --------------------------------------------------------------
+
+    #[test]
+    fn uniswap_roundtrip_weth_usdc() {
+        let sym = Symbol::new("WETH", "USDC");
+        let raw = to_exchange_symbol(Exchange::Uniswap, &sym);
+        assert_eq!(raw, "WETH/USDC");
+        let back = from_exchange_symbol(Exchange::Uniswap, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn uniswap_from_exchange_empty_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Uniswap, "").is_none());
+    }
+
+    #[test]
+    fn uniswap_from_exchange_no_slash_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Uniswap, "WETHUSDC").is_none());
+    }
+
+    // Raydium --------------------------------------------------------------
+
+    #[test]
+    fn raydium_roundtrip_sol_usdc() {
+        let sym = Symbol::new("SOL", "USDC");
+        let raw = to_exchange_symbol(Exchange::Raydium, &sym);
+        assert_eq!(raw, "SOL/USDC");
+        let back = from_exchange_symbol(Exchange::Raydium, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn raydium_from_exchange_empty_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Raydium, "").is_none());
+    }
+
+    // Simulated ------------------------------------------------------------
+
+    #[test]
+    fn simulated_roundtrip() {
+        let sym = Symbol::new("BTC", "USDT");
+        let raw = to_exchange_symbol(Exchange::Simulated, &sym);
+        assert_eq!(raw, "BTC/USDT");
+        let back = from_exchange_symbol(Exchange::Simulated, &raw).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn simulated_from_exchange_no_slash_returns_none() {
+        assert!(from_exchange_symbol(Exchange::Simulated, "BTCUSDT").is_none());
+    }
 }

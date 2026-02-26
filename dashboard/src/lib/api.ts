@@ -1,7 +1,7 @@
 import type {
   ApiResponse, HealthResponse, Position, Order, PortfolioRisk,
   StrategyConfig, StrategyStatus, OrderBook, KillSwitchResponse,
-  OptimizationResult,
+  OptimizationResult, BacktestResult, BacktestRequest,
 } from "./types";
 
 const BASE = "/api/v1";
@@ -82,6 +82,14 @@ export const api = {
       results?: OptimizationResult[];
       progress?: { completed: number; total: number };
     }>(`/backtest/optimize/${encodeURIComponent(jobId)}`),
+
+  backtestResults: () => fetchApi<BacktestResult[]>("/backtest/results"),
+  runBacktest: (params: BacktestRequest) =>
+    fetchApi<BacktestResult>("/backtest/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }),
 
   assistantChat: async function* (
     messages: Array<{ role: string; content: string }>

@@ -14,6 +14,7 @@ import { ActiveOrdersPanel } from "@/components/panels/ActiveOrders";
 import { EventLogPanel } from "@/components/panels/EventLog";
 import { StrategyFormPanel } from "@/components/panels/StrategyForm";
 import { AiAssistantPanel } from "@/components/panels/AiAssistant";
+import { BacktestResultsPanel } from "@/components/panels/BacktestResults";
 
 export default function DashboardPage() {
   const { connected, loading, error } = useDashboard();
@@ -70,6 +71,7 @@ export default function DashboardPage() {
         <div key="event-log"><Panel title="Event Log"><EventLogPanel /></Panel></div>
         <div key="strategy-form"><Panel title="New Strategy"><StrategyFormPanel /></Panel></div>
         <div key="ai-assistant"><Panel title="AI Assistant"><AiAssistantPanel /></Panel></div>
+        <div key="backtest-results"><Panel title="Backtest Results"><BacktestResultsPanel /></Panel></div>
       </DashboardGrid>
     </main>
   );
