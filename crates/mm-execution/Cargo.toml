@@ -54,7 +54,7 @@ base64 = "0.22"
 
 # JWT auth (needed for Coinbase CDP keys)
 jsonwebtoken = "9"
-rand = "0.8"
+rand = "0.9"
 
 # EC key handling (SEC1 → PKCS#8 conversion for Coinbase CDP keys)
 p256 = { version = "0.13", features = ["pem"] }
