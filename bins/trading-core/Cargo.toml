@@ -3,6 +3,10 @@ name = "trading-core"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "trading_core"
+path = "src/lib.rs"
+
 [[bin]]
 name = "trading-core"
 path = "src/main.rs"
@@ -49,3 +53,6 @@ async-trait = { workspace = true }
 
 # Environment
 dotenvy = "0.15"
+
+[dev-dependencies]
+toml = "0.8"

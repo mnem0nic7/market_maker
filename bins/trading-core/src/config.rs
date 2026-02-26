@@ -82,8 +82,18 @@ impl TradingConfig {
         if self.risk.pnl_limits.max_daily_loss <= Decimal::ZERO {
             errors.push("risk.pnl_limits.max_daily_loss must be positive".to_string());
         }
+        if self.risk.pnl_limits.max_drawdown_pct <= Decimal::ZERO {
+            errors.push("risk.pnl_limits.max_drawdown_pct must be positive".to_string());
+        }
         if self.risk.rate_limits.max_orders_per_second == 0 {
             errors.push("risk.rate_limits.max_orders_per_second must be > 0".to_string());
+        }
+        if self.risk.position_limits.max_position_per_symbol <= Decimal::ZERO {
+            errors
+                .push("risk.position_limits.max_position_per_symbol must be positive".to_string());
+        }
+        if self.risk.position_limits.max_gross_exposure <= Decimal::ZERO {
+            errors.push("risk.position_limits.max_gross_exposure must be positive".to_string());
         }
 
         // 4. Gateway port must be in valid non-privileged range
@@ -94,10 +104,38 @@ impl TradingConfig {
             ));
         }
 
-        // 5. At least one exchange should be enabled (warn, not error)
+        // 5. order_book_stale_ms must be > 0 (zero means everything is stale)
+        if self.trading_loop.order_book_stale_ms == 0 {
+            errors.push(
+                "trading_loop.order_book_stale_ms must be > 0 (zero means all books are stale)"
+                    .to_string(),
+            );
+        }
+
+        // 6. Risk limit consistency: kill_switch.max_daily_loss should be >=
+        //    pnl_limits.max_daily_loss (the pnl check fires first)
+        if self.risk.kill_switch.max_daily_loss < self.risk.pnl_limits.max_daily_loss {
+            errors.push(format!(
+                "risk.kill_switch.max_daily_loss ({}) is less than risk.pnl_limits.max_daily_loss ({}); \
+                 the kill switch should have a higher or equal threshold",
+                self.risk.kill_switch.max_daily_loss, self.risk.pnl_limits.max_daily_loss,
+            ));
+        }
+
+        // 7. At least one exchange should be enabled (warn, not error)
         let any_enabled = self.exchanges.values().any(|ec| ec.enabled);
         if !any_enabled {
             tracing::warn!("no exchanges are enabled — the bot will not trade");
+        }
+
+        // 8. Disabled exchanges with empty credentials get an informational warn
+        for (name, ec) in &self.exchanges {
+            if !ec.enabled && ec.api_key.trim().is_empty() {
+                tracing::warn!(
+                    "exchanges.{}: api_key is empty (exchange is disabled, so this is non-fatal)",
+                    name,
+                );
+            }
         }
 
         if errors.is_empty() {
@@ -566,5 +604,459 @@ fn apply_exchange_env_overrides(config: &mut TradingConfig) {
                 ec.enabled = val.eq_ignore_ascii_case("true") || val == "1";
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    /// Helper: build a minimal valid TradingConfig.
+    ///
+    /// All defaults are valid, but we explicitly set one disabled exchange
+    /// entry so the exchange map is non-empty (matching real-world usage).
+    fn make_valid_config() -> TradingConfig {
+        let mut cfg = TradingConfig::default();
+        cfg.exchanges.insert(
+            "simulated".to_string(),
+            ExchangeConfig {
+                api_key: String::new(),
+                secret_key: String::new(),
+                enabled: false,
+                symbols: vec!["BTC/USDT".to_string()],
+            },
+        );
+        cfg
+    }
+
+    /// Helper: build a config with one *enabled* exchange that has credentials.
+    fn make_config_with_enabled_exchange() -> TradingConfig {
+        let mut cfg = TradingConfig::default();
+        cfg.exchanges.insert(
+            "binance".to_string(),
+            ExchangeConfig {
+                api_key: "test-api-key".to_string(),
+                secret_key: "test-secret-key".to_string(),
+                enabled: true,
+                symbols: vec!["BTC/USDT".to_string()],
+            },
+        );
+        cfg
+    }
+
+    // -----------------------------------------------------------------------
+    // 1. Default config validates
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_default_config_validates() {
+        let cfg = TradingConfig::default();
+        assert!(
+            cfg.validate().is_ok(),
+            "default config should pass validation: {:?}",
+            cfg.validate().err(),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Zero tick_interval_ms fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_zero_tick_interval_fails() {
+        let mut cfg = make_valid_config();
+        cfg.trading_loop.tick_interval_ms = 0;
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("tick_interval_ms must be > 0"),
+            "expected tick_interval error, got: {msg}",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Negative risk limits fail (position limits)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_negative_position_limit_fails() {
+        let mut cfg = make_valid_config();
+        cfg.risk.position_limits.max_position_per_symbol = dec!(-5);
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_position_per_symbol must be positive"),
+            "expected position limit error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn test_zero_max_gross_exposure_fails() {
+        let mut cfg = make_valid_config();
+        cfg.risk.position_limits.max_gross_exposure = Decimal::ZERO;
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_gross_exposure must be positive"),
+            "expected gross exposure error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn test_negative_max_daily_loss_fails() {
+        let mut cfg = make_valid_config();
+        cfg.risk.pnl_limits.max_daily_loss = dec!(-100);
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_daily_loss must be positive"),
+            "expected pnl limit error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn test_negative_max_drawdown_pct_fails() {
+        let mut cfg = make_valid_config();
+        cfg.risk.pnl_limits.max_drawdown_pct = dec!(-0.05);
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_drawdown_pct must be positive"),
+            "expected drawdown pct error, got: {msg}",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. Empty exchange list (warn, not fail)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_empty_exchange_list_still_validates() {
+        // No exchanges at all — should still pass validation (warn only).
+        let cfg = TradingConfig::default();
+        assert!(cfg.exchanges.is_empty());
+        assert!(
+            cfg.validate().is_ok(),
+            "empty exchange list should warn but not fail",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Invalid gateway port fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_gateway_port_zero_fails() {
+        let mut cfg = make_valid_config();
+        cfg.gateway.enabled = true;
+        cfg.gateway.port = 0;
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("gateway.port must be in range"),
+            "expected port range error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn test_gateway_privileged_port_fails() {
+        let mut cfg = make_valid_config();
+        cfg.gateway.enabled = true;
+        cfg.gateway.port = 80; // privileged port
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("gateway.port must be in range"),
+            "expected port range error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn test_gateway_port_1024_is_ok() {
+        let mut cfg = make_valid_config();
+        cfg.gateway.enabled = true;
+        cfg.gateway.port = 1024;
+        assert!(
+            cfg.validate().is_ok(),
+            "port 1024 is the minimum valid non-privileged port",
+        );
+    }
+
+    #[test]
+    fn test_gateway_disabled_skips_port_validation() {
+        let mut cfg = make_valid_config();
+        cfg.gateway.enabled = false;
+        cfg.gateway.port = 0; // invalid, but gateway is disabled
+        assert!(
+            cfg.validate().is_ok(),
+            "disabled gateway should not validate port",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Zero order_book_stale_ms fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_zero_order_book_stale_ms_fails() {
+        let mut cfg = make_valid_config();
+        cfg.trading_loop.order_book_stale_ms = 0;
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("order_book_stale_ms must be > 0"),
+            "expected stale ms error, got: {msg}",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 7. Zero reconciliation_interval_secs is OK (means disabled)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_zero_reconciliation_interval_ok() {
+        let mut cfg = make_valid_config();
+        cfg.trading_loop.reconciliation_interval_secs = 0; // disabled
+        assert!(
+            cfg.validate().is_ok(),
+            "zero reconciliation interval means disabled, should pass",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. Valid minimal config
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_valid_minimal_config() {
+        // A truly minimal config: all defaults, nothing overridden.
+        let cfg = TradingConfig::default();
+        assert!(cfg.validate().is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // 9. TOML serialization round-trip
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_config_serialization_round_trip() {
+        let original = make_config_with_enabled_exchange();
+
+        // Serialize to TOML
+        let toml_str = toml::to_string(&original).expect("TradingConfig should serialize to TOML");
+
+        // Deserialize back
+        let restored: TradingConfig =
+            toml::from_str(&toml_str).expect("TOML should deserialize back to TradingConfig");
+
+        // Verify key fields survived the round-trip
+        assert_eq!(
+            original.trading_loop.tick_interval_ms,
+            restored.trading_loop.tick_interval_ms,
+        );
+        assert_eq!(
+            original.risk.pnl_limits.max_daily_loss,
+            restored.risk.pnl_limits.max_daily_loss,
+        );
+        assert_eq!(original.gateway.port, restored.gateway.port,);
+        assert_eq!(
+            original.trading_loop.order_book_stale_ms,
+            restored.trading_loop.order_book_stale_ms,
+        );
+        // Check exchange entry survived
+        assert!(restored.exchanges.contains_key("binance"));
+        let binance = &restored.exchanges["binance"];
+        assert_eq!(binance.api_key, "test-api-key");
+        assert!(binance.enabled);
+    }
+
+    // -----------------------------------------------------------------------
+    // 10. Environment override works (manual apply)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_env_override_works() {
+        // Set env vars before calling the override helper
+        let unique_key = format!("TEST_KEY_{}", std::process::id());
+        let unique_secret = format!("TEST_SECRET_{}", std::process::id());
+
+        let mut cfg = TradingConfig::default();
+        cfg.exchanges.insert(
+            "binance".to_string(),
+            ExchangeConfig {
+                api_key: "placeholder".to_string(),
+                secret_key: "placeholder".to_string(),
+                enabled: false,
+                symbols: vec![],
+            },
+        );
+
+        // Set the env vars that apply_exchange_env_overrides looks for
+        std::env::set_var("MM_EXCHANGES__BINANCE__API_KEY", &unique_key);
+        std::env::set_var("MM_EXCHANGES__BINANCE__SECRET_KEY", &unique_secret);
+        std::env::set_var("MM_EXCHANGES__BINANCE__ENABLED", "true");
+
+        apply_exchange_env_overrides(&mut cfg);
+
+        let binance = &cfg.exchanges["binance"];
+        assert_eq!(binance.api_key, unique_key);
+        assert_eq!(binance.secret_key, unique_secret);
+        assert!(binance.enabled);
+
+        // Clean up
+        std::env::remove_var("MM_EXCHANGES__BINANCE__API_KEY");
+        std::env::remove_var("MM_EXCHANGES__BINANCE__SECRET_KEY");
+        std::env::remove_var("MM_EXCHANGES__BINANCE__ENABLED");
+    }
+
+    // -----------------------------------------------------------------------
+    // 11. Missing API key on disabled exchange warns but does not fail
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_missing_api_key_on_disabled_exchange_does_not_fail() {
+        let mut cfg = TradingConfig::default();
+        cfg.exchanges.insert(
+            "kraken".to_string(),
+            ExchangeConfig {
+                api_key: String::new(), // empty
+                secret_key: String::new(),
+                enabled: false, // disabled — so empty key should NOT cause error
+                symbols: vec![],
+            },
+        );
+        assert!(
+            cfg.validate().is_ok(),
+            "disabled exchange with empty api_key should pass (warn only)",
+        );
+    }
+
+    #[test]
+    fn test_enabled_exchange_with_empty_api_key_fails() {
+        let mut cfg = make_valid_config();
+        cfg.exchanges.insert(
+            "binance".to_string(),
+            ExchangeConfig {
+                api_key: "  ".to_string(), // whitespace-only
+                secret_key: "valid-secret".to_string(),
+                enabled: true,
+                symbols: vec!["BTC/USDT".to_string()],
+            },
+        );
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("api_key is empty"),
+            "expected api_key empty error, got: {msg}",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 12. Risk limit consistency (kill switch >= pnl limit)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_risk_limit_consistency_kill_switch_below_pnl_fails() {
+        let mut cfg = make_valid_config();
+        cfg.risk.pnl_limits.max_daily_loss = dec!(20_000);
+        cfg.risk.kill_switch.max_daily_loss = dec!(10_000); // less than pnl limit
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("kill_switch.max_daily_loss") && msg.contains("less than"),
+            "expected kill switch consistency error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn test_risk_limit_consistency_equal_values_ok() {
+        let mut cfg = make_valid_config();
+        cfg.risk.pnl_limits.max_daily_loss = dec!(10_000);
+        cfg.risk.kill_switch.max_daily_loss = dec!(10_000);
+        assert!(
+            cfg.validate().is_ok(),
+            "equal kill switch and pnl daily loss should be valid",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 13. Zero max_orders_per_second fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_zero_max_orders_per_second_fails() {
+        let mut cfg = make_valid_config();
+        cfg.risk.rate_limits.max_orders_per_second = 0;
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_orders_per_second must be > 0"),
+            "expected rate limit error, got: {msg}",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 14. Multiple errors are collected and reported together
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_multiple_errors_collected() {
+        let mut cfg = make_valid_config();
+        cfg.trading_loop.tick_interval_ms = 0;
+        cfg.trading_loop.order_book_stale_ms = 0;
+        cfg.risk.pnl_limits.max_daily_loss = Decimal::ZERO;
+        cfg.risk.rate_limits.max_orders_per_second = 0;
+
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+
+        // All four errors should be present in one message
+        assert!(
+            msg.contains("tick_interval_ms"),
+            "missing tick error in: {msg}"
+        );
+        assert!(
+            msg.contains("order_book_stale_ms"),
+            "missing stale error in: {msg}"
+        );
+        assert!(
+            msg.contains("max_daily_loss"),
+            "missing pnl error in: {msg}"
+        );
+        assert!(
+            msg.contains("max_orders_per_second"),
+            "missing rate error in: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 15. parse_exchange helper
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_parse_exchange_known() {
+        assert_eq!(parse_exchange("binance"), Some(Exchange::Binance));
+        assert_eq!(parse_exchange("Coinbase"), Some(Exchange::Coinbase));
+        assert_eq!(parse_exchange("KRAKEN"), Some(Exchange::Kraken));
+        assert_eq!(parse_exchange("alpaca"), Some(Exchange::Alpaca));
+        assert_eq!(
+            parse_exchange("interactive_brokers"),
+            Some(Exchange::InteractiveBrokers)
+        );
+        assert_eq!(parse_exchange("ib"), Some(Exchange::InteractiveBrokers));
+        assert_eq!(parse_exchange("simulated"), Some(Exchange::Simulated));
+    }
+
+    #[test]
+    fn test_parse_exchange_unknown_returns_none() {
+        assert_eq!(parse_exchange("unknown_exchange"), None);
+        assert_eq!(parse_exchange(""), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // 16. parse_symbol helper
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_parse_symbol_valid() {
+        let sym = parse_symbol("BTC/USDT").expect("valid symbol");
+        assert_eq!(sym.base, "BTC");
+        assert_eq!(sym.quote, "USDT");
+    }
+
+    #[test]
+    fn test_parse_symbol_invalid() {
+        assert!(parse_symbol("BTCUSDT").is_none(), "no slash should fail");
+        assert!(parse_symbol("BTC/USDT/extra").is_none(), "too many slashes");
+        assert!(parse_symbol("").is_none(), "empty string");
     }
 }

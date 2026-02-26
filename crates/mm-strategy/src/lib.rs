@@ -1,3 +1,22 @@
+//! # mm-strategy
+//!
+//! Pluggable trading strategy implementations and the [`StrategyEngine`] orchestrator.
+//!
+//! All strategies implement the [`mm_core::traits::Strategy`] trait, providing a
+//! uniform interface for both live trading and backtesting. Available strategies:
+//!
+//! - [`SpreadStrategy`] -- basic symmetric bid/ask spread market making
+//! - [`AvellanedaStoikovStrategy`] -- inventory-aware reservation price model
+//! - [`GridStrategy`] -- arithmetic or geometric grid trading
+//! - [`TwapStrategy`] -- time-weighted average price execution
+//! - [`VwapStrategy`] -- volume-weighted average price execution
+//! - [`MomentumStrategy`] -- trend-following momentum strategy
+//! - [`MeanReversionStrategy`] -- mean-reversion strategy
+//! - [`StatArbStrategy`] -- statistical arbitrage (pairs trading)
+//!
+//! Use [`build_strategy_from_config`] to instantiate a strategy from a
+//! [`mm_core::StrategyConfig`] at runtime.
+
 pub mod avellaneda;
 pub mod engine;
 pub mod grid;

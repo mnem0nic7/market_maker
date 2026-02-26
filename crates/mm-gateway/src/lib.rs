@@ -1,3 +1,13 @@
+//! # mm-gateway
+//!
+//! REST API, WebSocket broadcaster, and AI assistant for the market maker dashboard.
+//!
+//! - [`rest`] -- Axum REST API endpoints under `/api/v1/` with OpenAPI documentation
+//! - [`ws`] -- WebSocket broadcaster for real-time dashboard updates
+//! - [`assistant`] -- Claude AI chat assistant with SSE streaming
+//! - [`grpc`] -- gRPC service definitions (planned)
+//! - [`server`] -- [`GatewayServer`] wiring and graceful shutdown
+
 pub mod assistant;
 pub mod grpc;
 pub mod rest;

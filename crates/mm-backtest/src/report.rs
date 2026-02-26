@@ -532,10 +532,11 @@ impl BacktestResultStore {
         } else {
             result.strategy_name.replace('/', "_").replace(' ', "_")
         };
+        let now = chrono::Utc::now();
         let id = format!(
-            "{}_{}_{}",
-            chrono::Utc::now().format("%Y%m%d_%H%M%S"),
-            chrono::Utc::now().timestamp_subsec_millis(),
+            "{}_{:06}_{}",
+            now.format("%Y%m%d_%H%M%S"),
+            now.timestamp_subsec_micros(),
             strategy_part
         );
         let path = self.base_dir.join(format!("{}.json", id));
@@ -988,10 +989,11 @@ mod tests {
         let store = BacktestResultStore::new(dir.path());
 
         let id_a = store
-            .save(&make_result("spread", dec!(100), dec!(1.0), 5))
+            .save(&make_result("spread_a", dec!(100), dec!(1.0), 5))
             .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
         let id_b = store
-            .save(&make_result("spread", dec!(300), dec!(1.5), 8))
+            .save(&make_result("spread_b", dec!(300), dec!(1.5), 8))
             .unwrap();
 
         let cmp = store.compare(&id_a, &id_b).expect("compare should succeed");
