@@ -19,12 +19,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
 use mm_core::traits::Strategy;
-use mm_strategy::{
-    AvellanedaStoikovConfig, AvellanedaStoikovStrategy, GridConfig, GridStrategy,
-    MeanReversionConfig, MeanReversionStrategy, MomentumConfig, MomentumStrategy, SpreadConfig,
-    SpreadStrategy, StatArbConfig, StatArbStrategy, StrategyEngine, TwapConfig, TwapStrategy,
-    VwapConfig, VwapStrategy,
-};
+use mm_strategy::{build_strategy_from_config, StrategyEngine};
 
 use crate::assistant::{AssistantConfig, ChatRequest, ClaudeClient, build_system_context};
 
@@ -571,71 +566,8 @@ async fn delete_strategy(
     }
 }
 
-/// Build a boxed strategy instance from a StrategyConfig.
-///
-/// The strategy-specific config structs (e.g. `SpreadConfig`) require
-/// `strategy_id`, `exchange`, and `symbol` fields for deserialization.
-/// The dashboard sends those as top-level fields on `StrategyConfig` and
-/// omits them from `params`, so we inject them before deserializing.
 fn build_strategy(config: &StrategyConfig) -> Result<Box<dyn Strategy>, String> {
-    let exchange = config.exchange;
-    let symbol = config.symbol.clone();
-
-    // Inject identity fields into params so the typed config structs can
-    // deserialize regardless of whether the caller included them.
-    let mut params = config.params.clone();
-    if let Some(obj) = params.as_object_mut() {
-        obj.entry("strategy_id")
-            .or_insert_with(|| serde_json::json!(config.strategy_id));
-        obj.entry("exchange")
-            .or_insert_with(|| serde_json::json!(exchange));
-        obj.entry("symbol")
-            .or_insert_with(|| serde_json::json!(symbol));
-    }
-
-    match config.strategy_type.as_str() {
-        "spread" => {
-            let cfg: SpreadConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid spread params: {e}"))?;
-            Ok(Box::new(SpreadStrategy::new(cfg)))
-        }
-        "avellaneda" => {
-            let cfg: AvellanedaStoikovConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid avellaneda params: {e}"))?;
-            Ok(Box::new(AvellanedaStoikovStrategy::new(cfg)))
-        }
-        "grid" => {
-            let cfg: GridConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid grid params: {e}"))?;
-            Ok(Box::new(GridStrategy::new(cfg)))
-        }
-        "twap" => {
-            let cfg: TwapConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid twap params: {e}"))?;
-            Ok(Box::new(TwapStrategy::new(cfg)))
-        }
-        "vwap" => {
-            let cfg: VwapConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid vwap params: {e}"))?;
-            Ok(Box::new(VwapStrategy::new(cfg)))
-        }
-        "momentum" => {
-            let cfg: MomentumConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid momentum params: {e}"))?;
-            Ok(Box::new(MomentumStrategy::new(cfg)))
-        }
-        "mean_reversion" => {
-            let cfg: MeanReversionConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid mean_reversion params: {e}"))?;
-            Ok(Box::new(MeanReversionStrategy::new(cfg)))
-        }
-        "stat_arb" => {
-            let cfg: StatArbConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid stat_arb params: {e}"))?;
-            Ok(Box::new(StatArbStrategy::new(cfg)))
-        }
-        other => Err(format!("unsupported strategy type: {other}")),
-    }
+    build_strategy_from_config(config)
 }
 
 async fn start_strategy(

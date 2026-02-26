@@ -181,3 +181,292 @@ impl Default for StrategyEngine {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use mm_core::events::OrderUpdate;
+    use mm_core::traits::Strategy;
+    use mm_core::types::{
+        CancelAllOrders, Exchange, Fill, MarketSnapshot, NewOrder, OrderAction, OrderBook,
+        OrderType, Position, PriceLevel, Side, Symbol, TimeInForce,
+    };
+    use rust_decimal_macros::dec;
+
+    // -----------------------------------------------------------------------
+    // MockStrategy
+    // -----------------------------------------------------------------------
+
+    struct MockStrategy {
+        id: String,
+        name: String,
+        active: bool,
+        tick_count: usize,
+        fill_count: usize,
+        update_count: usize,
+        tick_actions: Vec<OrderAction>,
+        stop_actions: Vec<OrderAction>,
+    }
+
+    impl MockStrategy {
+        fn new(id: &str, name: &str, active: bool) -> Self {
+            Self {
+                id: id.to_string(),
+                name: name.to_string(),
+                active,
+                tick_count: 0,
+                fill_count: 0,
+                update_count: 0,
+                tick_actions: Vec::new(),
+                stop_actions: Vec::new(),
+            }
+        }
+
+        fn with_tick_actions(mut self, actions: Vec<OrderAction>) -> Self {
+            self.tick_actions = actions;
+            self
+        }
+
+        fn with_stop_actions(mut self, actions: Vec<OrderAction>) -> Self {
+            self.stop_actions = actions;
+            self
+        }
+    }
+
+    impl Strategy for MockStrategy {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn strategy_id(&self) -> &str {
+            &self.id
+        }
+
+        fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
+            self.tick_count += 1;
+            self.tick_actions.clone()
+        }
+
+        fn on_fill(&mut self, _fill: &Fill) {
+            self.fill_count += 1;
+        }
+
+        fn on_order_update(&mut self, _update: &OrderUpdate) {
+            self.update_count += 1;
+        }
+
+        fn is_active(&self) -> bool {
+            self.active
+        }
+
+        fn stop(&mut self) -> Vec<OrderAction> {
+            self.active = false;
+            self.stop_actions.clone()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    fn make_snapshot() -> MarketSnapshot {
+        let sym = Symbol::new("BTC", "USDT");
+        let now = Utc::now();
+        MarketSnapshot {
+            exchange: Exchange::Simulated,
+            symbol: sym.clone(),
+            order_book: OrderBook {
+                exchange: Exchange::Simulated,
+                symbol: sym.clone(),
+                bids: vec![PriceLevel {
+                    price: dec!(50000),
+                    quantity: dec!(1),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(50001),
+                    quantity: dec!(1),
+                }],
+                timestamp: now,
+                sequence: 1,
+            },
+            last_trade: None,
+            position: Position::new(Exchange::Simulated, sym),
+            open_orders: vec![],
+            timestamp: now,
+        }
+    }
+
+    fn make_place_action(strategy_id: &str) -> OrderAction {
+        OrderAction::Place(NewOrder {
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            side: Side::Buy,
+            order_type: OrderType::Limit,
+            time_in_force: TimeInForce::GTC,
+            price: Some(dec!(50000)),
+            quantity: dec!(0.1),
+            strategy_id: strategy_id.to_string(),
+            reduce_only: false,
+        })
+    }
+
+    fn make_cancel_all_action() -> OrderAction {
+        OrderAction::CancelAll(CancelAllOrders {
+            exchange: Some(Exchange::Simulated),
+            symbol: None,
+            strategy_id: None,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_add_strategy() {
+        let mut engine = StrategyEngine::new();
+        let strat = MockStrategy::new("s1", "Mock1", true);
+
+        let result = engine.add_strategy(Box::new(strat));
+        assert!(result.is_ok());
+        assert_eq!(engine.strategy_count(), 1);
+        assert!(engine.has_strategy("s1"));
+    }
+
+    #[test]
+    fn test_add_duplicate_strategy_fails() {
+        let mut engine = StrategyEngine::new();
+        let s1 = MockStrategy::new("dup", "MockA", true);
+        let s2 = MockStrategy::new("dup", "MockB", true);
+
+        assert!(engine.add_strategy(Box::new(s1)).is_ok());
+        let result = engine.add_strategy(Box::new(s2));
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("already exists"));
+        assert_eq!(engine.strategy_count(), 1);
+    }
+
+    #[test]
+    fn test_remove_strategy() {
+        let mut engine = StrategyEngine::new();
+        let strat = MockStrategy::new("rm1", "MockRm", true);
+        engine.add_strategy(Box::new(strat)).unwrap();
+        assert_eq!(engine.strategy_count(), 1);
+
+        let removed = engine.remove_strategy("rm1");
+        assert!(removed.is_some());
+        let (boxed_strat, _cancel_actions) = removed.unwrap();
+        assert_eq!(boxed_strat.strategy_id(), "rm1");
+        assert_eq!(engine.strategy_count(), 0);
+        assert!(!engine.has_strategy("rm1"));
+    }
+
+    #[test]
+    fn test_remove_nonexistent_returns_none() {
+        let mut engine = StrategyEngine::new();
+        let result = engine.remove_strategy("does_not_exist");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_tick_dispatches_to_active_strategies() {
+        let mut engine = StrategyEngine::new();
+
+        let active = MockStrategy::new("active1", "Active", true)
+            .with_tick_actions(vec![make_place_action("active1")]);
+        let inactive = MockStrategy::new("inactive1", "Inactive", false);
+
+        engine.add_strategy(Box::new(active)).unwrap();
+        engine.add_strategy(Box::new(inactive)).unwrap();
+
+        let snapshot = make_snapshot();
+        let actions = engine.tick(&snapshot);
+
+        // Only the active strategy should have produced actions.
+        assert_eq!(actions.len(), 1);
+
+        // Verify the active strategy was ticked (we can check indirectly:
+        // it returned 1 action). The inactive one should not have been ticked,
+        // so tick_count remains 0. We cannot access tick_count through the trait
+        // object, but the action count confirms dispatch behavior.
+    }
+
+    #[test]
+    fn test_tick_collects_all_actions() {
+        let mut engine = StrategyEngine::new();
+
+        let s1 = MockStrategy::new("s1", "Mock1", true)
+            .with_tick_actions(vec![make_place_action("s1"), make_place_action("s1")]);
+        let s2 = MockStrategy::new("s2", "Mock2", true)
+            .with_tick_actions(vec![make_cancel_all_action()]);
+
+        engine.add_strategy(Box::new(s1)).unwrap();
+        engine.add_strategy(Box::new(s2)).unwrap();
+
+        let snapshot = make_snapshot();
+        let actions = engine.tick(&snapshot);
+
+        // s1 produces 2 actions, s2 produces 1 action => 3 total
+        assert_eq!(actions.len(), 3);
+    }
+
+    #[test]
+    fn test_stop_all() {
+        let mut engine = StrategyEngine::new();
+
+        let s1 = MockStrategy::new("s1", "Mock1", true)
+            .with_stop_actions(vec![make_cancel_all_action()]);
+        let s2 = MockStrategy::new("s2", "Mock2", true)
+            .with_stop_actions(vec![make_cancel_all_action(), make_cancel_all_action()]);
+
+        engine.add_strategy(Box::new(s1)).unwrap();
+        engine.add_strategy(Box::new(s2)).unwrap();
+
+        let actions = engine.stop_all();
+        // s1 returns 1 stop action, s2 returns 2 stop actions => 3 total
+        assert_eq!(actions.len(), 3);
+
+        // After stop_all, all strategies should report inactive.
+        assert_eq!(engine.active_count(), 0);
+    }
+
+    #[test]
+    fn test_strategy_ids() {
+        let mut engine = StrategyEngine::new();
+
+        engine
+            .add_strategy(Box::new(MockStrategy::new("alpha", "A", true)))
+            .unwrap();
+        engine
+            .add_strategy(Box::new(MockStrategy::new("beta", "B", true)))
+            .unwrap();
+        engine
+            .add_strategy(Box::new(MockStrategy::new("gamma", "C", false)))
+            .unwrap();
+
+        let mut ids = engine.strategy_ids();
+        ids.sort();
+        assert_eq!(ids, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn test_active_count() {
+        let mut engine = StrategyEngine::new();
+
+        engine
+            .add_strategy(Box::new(MockStrategy::new("a1", "Active1", true)))
+            .unwrap();
+        engine
+            .add_strategy(Box::new(MockStrategy::new("a2", "Active2", true)))
+            .unwrap();
+        engine
+            .add_strategy(Box::new(MockStrategy::new("i1", "Inactive1", false)))
+            .unwrap();
+
+        assert_eq!(engine.strategy_count(), 3);
+        assert_eq!(engine.active_count(), 2);
+    }
+}
