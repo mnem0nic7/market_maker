@@ -20,7 +20,17 @@ function sideLabel(qty: number): { text: string; color: string } {
 }
 
 export function PositionsPanel() {
-  const { positions } = useDashboard();
+  const { positions, loading } = useDashboard();
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-3 animate-pulse">
+        <div className="h-3 w-48 bg-bg-secondary rounded" />
+        <div className="h-3 w-64 bg-bg-secondary rounded" />
+        <div className="h-3 w-40 bg-bg-secondary rounded" />
+      </div>
+    );
+  }
 
   const totalUnrealized = positions.reduce((sum, p) => sum + parseFloat(p.unrealized_pnl), 0);
   const totalRealized = positions.reduce((sum, p) => sum + parseFloat(p.realized_pnl), 0);

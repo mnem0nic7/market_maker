@@ -29,7 +29,17 @@ function sideColor(side: string): string {
 }
 
 export function ActiveOrdersPanel() {
-  const { orders } = useDashboard();
+  const { orders, loading } = useDashboard();
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2 animate-pulse">
+        <div className="h-3 w-full bg-bg-secondary rounded" />
+        <div className="h-3 w-5/6 bg-bg-secondary rounded" />
+        <div className="h-3 w-4/6 bg-bg-secondary rounded" />
+      </div>
+    );
+  }
 
   const sorted = [...orders].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
