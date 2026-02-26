@@ -14,7 +14,8 @@ use axum::{
 use chrono::Utc;
 use futures::StreamExt;
 use mm_backtest::{
-    OptimizationConfig, OptimizationProgress, OptimizationResult, ParameterOptimizer,
+    BacktestResultStore, OptimizationConfig, OptimizationProgress, OptimizationResult,
+    ParameterOptimizer,
 };
 use mm_core::{
     Exchange, MetricsRegistry, Order, OrderBook, OrderStatus, OrderType, PortfolioRisk, Position,
@@ -292,6 +293,9 @@ pub struct ApiState {
     /// Stored backtest results from completed runs.
     pub backtest_results: RwLock<Vec<mm_backtest::BacktestResult>>,
 
+    /// Persistent store for backtest results (file-based).
+    pub backtest_store: Option<BacktestResultStore>,
+
     /// Optional Claude AI assistant configuration.
     pub assistant_config: Option<AssistantConfig>,
 
@@ -344,6 +348,7 @@ impl ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             backtest_results: RwLock::new(Vec::new()),
+            backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
             rate_limit: None,
@@ -366,6 +371,7 @@ impl ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             backtest_results: RwLock::new(Vec::new()),
+            backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
             rate_limit: None,
@@ -391,6 +397,7 @@ impl ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             backtest_results: RwLock::new(Vec::new()),
+            backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: Some(engine),
             rate_limit: None,
@@ -418,6 +425,7 @@ impl ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             backtest_results: RwLock::new(Vec::new()),
+            backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: Some(engine),
             rate_limit: None,
@@ -446,6 +454,7 @@ impl ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             backtest_results: RwLock::new(Vec::new()),
+            backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: Some(engine),
             rate_limit: None,
@@ -469,6 +478,7 @@ impl Default for ApiState {
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
             backtest_results: RwLock::new(Vec::new()),
+            backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
             rate_limit: None,
@@ -608,6 +618,10 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         // Backtest results & quick run
         .route("/api/v1/backtest/results", get(get_backtest_results))
         .route("/api/v1/backtest/run", post(run_backtest))
+        // Backtest result store (persistent)
+        .route("/api/v1/backtest/store", get(list_stored_results))
+        .route("/api/v1/backtest/store/{id}", get(get_stored_result))
+        .route("/api/v1/backtest/compare", get(compare_backtest_results))
         // Backtest optimisation
         .route("/api/v1/backtest/optimize", post(start_optimization))
         .route(
@@ -1679,20 +1693,96 @@ async fn run_backtest(
     .await
     .map_err(|e| ApiResponse::error(format!("backtest task failed: {e}")))?;
 
-    // Store the result.
+    // Store the result in memory.
     {
         let mut results = state.backtest_results.write().await;
         results.push(result.clone());
     }
 
+    // Persist to disk if a store is configured.
+    let saved_id = if let Some(store) = &state.backtest_store {
+        match store.save(&result) {
+            Ok(id) => {
+                info!(result_id = %id, "Backtest result saved to disk");
+                Some(id)
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to persist backtest result");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     info!(
         strategy_type = %req.strategy_type,
         net_pnl = %result.net_pnl,
         num_fills = result.num_fills,
+        saved_id = ?saved_id,
         "Backtest completed via API"
     );
 
     Ok(ApiResponse::ok(result))
+}
+
+// ---------------------------------------------------------------------------
+// Backtest result store (persistent)
+// ---------------------------------------------------------------------------
+
+/// Query parameters for comparing two backtest results.
+#[derive(Debug, Deserialize)]
+struct CompareQuery {
+    /// ID of the first backtest result.
+    a: String,
+    /// ID of the second backtest result.
+    b: String,
+}
+
+/// List all saved backtest results from the persistent store.
+async fn list_stored_results(
+    State(state): State<Arc<ApiState>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let store = state
+        .backtest_store
+        .as_ref()
+        .ok_or_else(|| ApiResponse::error("backtest result store not configured".to_string()))?;
+    store
+        .list()
+        .map(|summaries| ApiResponse::ok(summaries))
+        .map_err(|e| ApiResponse::error(format!("failed to list results: {e}")))
+}
+
+/// Load a single saved backtest result by ID.
+async fn get_stored_result(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let store = state
+        .backtest_store
+        .as_ref()
+        .ok_or_else(|| ApiResponse::error("backtest result store not configured".to_string()))?;
+    store
+        .load(&id)
+        .map(|result| ApiResponse::ok(result))
+        .map_err(|e| ApiResponse::error(format!("failed to load result '{}': {e}", id)))
+}
+
+/// Compare two saved backtest results.
+///
+/// `GET /api/v1/backtest/compare?a={id_a}&b={id_b}`
+async fn compare_backtest_results(
+    State(state): State<Arc<ApiState>>,
+    Query(params): Query<CompareQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let store = state
+        .backtest_store
+        .as_ref()
+        .ok_or_else(|| ApiResponse::error("backtest result store not configured".to_string()))?;
+    store
+        .compare(&params.a, &params.b)
+        .map(|comparison| ApiResponse::ok(comparison))
+        .map_err(|e| ApiResponse::error(format!("comparison failed: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -2568,6 +2658,7 @@ mod tests {
         {
             let mut results = state.backtest_results.write().await;
             results.push(mm_backtest::BacktestResult {
+                strategy_name: "spread".to_string(),
                 total_pnl: rust_decimal::Decimal::new(1000, 2),
                 total_fees: rust_decimal::Decimal::new(10, 2),
                 net_pnl: rust_decimal::Decimal::new(990, 2),

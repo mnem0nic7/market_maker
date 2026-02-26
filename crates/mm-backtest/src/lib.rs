@@ -11,5 +11,8 @@ pub use optimizer::{
     ParameterOptimizer, ParameterRange,
 };
 pub use replay::{BacktestConfig, MarketEvent, ReplayEngine};
-pub use report::{print_report, BacktestResult, PerformanceCalculator};
+pub use report::{
+    print_report, BacktestComparison, BacktestResult, BacktestResultStore, BacktestResultSummary,
+    PerformanceCalculator,
+};
 pub use sim_exchange::{BalanceTracker, FeeModel, SimulatedExchange, SlippageModel};

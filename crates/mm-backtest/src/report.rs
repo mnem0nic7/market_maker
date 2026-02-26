@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rust_decimal::prelude::ToPrimitive;
@@ -15,6 +16,9 @@ use mm_core::{Fill, Side};
 /// Comprehensive result of a backtest run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestResult {
+    /// Name of the strategy that was backtested.
+    #[serde(default)]
+    pub strategy_name: String,
     /// Gross PnL (before fees).
     pub total_pnl: Decimal,
     /// Total fees paid.
@@ -67,6 +71,7 @@ struct RoundTripTrade {
 
 /// Accumulates fill data and computes performance statistics.
 pub struct PerformanceCalculator {
+    strategy_name: String,
     initial_capital: Decimal,
     /// Running equity (initial_capital + cumulative realized PnL - cumulative fees).
     equity: Decimal,
@@ -103,6 +108,7 @@ pub struct PerformanceCalculator {
 impl PerformanceCalculator {
     pub fn new(initial_capital: Decimal) -> Self {
         Self {
+            strategy_name: String::new(),
             initial_capital,
             equity: initial_capital,
             cumulative_pnl: Decimal::ZERO,
@@ -120,6 +126,11 @@ impl PerformanceCalculator {
             start_time: None,
             end_time: None,
         }
+    }
+
+    /// Set the strategy name for the result.
+    pub fn set_strategy_name(&mut self, name: impl Into<String>) {
+        self.strategy_name = name.into();
     }
 
     /// Record a fill and update running statistics.
@@ -269,6 +280,7 @@ impl PerformanceCalculator {
         let duration = end_time - start_time;
 
         BacktestResult {
+            strategy_name: self.strategy_name,
             total_pnl: self.cumulative_pnl,
             total_fees: self.cumulative_fees,
             net_pnl,
@@ -381,6 +393,9 @@ pub fn print_report(result: &BacktestResult) {
     println!("                    BACKTEST REPORT                          ");
     println!("============================================================");
     println!();
+    if !result.strategy_name.is_empty() {
+        println!("  Strategy:         {}", result.strategy_name);
+    }
     println!(
         "  Period:           {} to {}",
         result.start_time.format("%Y-%m-%d %H:%M"),
@@ -441,6 +456,179 @@ fn format_decimal(d: Decimal) -> String {
 /// Format a ratio (Sharpe/Sortino) to 4 decimal places.
 fn format_ratio(d: Decimal) -> String {
     format!("{:.4}", d)
+}
+
+// ---------------------------------------------------------------------------
+// BacktestResultSummary — lightweight summary for listings
+// ---------------------------------------------------------------------------
+
+/// Lightweight summary of a saved backtest result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacktestResultSummary {
+    /// Unique identifier (timestamp + strategy name).
+    pub id: String,
+    /// Name of the strategy that was backtested.
+    pub strategy_name: String,
+    /// Net PnL (total_pnl - total_fees).
+    pub net_pnl: Decimal,
+    /// Annualized Sharpe ratio.
+    pub sharpe_ratio: Decimal,
+    /// Maximum drawdown as a percentage of peak equity.
+    pub max_drawdown_pct: Decimal,
+    /// Number of round-trip trades completed.
+    pub num_trades: usize,
+}
+
+// ---------------------------------------------------------------------------
+// BacktestComparison — compare two backtest runs
+// ---------------------------------------------------------------------------
+
+/// Side-by-side comparison of two backtest runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacktestComparison {
+    /// Summary of the first run.
+    pub run_a: BacktestResultSummary,
+    /// Summary of the second run.
+    pub run_b: BacktestResultSummary,
+    /// Difference in net PnL (b - a).
+    pub pnl_diff: Decimal,
+    /// Difference in Sharpe ratio (b - a).
+    pub sharpe_diff: Decimal,
+    /// Difference in max drawdown percentage (b - a).
+    pub drawdown_diff: Decimal,
+    /// Difference in trade count (b - a).
+    pub trade_count_diff: i64,
+    /// Which run is better based on Sharpe ratio: "a", "b", or "tie".
+    pub better_run: String,
+}
+
+// ---------------------------------------------------------------------------
+// BacktestResultStore — persistent file-based store
+// ---------------------------------------------------------------------------
+
+/// Persistent file-based store for backtest results.
+///
+/// Each result is saved as a pretty-printed JSON file in the `base_dir`.
+/// File names are auto-generated from the timestamp and strategy name,
+/// serving as unique identifiers.
+pub struct BacktestResultStore {
+    base_dir: PathBuf,
+}
+
+impl BacktestResultStore {
+    /// Create a new store backed by the given directory.
+    pub fn new(base_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            base_dir: base_dir.into(),
+        }
+    }
+
+    /// Save a result with an auto-generated ID based on timestamp + strategy.
+    ///
+    /// Returns the ID (filename stem) on success.
+    pub fn save(&self, result: &BacktestResult) -> Result<String, String> {
+        let strategy_part = if result.strategy_name.is_empty() {
+            "unknown".to_string()
+        } else {
+            result.strategy_name.replace('/', "_").replace(' ', "_")
+        };
+        let id = format!(
+            "{}_{}_{}",
+            chrono::Utc::now().format("%Y%m%d_%H%M%S"),
+            chrono::Utc::now().timestamp_subsec_millis(),
+            strategy_part
+        );
+        let path = self.base_dir.join(format!("{}.json", id));
+        std::fs::create_dir_all(&self.base_dir).map_err(|e| e.to_string())?;
+        let json = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
+        std::fs::write(&path, json).map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    /// Load a result by ID (the filename stem without `.json`).
+    pub fn load(&self, id: &str) -> Result<BacktestResult, String> {
+        let path = self.base_dir.join(format!("{}.json", id));
+        let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&json).map_err(|e| e.to_string())
+    }
+
+    /// List all saved result IDs with basic metadata, newest first.
+    pub fn list(&self) -> Result<Vec<BacktestResultSummary>, String> {
+        let mut results = Vec::new();
+        if !self.base_dir.exists() {
+            return Ok(results);
+        }
+        for entry in std::fs::read_dir(&self.base_dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "json") {
+                let id = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                if let Ok(result) = self.load(&id) {
+                    results.push(BacktestResultSummary {
+                        id,
+                        strategy_name: result.strategy_name,
+                        net_pnl: result.net_pnl,
+                        sharpe_ratio: result.sharpe_ratio,
+                        max_drawdown_pct: result.max_drawdown_pct,
+                        num_trades: result.num_trades,
+                    });
+                }
+            }
+        }
+        // Sort newest first (IDs start with timestamps).
+        results.sort_by(|a, b| b.id.cmp(&a.id));
+        Ok(results)
+    }
+
+    /// Compare two saved backtest results by their IDs.
+    pub fn compare(&self, id_a: &str, id_b: &str) -> Result<BacktestComparison, String> {
+        let a = self.load(id_a)?;
+        let b = self.load(id_b)?;
+
+        let summary_a = BacktestResultSummary {
+            id: id_a.to_string(),
+            strategy_name: a.strategy_name,
+            net_pnl: a.net_pnl,
+            sharpe_ratio: a.sharpe_ratio,
+            max_drawdown_pct: a.max_drawdown_pct,
+            num_trades: a.num_trades,
+        };
+        let summary_b = BacktestResultSummary {
+            id: id_b.to_string(),
+            strategy_name: b.strategy_name,
+            net_pnl: b.net_pnl,
+            sharpe_ratio: b.sharpe_ratio,
+            max_drawdown_pct: b.max_drawdown_pct,
+            num_trades: b.num_trades,
+        };
+
+        let pnl_diff = b.net_pnl - a.net_pnl;
+        let sharpe_diff = b.sharpe_ratio - a.sharpe_ratio;
+        let drawdown_diff = b.max_drawdown_pct - a.max_drawdown_pct;
+        let trade_count_diff = b.num_trades as i64 - a.num_trades as i64;
+
+        let better_run = if b.sharpe_ratio > a.sharpe_ratio {
+            "b".to_string()
+        } else if a.sharpe_ratio > b.sharpe_ratio {
+            "a".to_string()
+        } else {
+            "tie".to_string()
+        };
+
+        Ok(BacktestComparison {
+            run_a: summary_a,
+            run_b: summary_b,
+            pnl_diff,
+            sharpe_diff,
+            drawdown_diff,
+            trade_count_diff,
+            better_run,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -702,5 +890,167 @@ mod tests {
 
         let result = calc.finalize();
         assert_eq!(result.total_pnl, dec!(4000));
+    }
+
+    // -----------------------------------------------------------------------
+    // BacktestResultStore & Comparison tests
+    // -----------------------------------------------------------------------
+
+    /// Helper to build a minimal BacktestResult for store/comparison tests.
+    fn make_result(
+        strategy_name: &str,
+        net_pnl: Decimal,
+        sharpe: Decimal,
+        num_trades: usize,
+    ) -> BacktestResult {
+        let now = Utc::now();
+        BacktestResult {
+            strategy_name: strategy_name.to_string(),
+            total_pnl: net_pnl + dec!(10),
+            total_fees: dec!(10),
+            net_pnl,
+            num_trades,
+            num_fills: num_trades * 2,
+            win_rate: dec!(0.5),
+            max_drawdown: dec!(100),
+            max_drawdown_pct: dec!(1),
+            sharpe_ratio: sharpe,
+            sortino_ratio: dec!(0),
+            avg_trade_pnl: if num_trades > 0 {
+                net_pnl / Decimal::from(num_trades as u64)
+            } else {
+                Decimal::ZERO
+            },
+            profit_factor: dec!(2),
+            total_volume: dec!(50000),
+            start_time: now,
+            end_time: now + Duration::hours(1),
+            duration: Duration::hours(1),
+            equity_curve: vec![],
+        }
+    }
+
+    #[test]
+    fn test_result_store_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BacktestResultStore::new(dir.path());
+
+        let result = make_result("spread", dec!(500), dec!(1.5), 10);
+        let id = store.save(&result).expect("save should succeed");
+
+        let loaded = store.load(&id).expect("load should succeed");
+        assert_eq!(loaded.strategy_name, "spread");
+        assert_eq!(loaded.net_pnl, dec!(500));
+        assert_eq!(loaded.sharpe_ratio, dec!(1.5));
+        assert_eq!(loaded.num_trades, 10);
+    }
+
+    #[test]
+    fn test_result_store_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BacktestResultStore::new(dir.path());
+
+        store
+            .save(&make_result("spread", dec!(100), dec!(1.0), 5))
+            .unwrap();
+        // Sleep briefly so the IDs differ by timestamp
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        store
+            .save(&make_result("grid", dec!(200), dec!(2.0), 8))
+            .unwrap();
+
+        let list = store.list().expect("list should succeed");
+        assert_eq!(list.len(), 2);
+        // Newest first — grid was saved last
+        assert_eq!(list[0].strategy_name, "grid");
+        assert_eq!(list[1].strategy_name, "spread");
+    }
+
+    #[test]
+    fn test_result_store_list_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BacktestResultStore::new(dir.path());
+
+        let list = store.list().expect("list should succeed");
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn test_result_store_list_nonexistent_dir() {
+        let store = BacktestResultStore::new("/tmp/nonexistent_backtest_dir_12345");
+        let list = store.list().expect("list should succeed for missing dir");
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn test_comparison_pnl_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BacktestResultStore::new(dir.path());
+
+        let id_a = store
+            .save(&make_result("spread", dec!(100), dec!(1.0), 5))
+            .unwrap();
+        let id_b = store
+            .save(&make_result("spread", dec!(300), dec!(1.5), 8))
+            .unwrap();
+
+        let cmp = store.compare(&id_a, &id_b).expect("compare should succeed");
+        assert_eq!(cmp.pnl_diff, dec!(200)); // 300 - 100
+        assert_eq!(cmp.trade_count_diff, 3); // 8 - 5
+    }
+
+    #[test]
+    fn test_comparison_better_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BacktestResultStore::new(dir.path());
+
+        let id_a = store
+            .save(&make_result("spread", dec!(100), dec!(2.0), 5))
+            .unwrap();
+        let id_b = store
+            .save(&make_result("grid", dec!(300), dec!(1.0), 8))
+            .unwrap();
+
+        let cmp = store.compare(&id_a, &id_b).expect("compare should succeed");
+        // Run a has Sharpe 2.0 > 1.0, so a is better
+        assert_eq!(cmp.better_run, "a");
+        assert_eq!(cmp.sharpe_diff, dec!(-1.0)); // 1.0 - 2.0 = -1.0
+    }
+
+    #[test]
+    fn test_comparison_tie() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BacktestResultStore::new(dir.path());
+
+        let id_a = store
+            .save(&make_result("spread", dec!(100), dec!(1.5), 5))
+            .unwrap();
+        let id_b = store
+            .save(&make_result("grid", dec!(200), dec!(1.5), 8))
+            .unwrap();
+
+        let cmp = store.compare(&id_a, &id_b).expect("compare should succeed");
+        assert_eq!(cmp.better_run, "tie");
+    }
+
+    #[test]
+    fn test_result_summary_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BacktestResultStore::new(dir.path());
+
+        let id = store
+            .save(&make_result("avellaneda", dec!(750), dec!(2.5), 12))
+            .unwrap();
+
+        let list = store.list().unwrap();
+        assert_eq!(list.len(), 1);
+
+        let summary = &list[0];
+        assert_eq!(summary.id, id);
+        assert_eq!(summary.strategy_name, "avellaneda");
+        assert_eq!(summary.net_pnl, dec!(750));
+        assert_eq!(summary.sharpe_ratio, dec!(2.5));
+        assert_eq!(summary.max_drawdown_pct, dec!(1));
+        assert_eq!(summary.num_trades, 12);
     }
 }

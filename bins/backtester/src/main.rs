@@ -48,8 +48,8 @@ use serde::Deserialize;
 use tracing::info;
 
 use mm_backtest::{
-    print_report, BacktestConfig, BacktestResult, MarketEvent, OptimizationConfig,
-    OptimizationMetric, ParameterOptimizer, ParameterRange, ReplayEngine,
+    print_report, BacktestConfig, BacktestResult, BacktestResultStore, MarketEvent,
+    OptimizationConfig, OptimizationMetric, ParameterOptimizer, ParameterRange, ReplayEngine,
 };
 use mm_core::traits::Strategy;
 use mm_core::{Exchange, PriceLevel, Side, Symbol};
@@ -189,6 +189,11 @@ struct Cli {
     /// Example: --params spread_bps=15,order_size=0.1,num_levels=5
     #[arg(long, value_delimiter = ',')]
     params: Vec<String>,
+
+    /// Directory to persist backtest results for later comparison.
+    /// Defaults to data/backtest_results/
+    #[arg(long, default_value = "data/backtest_results")]
+    results_dir: PathBuf,
 }
 
 // ---------------------------------------------------------------------------
@@ -679,10 +684,11 @@ async fn main() -> Result<()> {
     // ------------------------------------------------------------------
     // 2. Optimisation mode or single backtest
     // ------------------------------------------------------------------
+    let results_dir = cli.results_dir.clone();
     if cfg.optimize {
         run_optimization(&cfg, events)?;
     } else {
-        run_single_backtest(&cfg, events)?;
+        run_single_backtest(&cfg, events, &results_dir)?;
     }
 
     Ok(())
@@ -692,7 +698,11 @@ async fn main() -> Result<()> {
 // Single backtest
 // ---------------------------------------------------------------------------
 
-fn run_single_backtest(cfg: &CliConfig, events: Vec<MarketEvent>) -> Result<()> {
+fn run_single_backtest(
+    cfg: &CliConfig,
+    events: Vec<MarketEvent>,
+    results_dir: &std::path::Path,
+) -> Result<()> {
     let mut strategy: Box<dyn Strategy> = create_strategy(cfg)?;
     info!(
         strategy_type = %cfg.strategy_type,
@@ -715,6 +725,21 @@ fn run_single_backtest(cfg: &CliConfig, events: Vec<MarketEvent>) -> Result<()> 
 
     // Output in the requested format
     output_result(&result, &cfg.output_format);
+
+    // Persist the result to disk for later comparison
+    let store = BacktestResultStore::new(results_dir);
+    match store.save(&result) {
+        Ok(id) => {
+            info!(
+                result_id = %id,
+                results_dir = %results_dir.display(),
+                "result saved — use this ID for comparison"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to persist backtest result");
+        }
+    }
 
     info!(
         net_pnl = %result.net_pnl,

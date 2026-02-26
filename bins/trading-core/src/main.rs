@@ -7,13 +7,15 @@
 mod config;
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -22,8 +24,8 @@ use mm_core::{
     events::{Envelope, Event, OrderUpdate},
     traits::EventPublisher,
     types::{
-        CancelAllOrders, Exchange, Fill, MarketSnapshot, OrderAction, OrderBook, Position,
-        RiskAction, Symbol, Trade,
+        CancelAllOrders, CancelOrder, Exchange, Fill, MarketSnapshot, Order, OrderAction,
+        OrderBook, Position, RiskAction, Symbol, Trade,
     },
     MetricsRegistry, OrderStatus, StrategyConfig, StrategyMetricsTracker,
 };
@@ -63,6 +65,23 @@ const PARAM_UPDATE_CHANNEL_CAPACITY: usize = 64;
 // ---------------------------------------------------------------------------
 
 type PositionMap = HashMap<(Exchange, Symbol), Position>;
+
+// ---------------------------------------------------------------------------
+// Shutdown checkpoint
+// ---------------------------------------------------------------------------
+
+/// Path to the shutdown checkpoint file. Written on graceful shutdown,
+/// checked on next startup for state reconciliation.
+const SHUTDOWN_CHECKPOINT_PATH: &str = "data/shutdown_checkpoint.json";
+
+/// Persisted state written during graceful shutdown so the next startup
+/// can detect whether there were open positions or orders at the time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShutdownCheckpoint {
+    pub positions: Vec<Position>,
+    pub open_orders: Vec<Order>,
+    pub timestamp: DateTime<Utc>,
+}
 
 // ---------------------------------------------------------------------------
 // ArcPnlCheck wrapper — delegates RiskCheck to Arc<PnlLimitCheck>
@@ -124,6 +143,55 @@ async fn main() -> Result<()> {
 
     // ----- (c) Validate configuration before proceeding -----
     cfg.validate().context("startup configuration validation")?;
+
+    // ----- (c2) Check for prior shutdown checkpoint -----
+    if Path::new(SHUTDOWN_CHECKPOINT_PATH).exists() {
+        match std::fs::read_to_string(SHUTDOWN_CHECKPOINT_PATH) {
+            Ok(json) => match serde_json::from_str::<ShutdownCheckpoint>(&json) {
+                Ok(checkpoint) => {
+                    warn!(
+                        timestamp = %checkpoint.timestamp,
+                        positions = checkpoint.positions.len(),
+                        open_orders = checkpoint.open_orders.len(),
+                        "found shutdown checkpoint from previous run — review for reconciliation"
+                    );
+                    for pos in &checkpoint.positions {
+                        warn!(
+                            exchange = %pos.exchange,
+                            symbol = %pos.symbol,
+                            quantity = %pos.quantity,
+                            realized_pnl = %pos.realized_pnl,
+                            "checkpoint position"
+                        );
+                    }
+                    for order in &checkpoint.open_orders {
+                        warn!(
+                            client_order_id = %order.client_order_id,
+                            exchange = %order.exchange,
+                            symbol = %order.symbol,
+                            side = %order.side,
+                            status = %order.status,
+                            "checkpoint open order"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        path = SHUTDOWN_CHECKPOINT_PATH,
+                        "failed to parse shutdown checkpoint file"
+                    );
+                }
+            },
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    path = SHUTDOWN_CHECKPOINT_PATH,
+                    "failed to read shutdown checkpoint file"
+                );
+            }
+        }
+    }
 
     // ----- (d) Initialize shared state -----
     let order_manager = Arc::new(OrderManager::new());
@@ -1056,9 +1124,9 @@ async fn main() -> Result<()> {
     }
 
     // ----- (l) Graceful shutdown -----
-    info!("shutting down...");
+    info!("initiating graceful shutdown sequence");
 
-    // Stop all strategies — they may emit final cancel actions.
+    // (l.1) Stop accepting new ticks — strategies will no longer fire.
     let stop_actions = strategy_engine_shared.lock().await.stop_all();
     info!(
         cancel_actions = stop_actions.len(),
@@ -1070,7 +1138,51 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Cancel any remaining open orders across all exchanges.
+    // (l.2) Drain remaining order updates so OMS state is current.
+    let mut drained = 0u64;
+    while let Ok(update) = order_update_rx.try_recv() {
+        handle_order_update(
+            &update,
+            &order_manager,
+            &strategy_engine_shared,
+            &positions,
+            &daily_pnl,
+            &api_state,
+            event_publisher.as_ref(),
+            &mut strategy_metrics_tracker,
+            &pnl_limit_check,
+            &metrics,
+            &broadcast_tx,
+        )
+        .await;
+        drained += 1;
+    }
+    info!(drained, "drained remaining order updates");
+
+    // (l.3) Cancel all open orders individually so each exchange receives
+    //       an explicit cancel per order.
+    let open_orders = order_manager.get_open_orders();
+    info!(
+        count = open_orders.len(),
+        "cancelling open orders on shutdown"
+    );
+    for order in &open_orders {
+        let cancel = OrderAction::Cancel(CancelOrder {
+            exchange: order.exchange,
+            symbol: order.symbol.clone(),
+            client_order_id: order.client_order_id.clone(),
+            exchange_order_id: order.exchange_order_id.clone(),
+        });
+        if let Err(e) = order_router.route_action(cancel).await {
+            warn!(
+                order_id = %order.client_order_id,
+                error = %e,
+                "failed to cancel order during shutdown"
+            );
+        }
+    }
+
+    // Also send a blanket CancelAll as a safety net.
     let cancel_all = CancelAllOrders {
         exchange: None,
         symbol: None,
@@ -1083,8 +1195,95 @@ async fn main() -> Result<()> {
         error!(error = %e, "failed to cancel all orders during shutdown");
     }
 
-    // Give the exchange a moment to process cancellations.
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // (l.4) Wait for cancel confirmations (up to 5 seconds).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut confirmations = 0u64;
+    while Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(500), order_update_rx.recv()).await {
+            Ok(Some(update)) => {
+                handle_order_update(
+                    &update,
+                    &order_manager,
+                    &strategy_engine_shared,
+                    &positions,
+                    &daily_pnl,
+                    &api_state,
+                    event_publisher.as_ref(),
+                    &mut strategy_metrics_tracker,
+                    &pnl_limit_check,
+                    &metrics,
+                    &broadcast_tx,
+                )
+                .await;
+                confirmations += 1;
+            }
+            _ => break,
+        }
+    }
+    info!(
+        confirmations,
+        "received cancel confirmations during shutdown"
+    );
+
+    // (l.5) Save state checkpoint — positions and any remaining open orders.
+    {
+        let pos_snapshot = positions.read().await;
+        let final_positions: Vec<Position> = pos_snapshot.values().cloned().collect();
+        drop(pos_snapshot);
+
+        let remaining_open = order_manager.get_open_orders();
+        let final_daily_pnl = *daily_pnl.read().await;
+
+        let checkpoint = ShutdownCheckpoint {
+            positions: final_positions.clone(),
+            open_orders: remaining_open.clone(),
+            timestamp: Utc::now(),
+        };
+
+        // Ensure the data directory exists.
+        if let Some(parent) = Path::new(SHUTDOWN_CHECKPOINT_PATH).parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                error!(error = %e, "failed to create checkpoint directory");
+            }
+        }
+
+        match serde_json::to_string_pretty(&checkpoint) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(SHUTDOWN_CHECKPOINT_PATH, json) {
+                    error!(
+                        error = %e,
+                        path = SHUTDOWN_CHECKPOINT_PATH,
+                        "failed to save shutdown checkpoint"
+                    );
+                } else {
+                    info!(path = SHUTDOWN_CHECKPOINT_PATH, "saved shutdown checkpoint");
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "failed to serialize shutdown checkpoint");
+            }
+        }
+
+        // (l.6) Log final summary.
+        info!(
+            positions = final_positions.len(),
+            open_orders = remaining_open.len(),
+            daily_pnl = %final_daily_pnl,
+            "shutdown summary"
+        );
+        for pos in &final_positions {
+            if !pos.is_flat() {
+                info!(
+                    exchange = %pos.exchange,
+                    symbol = %pos.symbol,
+                    quantity = %pos.quantity,
+                    realized_pnl = %pos.realized_pnl,
+                    unrealized_pnl = %pos.unrealized_pnl,
+                    "final position"
+                );
+            }
+        }
+    }
 
     // Disconnect execution connectors.
     if let Err(e) = order_router.disconnect_all().await {
@@ -1305,5 +1504,169 @@ async fn handle_order_update(
             client_order_id = %update.client_order_id,
             "OMS rejected order update"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mm_core::types::{Exchange, OrderStatus, OrderType, Side, Symbol, TimeInForce};
+
+    fn sample_position() -> Position {
+        Position {
+            exchange: Exchange::Binance,
+            symbol: Symbol {
+                base: "BTC".to_string(),
+                quote: "USDT".to_string(),
+            },
+            quantity: Decimal::new(15, 1), // 1.5
+            average_entry_price: Decimal::new(42000, 0),
+            unrealized_pnl: Decimal::new(150, 0),
+            realized_pnl: Decimal::new(50, 0),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn sample_order() -> Order {
+        Order {
+            client_order_id: "test-order-001".to_string(),
+            exchange_order_id: Some("ex-123".to_string()),
+            exchange: Exchange::Binance,
+            symbol: Symbol {
+                base: "BTC".to_string(),
+                quote: "USDT".to_string(),
+            },
+            side: Side::Buy,
+            order_type: OrderType::Limit,
+            time_in_force: TimeInForce::GTC,
+            price: Some(Decimal::new(41500, 0)),
+            quantity: Decimal::new(1, 0),
+            status: OrderStatus::New,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: Decimal::new(1, 0),
+            average_fill_price: Decimal::ZERO,
+            strategy_id: "spread_btc".to_string(),
+            reduce_only: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_shutdown_checkpoint_serialization() {
+        let checkpoint = ShutdownCheckpoint {
+            positions: vec![sample_position()],
+            open_orders: vec![sample_order()],
+            timestamp: Utc::now(),
+        };
+
+        let json = serde_json::to_string_pretty(&checkpoint).expect("serialization failed");
+
+        // Verify the JSON contains expected fields.
+        assert!(json.contains("positions"));
+        assert!(json.contains("open_orders"));
+        assert!(json.contains("timestamp"));
+        assert!(json.contains("BTC"));
+        assert!(json.contains("USDT"));
+        assert!(json.contains("test-order-001"));
+    }
+
+    #[test]
+    fn test_shutdown_checkpoint_round_trip() {
+        let original = ShutdownCheckpoint {
+            positions: vec![sample_position()],
+            open_orders: vec![sample_order()],
+            timestamp: Utc::now(),
+        };
+
+        let json = serde_json::to_string_pretty(&original).expect("serialization failed");
+        let deserialized: ShutdownCheckpoint =
+            serde_json::from_str(&json).expect("deserialization failed");
+
+        // Verify positions round-trip.
+        assert_eq!(deserialized.positions.len(), 1);
+        assert_eq!(deserialized.positions[0].exchange, Exchange::Binance);
+        assert_eq!(deserialized.positions[0].quantity, Decimal::new(15, 1));
+        assert_eq!(
+            deserialized.positions[0].average_entry_price,
+            Decimal::new(42000, 0)
+        );
+        assert_eq!(deserialized.positions[0].realized_pnl, Decimal::new(50, 0));
+
+        // Verify open orders round-trip.
+        assert_eq!(deserialized.open_orders.len(), 1);
+        assert_eq!(
+            deserialized.open_orders[0].client_order_id,
+            "test-order-001"
+        );
+        assert_eq!(deserialized.open_orders[0].side, Side::Buy);
+        assert_eq!(deserialized.open_orders[0].status, OrderStatus::New);
+        assert_eq!(
+            deserialized.open_orders[0].price,
+            Some(Decimal::new(41500, 0))
+        );
+
+        // Verify timestamp round-trips (to millisecond precision).
+        let delta = (original.timestamp - deserialized.timestamp)
+            .num_milliseconds()
+            .abs();
+        assert!(delta < 1000, "timestamp drift too large: {delta}ms");
+    }
+
+    #[test]
+    fn test_shutdown_checkpoint_empty_state() {
+        let checkpoint = ShutdownCheckpoint {
+            positions: vec![],
+            open_orders: vec![],
+            timestamp: Utc::now(),
+        };
+
+        let json = serde_json::to_string(&checkpoint).expect("serialization failed");
+        let deserialized: ShutdownCheckpoint =
+            serde_json::from_str(&json).expect("deserialization failed");
+
+        assert!(deserialized.positions.is_empty());
+        assert!(deserialized.open_orders.is_empty());
+    }
+
+    #[test]
+    fn test_shutdown_checkpoint_file_round_trip() {
+        let checkpoint = ShutdownCheckpoint {
+            positions: vec![sample_position()],
+            open_orders: vec![sample_order()],
+            timestamp: Utc::now(),
+        };
+
+        let dir = std::env::temp_dir().join("trading_core_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_checkpoint.json");
+
+        // Write checkpoint to file.
+        let json = serde_json::to_string_pretty(&checkpoint).expect("serialization failed");
+        std::fs::write(&path, &json).expect("write failed");
+
+        // Read it back.
+        let read_json = std::fs::read_to_string(&path).expect("read failed");
+        let loaded: ShutdownCheckpoint =
+            serde_json::from_str(&read_json).expect("deserialization failed");
+
+        assert_eq!(loaded.positions.len(), 1);
+        assert_eq!(loaded.open_orders.len(), 1);
+        assert_eq!(
+            loaded.positions[0].exchange,
+            checkpoint.positions[0].exchange
+        );
+        assert_eq!(
+            loaded.open_orders[0].client_order_id,
+            checkpoint.open_orders[0].client_order_id
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 }
