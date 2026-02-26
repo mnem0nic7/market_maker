@@ -160,6 +160,26 @@ impl LocalOrderBook {
         }
     }
 
+    /// Whether the order book data is stale (too old to trade on safely).
+    ///
+    /// Returns `true` if:
+    /// - The book is not initialized (missing bids or asks), OR
+    /// - The book's timestamp is older than `max_age` from the current time.
+    pub fn is_stale(&self, max_age: std::time::Duration) -> bool {
+        if !self.is_initialized() {
+            return true;
+        }
+        let age = Utc::now() - self.timestamp;
+        let max_age_chrono =
+            chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::MAX);
+        age > max_age_chrono
+    }
+
+    /// How long ago the book was last updated.
+    pub fn age(&self) -> chrono::Duration {
+        Utc::now() - self.timestamp
+    }
+
     /// Number of bid levels.
     pub fn bid_depth(&self) -> usize {
         self.bids.len()
@@ -353,5 +373,53 @@ mod tests {
 
         assert_eq!(book.total_bid_volume(), dec!(3.0));
         assert_eq!(book.total_ask_volume(), dec!(7.0));
+    }
+
+    #[test]
+    fn test_is_stale_empty_book() {
+        let book = make_book();
+        // An uninitialized book (no bids or asks) should always be considered stale.
+        assert!(book.is_stale(std::time::Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_is_stale_fresh_book() {
+        let mut book = make_book();
+        let bids = vec![(dec!(100.0), dec!(1.0))];
+        let asks = vec![(dec!(101.0), dec!(1.0))];
+        book.apply_snapshot(&bids, &asks, Utc::now(), 1);
+
+        // A book that was just updated should NOT be stale with a 5-second threshold.
+        assert!(!book.is_stale(std::time::Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_is_stale_old_book() {
+        let mut book = make_book();
+        let bids = vec![(dec!(100.0), dec!(1.0))];
+        let asks = vec![(dec!(101.0), dec!(1.0))];
+        book.apply_snapshot(&bids, &asks, Utc::now(), 1);
+
+        // Manually set the timestamp to 10 seconds ago.
+        book.timestamp = Utc::now() - chrono::Duration::seconds(10);
+
+        // With a 5-second threshold the book should be stale.
+        assert!(book.is_stale(std::time::Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_age_returns_correct_duration() {
+        let mut book = make_book();
+        let bids = vec![(dec!(100.0), dec!(1.0))];
+        let asks = vec![(dec!(101.0), dec!(1.0))];
+        book.apply_snapshot(&bids, &asks, Utc::now(), 1);
+
+        // Manually set the timestamp to 10 seconds ago.
+        book.timestamp = Utc::now() - chrono::Duration::seconds(10);
+
+        let age = book.age();
+        // The age should be approximately 10 seconds (allow some tolerance for
+        // execution time).
+        assert!(age.num_seconds() >= 9 && age.num_seconds() <= 11);
     }
 }
