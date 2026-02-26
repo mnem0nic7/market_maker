@@ -640,6 +640,72 @@ mod tests {
     }
 
     #[test]
+    fn test_position_update_serialization_all_fields() {
+        let msg = position_update();
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+
+        assert_eq!(value["type"], "PositionUpdate");
+        assert_eq!(value["exchange"], "Simulated");
+        assert!(value.get("symbol").is_some());
+        assert!(value.get("quantity").is_some());
+        assert!(value.get("unrealized_pnl").is_some());
+        assert!(value.get("realized_pnl").is_some());
+
+        // Verify round-trip deserialization.
+        let deserialized: ServerMessage = serde_json::from_str(&json).expect("deserialize");
+        match deserialized {
+            ServerMessage::PositionUpdate {
+                exchange,
+                symbol,
+                quantity,
+                unrealized_pnl,
+                realized_pnl,
+            } => {
+                assert_eq!(exchange, Exchange::Simulated);
+                assert_eq!(symbol, Symbol::new("BTC", "USDT"));
+                assert_eq!(quantity, dec!(1.0));
+                assert_eq!(unrealized_pnl, dec!(100));
+                assert_eq!(realized_pnl, dec!(50));
+            }
+            other => panic!("expected PositionUpdate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_risk_update_serialization_all_fields() {
+        let msg = risk_update();
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+
+        assert_eq!(value["type"], "RiskUpdate");
+        assert!(value.get("net_exposure").is_some());
+        assert!(value.get("gross_exposure").is_some());
+        assert!(value.get("daily_pnl").is_some());
+        assert!(value.get("kill_switch_active").is_some());
+
+        // Verify the kill_switch_active field serializes as a boolean.
+        assert_eq!(value["kill_switch_active"], false);
+
+        // Verify round-trip deserialization.
+        let deserialized: ServerMessage = serde_json::from_str(&json).expect("deserialize");
+        match deserialized {
+            ServerMessage::RiskUpdate {
+                net_exposure,
+                gross_exposure,
+                daily_pnl,
+                kill_switch_active,
+            } => {
+                assert_eq!(net_exposure, dec!(10000));
+                assert_eq!(gross_exposure, dec!(25000));
+                assert_eq!(daily_pnl, dec!(350));
+                assert!(!kill_switch_active);
+            }
+            other => panic!("expected RiskUpdate, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_client_message_deserialization_subscribe() {
         let json = r#"{"action":"subscribe","channel":"positions"}"#;
         let msg: ClientMessage = serde_json::from_str(json).expect("deserialize");

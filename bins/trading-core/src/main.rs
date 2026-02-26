@@ -32,7 +32,7 @@ use mm_execution::{
     AlpacaExecutionConfig, AlpacaExecutionConnector, BinanceExecutionConfig,
     BinanceExecutionConnector, CoinbaseExecutionConfig, CoinbaseExecutionConnector,
     IbExecutionConfig, IbExecutionConnector, KrakenExecutionConfig, KrakenExecutionConnector,
-    OrderManager, OrderRouter,
+    OrderManager, OrderRouter, PositionReconciliation,
 };
 use mm_gateway::ws::ServerMessage;
 use mm_gateway::{ApiState, DashboardBroadcaster, GatewayConfig, GatewayServer};
@@ -482,6 +482,33 @@ async fn main() -> Result<()> {
     // Track last order book receive time per exchange for disconnect detection.
     let mut last_book_time: HashMap<Exchange, chrono::DateTime<Utc>> = HashMap::new();
 
+    // ----- (k1) Position reconciliation timer -----
+    let reconciliation_enabled = cfg.trading_loop.reconciliation_interval_secs > 0;
+    let reconciliation_interval = Duration::from_secs(if reconciliation_enabled {
+        cfg.trading_loop.reconciliation_interval_secs
+    } else {
+        // Use a large value — the branch will be skipped anyway.
+        3600
+    });
+    let mut reconciliation_timer = tokio::time::interval(reconciliation_interval);
+    reconciliation_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Skip the first immediate tick so reconciliation starts after the
+    // configured interval, not at startup.
+    reconciliation_timer.tick().await;
+    let drift_warn_threshold =
+        Decimal::try_from(cfg.trading_loop.reconciliation_drift_threshold_pct)
+            .unwrap_or(Decimal::ONE);
+    let drift_error_threshold = Decimal::from(5); // 5% is always a severe mismatch
+    if reconciliation_enabled {
+        info!(
+            interval_secs = cfg.trading_loop.reconciliation_interval_secs,
+            drift_warn_pct = %drift_warn_threshold,
+            "position reconciliation enabled"
+        );
+    } else {
+        info!("position reconciliation disabled");
+    }
+
     // Graceful shutdown signal.
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -579,6 +606,7 @@ async fn main() -> Result<()> {
                     &mut strategy_metrics_tracker,
                     &pnl_limit_check,
                     &metrics,
+                    &broadcast_tx,
                 ).await;
             }
 
@@ -892,6 +920,14 @@ async fn main() -> Result<()> {
                 // Update strategy metrics uptime.
                 strategy_metrics_tracker.update_uptime(Utc::now());
 
+                // Broadcast risk update to WebSocket dashboard clients.
+                let _ = broadcast_tx.try_send(ServerMessage::RiskUpdate {
+                    net_exposure: portfolio_risk.net_exposure,
+                    gross_exposure: portfolio_risk.gross_exposure,
+                    daily_pnl: portfolio_risk.daily_pnl,
+                    kill_switch_active: kill_switch.is_active(),
+                });
+
                 // Broadcast strategy metrics to WebSocket dashboard clients.
                 for m in strategy_metrics_tracker.all() {
                     let msg = ServerMessage::StrategyMetrics {
@@ -916,6 +952,77 @@ async fn main() -> Result<()> {
                     sm.clear();
                     for m in all_metrics {
                         sm.insert(m.strategy_id.clone(), m);
+                    }
+                }
+            }
+
+            // --- Position reconciliation ---
+            _ = reconciliation_timer.tick(), if reconciliation_enabled => {
+                debug!("running position reconciliation");
+
+                let pos_snapshot = positions.read().await;
+                let active_positions: Vec<_> = pos_snapshot
+                    .iter()
+                    .filter(|(_, pos)| !pos.is_flat())
+                    .map(|(key, pos)| (key.clone(), pos.clone()))
+                    .collect();
+                drop(pos_snapshot);
+
+                if active_positions.is_empty() {
+                    debug!("no active positions to reconcile");
+                } else {
+                    for ((exchange, _symbol), local_pos) in &active_positions {
+                        // Fetch balances from the exchange.
+                        let balances = match order_router.fetch_balances(*exchange).await {
+                            Ok(b) => b,
+                            Err(e) => {
+                                warn!(
+                                    %exchange,
+                                    error = %e,
+                                    "reconciliation: failed to fetch balances"
+                                );
+                                continue;
+                            }
+                        };
+
+                        // Find the matching balance for the base currency of this position.
+                        let base_currency = &local_pos.symbol.base;
+                        let exchange_qty = balances
+                            .iter()
+                            .find(|b| b.currency.eq_ignore_ascii_case(base_currency))
+                            .map(|b| b.total)
+                            .unwrap_or(Decimal::ZERO);
+
+                        let recon = PositionReconciliation::check(local_pos, exchange_qty);
+
+                        if recon.drift_pct >= drift_error_threshold {
+                            error!(
+                                exchange = %recon.exchange,
+                                symbol = %recon.symbol,
+                                local_qty = %recon.local_quantity,
+                                exchange_qty = %recon.exchange_quantity,
+                                drift = %recon.drift,
+                                drift_pct = %recon.drift_pct,
+                                "SEVERE position drift detected — local and exchange out of sync"
+                            );
+                        } else if recon.drift_pct >= drift_warn_threshold {
+                            warn!(
+                                exchange = %recon.exchange,
+                                symbol = %recon.symbol,
+                                local_qty = %recon.local_quantity,
+                                exchange_qty = %recon.exchange_quantity,
+                                drift = %recon.drift,
+                                drift_pct = %recon.drift_pct,
+                                "position drift detected"
+                            );
+                        } else {
+                            info!(
+                                exchange = %recon.exchange,
+                                symbol = %recon.symbol,
+                                drift_pct = %recon.drift_pct,
+                                "position reconciled"
+                            );
+                        }
                     }
                 }
             }
@@ -1022,6 +1129,7 @@ async fn handle_order_update(
     strategy_metrics_tracker: &mut StrategyMetricsTracker,
     pnl_limit_check: &Arc<PnlLimitCheck>,
     metrics: &Arc<MetricsRegistry>,
+    broadcast_tx: &mpsc::Sender<ServerMessage>,
 ) {
     // Apply the update to the OMS.
     let updated_order = order_manager.update_order(update);
@@ -1091,6 +1199,15 @@ async fn handle_order_update(
                             .with_label_values(&[&exchange_label, &symbol_label])
                             .set(pos.unrealized_pnl.to_f64().unwrap_or(0.0));
                     }
+
+                    // Broadcast position update to WebSocket dashboard clients.
+                    let _ = broadcast_tx.try_send(ServerMessage::PositionUpdate {
+                        exchange: pos.exchange,
+                        symbol: pos.symbol.clone(),
+                        quantity: pos.quantity,
+                        unrealized_pnl: pos.unrealized_pnl,
+                        realized_pnl: pos.realized_pnl,
+                    });
 
                     // Accumulate the realized PnL delta from this fill.
                     let realized_delta = pos.realized_pnl - prev_realized;

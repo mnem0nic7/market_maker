@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use mm_core::{
-    traits::ExecutionConnector, CancelAllOrders, CancelOrder, Exchange, MmError, MmResult,
-    NewOrder, Order, OrderAction,
+    traits::{Balance, ExecutionConnector},
+    CancelAllOrders, CancelOrder, Exchange, MmError, MmResult, NewOrder, Order, OrderAction,
 };
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -350,5 +350,19 @@ impl OrderRouter {
     /// Access the underlying OMS (e.g., for queries).
     pub fn oms(&self) -> &Arc<OrderManager> {
         &self.oms
+    }
+
+    /// Fetch balances from a specific exchange connector.
+    ///
+    /// Used by the reconciliation loop to compare exchange-reported balances
+    /// against the local position state.
+    pub async fn fetch_balances(&self, exchange: Exchange) -> MmResult<Vec<Balance>> {
+        let connector = self.get_connector(exchange)?;
+        connector.fetch_balances().await
+    }
+
+    /// Return the list of exchanges that have registered connectors.
+    pub fn connected_exchanges(&self) -> Vec<Exchange> {
+        self.connectors.keys().copied().collect()
     }
 }
