@@ -175,9 +175,15 @@ impl TimescaleStore {
     // Migrations
     // -----------------------------------------------------------------------
 
+    /// The latest schema version. Bump this when adding new migrations.
+    pub const LATEST_SCHEMA_VERSION: i32 = 1;
+
     /// Create all required tables and hypertables if they do not already exist.
     ///
-    /// This is intentionally idempotent so it can be called on every startup.
+    /// Migrations are tracked in a `schema_migrations` table so each version is
+    /// applied at most once. The function is idempotent and safe to call on
+    /// every startup — it will only run migrations whose version exceeds the
+    /// currently recorded version.
     #[instrument(skip(self))]
     pub async fn run_migrations(&self) -> Result<(), PipelineError> {
         // Ensure the TimescaleDB extension is available.
@@ -186,6 +192,58 @@ impl TimescaleStore {
             .await
             .map_err(|e| PipelineError::Database(format!("timescaledb extension: {e}")))?;
 
+        // Ensure the schema_migrations tracking table exists.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version     INT         PRIMARY KEY,
+                description TEXT        NOT NULL,
+                applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| PipelineError::Database(format!("schema_migrations table: {e}")))?;
+
+        // Determine the current schema version.
+        let current_version: Option<i32> =
+            sqlx::query_scalar("SELECT MAX(version) FROM schema_migrations")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| PipelineError::Database(format!("reading schema version: {e}")))?;
+        let current = current_version.unwrap_or(0);
+
+        info!(current_version = current, "current schema version");
+
+        // -- Migration v1: Initial schema ---------------------------------
+        if current < 1 {
+            self.apply_migration_v1().await?;
+
+            sqlx::query(
+                "INSERT INTO schema_migrations (version, description) VALUES (1, 'Initial schema')",
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| PipelineError::Database(format!("recording migration v1: {e}")))?;
+
+            info!("Applied migration v1: Initial schema");
+        }
+
+        // Future migrations go here:
+        // if current < 2 {
+        //     self.apply_migration_v2().await?;
+        //     sqlx::query("INSERT INTO schema_migrations ...")
+        //         .execute(&self.pool).await?;
+        //     info!("Applied migration v2: <description>");
+        // }
+
+        info!("TimescaleDB migrations complete");
+        Ok(())
+    }
+
+    /// Apply migration v1: create all initial tables, hypertables, and indices.
+    async fn apply_migration_v1(&self) -> Result<(), PipelineError> {
         // -- market_data_ticks --
         sqlx::query(
             r#"
@@ -331,8 +389,38 @@ impl TimescaleStore {
         .await
         .map_err(|e| PipelineError::Database(format!("fills index: {e}")))?;
 
-        info!("TimescaleDB migrations complete");
         Ok(())
+    }
+
+    /// Return the current schema version, or `0` if no migrations have been
+    /// applied yet (i.e., the `schema_migrations` table does not exist or is
+    /// empty).
+    pub async fn get_schema_version(pool: &PgPool) -> Result<i32, PipelineError> {
+        // First check whether the schema_migrations table exists at all.
+        // On a brand-new database it will not, and querying it would error.
+        let table_exists: bool = sqlx::query_scalar(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name   = 'schema_migrations'
+            )
+            "#,
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| PipelineError::Database(format!("checking schema_migrations: {e}")))?;
+
+        if !table_exists {
+            return Ok(0);
+        }
+
+        let version: Option<i32> = sqlx::query_scalar("SELECT MAX(version) FROM schema_migrations")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| PipelineError::Database(format!("reading schema version: {e}")))?;
+
+        Ok(version.unwrap_or(0))
     }
 
     /// Helper: create a hypertable, silently succeeding if it already exists.
@@ -995,5 +1083,83 @@ mod tests {
         assert!(result.is_err());
         // initial attempt + 3 retries = 4 total
         assert_eq!(counter.load(Ordering::SeqCst), 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // Schema version tracking
+    // -----------------------------------------------------------------------
+
+    /// Helper that mirrors the version-check logic used in `run_migrations()`.
+    /// Given the current version from the database, returns the list of
+    /// migration versions that would be applied.
+    fn pending_migrations(current: i32) -> Vec<i32> {
+        let latest = TimescaleStore::LATEST_SCHEMA_VERSION;
+        (1..=latest).filter(|v| current < *v).collect()
+    }
+
+    #[test]
+    fn test_schema_version_default() {
+        // When no migrations have been applied (version 0), the pending list
+        // should contain all versions up to LATEST.
+        let pending = pending_migrations(0);
+        assert!(
+            !pending.is_empty(),
+            "a fresh database should have pending migrations"
+        );
+        assert_eq!(pending[0], 1, "first pending migration should be version 1");
+
+        // When all migrations are applied, nothing should be pending.
+        let pending_after = pending_migrations(TimescaleStore::LATEST_SCHEMA_VERSION);
+        assert!(
+            pending_after.is_empty(),
+            "no migrations should be pending after reaching LATEST_SCHEMA_VERSION"
+        );
+    }
+
+    #[test]
+    fn test_migration_versioning() {
+        // LATEST_SCHEMA_VERSION must be positive.
+        assert!(
+            TimescaleStore::LATEST_SCHEMA_VERSION >= 1,
+            "LATEST_SCHEMA_VERSION must be at least 1"
+        );
+
+        // Version 0 (no migrations) should trigger all migrations.
+        let pending_from_zero = pending_migrations(0);
+        assert_eq!(
+            pending_from_zero.len(),
+            TimescaleStore::LATEST_SCHEMA_VERSION as usize,
+            "all migrations should be pending from version 0"
+        );
+
+        // Version equal to latest should trigger nothing.
+        let pending_from_latest = pending_migrations(TimescaleStore::LATEST_SCHEMA_VERSION);
+        assert!(
+            pending_from_latest.is_empty(),
+            "no migrations should be pending when already at latest"
+        );
+
+        // A version in between should trigger only later migrations.
+        if TimescaleStore::LATEST_SCHEMA_VERSION > 1 {
+            let pending_from_one = pending_migrations(1);
+            assert_eq!(
+                pending_from_one.len(),
+                (TimescaleStore::LATEST_SCHEMA_VERSION - 1) as usize,
+                "only migrations after version 1 should be pending"
+            );
+            assert!(
+                !pending_from_one.contains(&1),
+                "version 1 should not be pending when current is 1"
+            );
+        }
+
+        // Versions should be monotonically increasing.
+        let all = pending_migrations(0);
+        for window in all.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "migration versions must be monotonically increasing"
+            );
+        }
     }
 }
