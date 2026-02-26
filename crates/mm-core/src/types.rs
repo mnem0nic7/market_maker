@@ -8,6 +8,11 @@ use uuid::Uuid;
 // Exchange & Symbol
 // ---------------------------------------------------------------------------
 
+/// Supported exchanges and venues.
+///
+/// Covers centralized exchanges (Binance, Coinbase, Kraken), decentralized
+/// protocols (Uniswap, Raydium), equity brokers (Interactive Brokers, Alpaca),
+/// and a simulated exchange for backtesting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub enum Exchange {
@@ -51,9 +56,12 @@ impl std::fmt::Display for Symbol {
 // Side, OrderType, TimeInForce
 // ---------------------------------------------------------------------------
 
+/// Trade direction: buy or sell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 pub enum Side {
+    /// Buy / go long.
     Buy,
+    /// Sell / go short.
     Sell,
 }
 
@@ -66,14 +74,20 @@ impl Side {
     }
 }
 
+/// Order execution type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 pub enum OrderType {
+    /// Execute immediately at the best available price.
     Market,
+    /// Execute at the specified price or better.
     Limit,
+    /// Limit order activated when the stop price is reached.
     StopLimit,
+    /// Market order activated when the stop price is reached.
     StopMarket,
 }
 
+/// Time-in-force policy controlling how long an order remains active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 pub enum TimeInForce {
     /// Good till cancelled
@@ -90,6 +104,11 @@ pub enum TimeInForce {
 // Order Status (lifecycle state machine)
 // ---------------------------------------------------------------------------
 
+/// Order lifecycle state machine.
+///
+/// Transitions: Pending -> Submitted -> New -> PartiallyFilled -> Filled.
+/// An order may also move to PendingCancel -> Cancelled, or be Rejected/Expired
+/// at any non-terminal state. Terminal states: Filled, Cancelled, Rejected, Expired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 pub enum OrderStatus {
     /// Created locally, not yet sent to exchange
@@ -135,22 +154,37 @@ impl OrderStatus {
 // Order
 // ---------------------------------------------------------------------------
 
+/// A trading order with full lifecycle tracking.
+///
+/// Each order is identified by a locally generated `client_order_id` and, once
+/// acknowledged by the exchange, also by an `exchange_order_id`. The
+/// [`OrderManager`](crate::types::OrderStatus) state machine governs valid status transitions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order {
+    /// Locally generated UUID identifying this order.
     pub client_order_id: String,
+    /// Exchange-assigned order ID, populated after acknowledgment.
     pub exchange_order_id: Option<String>,
     pub exchange: Exchange,
     pub symbol: Symbol,
     pub side: Side,
     pub order_type: OrderType,
     pub time_in_force: TimeInForce,
+    /// Limit price. `None` for market orders.
     pub price: Option<Decimal>,
+    /// Requested order quantity.
     pub quantity: Decimal,
+    /// Current lifecycle status.
     pub status: OrderStatus,
+    /// Cumulative quantity filled so far.
     pub filled_quantity: Decimal,
+    /// Quantity still outstanding (`quantity - filled_quantity`).
     pub remaining_quantity: Decimal,
+    /// Volume-weighted average fill price across all partial fills.
     pub average_fill_price: Decimal,
+    /// ID of the strategy that placed this order.
     pub strategy_id: String,
+    /// If true, this order may only reduce an existing position.
     pub reduce_only: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -192,6 +226,9 @@ impl Order {
 // NewOrder (request to place an order)
 // ---------------------------------------------------------------------------
 
+/// Request to place a new order on an exchange.
+///
+/// Passed through risk checks before being submitted via an [`ExecutionConnector`](crate::traits::ExecutionConnector).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewOrder {
     pub exchange: Exchange,
@@ -199,8 +236,10 @@ pub struct NewOrder {
     pub side: Side,
     pub order_type: OrderType,
     pub time_in_force: TimeInForce,
+    /// Limit price. `None` for market orders.
     pub price: Option<Decimal>,
     pub quantity: Decimal,
+    /// ID of the strategy requesting this order.
     pub strategy_id: String,
     pub reduce_only: bool,
 }
@@ -209,6 +248,7 @@ pub struct NewOrder {
 // Cancel request
 // ---------------------------------------------------------------------------
 
+/// Request to cancel a specific open order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancelOrder {
     pub exchange: Exchange,
@@ -217,6 +257,7 @@ pub struct CancelOrder {
     pub exchange_order_id: Option<String>,
 }
 
+/// Request to cancel all open orders, optionally filtered by exchange, symbol, or strategy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancelAllOrders {
     pub exchange: Option<Exchange>,
@@ -228,17 +269,28 @@ pub struct CancelAllOrders {
 // Fill
 // ---------------------------------------------------------------------------
 
+/// Execution report for a completed (or partial) trade.
+///
+/// Fills are produced by exchange connectors and forwarded to the strategy via
+/// [`Strategy::on_fill`](crate::traits::Strategy::on_fill) and to position tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Fill {
+    /// Unique identifier for this fill event.
     pub fill_id: String,
+    /// Client-side order ID that produced this fill.
     pub client_order_id: String,
+    /// Exchange-assigned order ID.
     pub exchange_order_id: String,
     pub exchange: Exchange,
     pub symbol: Symbol,
     pub side: Side,
+    /// Execution price.
     pub price: Decimal,
+    /// Quantity filled in this execution.
     pub quantity: Decimal,
+    /// Fee charged for this fill.
     pub fee: Decimal,
+    /// Currency in which the fee was charged.
     pub fee_currency: String,
     pub timestamp: DateTime<Utc>,
 }
@@ -247,13 +299,22 @@ pub struct Fill {
 // Position
 // ---------------------------------------------------------------------------
 
+/// Current holding for a single instrument on one exchange.
+///
+/// Tracks entry price (volume-weighted average), realized and unrealized P&L.
+/// Positive `quantity` = long, negative = short, zero = flat.
+/// Updated incrementally via [`Position::update_on_fill`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Position {
     pub exchange: Exchange,
     pub symbol: Symbol,
+    /// Signed quantity: positive for long, negative for short.
     pub quantity: Decimal,
+    /// Volume-weighted average entry price across all fills that built this position.
     pub average_entry_price: Decimal,
+    /// Mark-to-market unrealized P&L based on latest price.
     pub unrealized_pnl: Decimal,
+    /// Cumulative realized P&L from closed portions of this position.
     pub realized_pnl: Decimal,
     pub updated_at: DateTime<Utc>,
 }
@@ -331,19 +392,28 @@ impl Position {
 // Market Data Types
 // ---------------------------------------------------------------------------
 
+/// A single price level in an order book (price + aggregate quantity).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceLevel {
     pub price: Decimal,
+    /// Total quantity available at this price level.
     pub quantity: Decimal,
 }
 
+/// Snapshot of an order book for a single instrument.
+///
+/// Bids are sorted highest-first; asks are sorted lowest-first.
+/// Provides convenience methods for best bid/ask, mid price, and spread.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderBook {
     pub exchange: Exchange,
     pub symbol: Symbol,
+    /// Bid levels sorted by price descending (best bid first).
     pub bids: Vec<PriceLevel>,
+    /// Ask levels sorted by price ascending (best ask first).
     pub asks: Vec<PriceLevel>,
     pub timestamp: DateTime<Utc>,
+    /// Exchange-provided sequence number for detecting gaps.
     pub sequence: u64,
 }
 
@@ -380,6 +450,7 @@ impl OrderBook {
     }
 }
 
+/// Real-time ticker data with best bid/ask and 24-hour volume.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ticker {
     pub exchange: Exchange,
@@ -391,6 +462,7 @@ pub struct Ticker {
     pub timestamp: DateTime<Utc>,
 }
 
+/// A single executed trade observed on the public trade feed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
     pub exchange: Exchange,
@@ -402,6 +474,7 @@ pub struct Trade {
     pub trade_id: String,
 }
 
+/// OHLCV candlestick bar for a given time interval.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Candle {
     pub exchange: Exchange,
@@ -415,6 +488,7 @@ pub struct Candle {
     pub interval: CandleInterval,
 }
 
+/// Supported candlestick time intervals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 pub enum CandleInterval {
     #[strum(serialize = "1m")]
@@ -435,6 +509,11 @@ pub enum CandleInterval {
 // Market Snapshot (aggregated view for strategies)
 // ---------------------------------------------------------------------------
 
+/// Point-in-time market state delivered to strategies on each tick.
+///
+/// Aggregates the current order book, last trade, the strategy's position, and
+/// its open orders into a single read-only view. Strategies receive this via
+/// [`Strategy::on_tick`](crate::traits::Strategy::on_tick).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketSnapshot {
     pub exchange: Exchange,
@@ -443,8 +522,11 @@ pub struct MarketSnapshot {
     /// tick in the hot path. Strategies only read the book via `&MarketSnapshot`,
     /// so shared ownership is safe and eliminates per-tick Vec<PriceLevel> copies.
     pub order_book: std::sync::Arc<OrderBook>,
+    /// Most recent public trade, if available.
     pub last_trade: Option<Trade>,
+    /// Strategy's current position on this instrument.
     pub position: Position,
+    /// Strategy's currently open orders on this instrument.
     pub open_orders: Vec<Order>,
     pub timestamp: DateTime<Utc>,
 }
@@ -453,11 +535,19 @@ pub struct MarketSnapshot {
 // Strategy Actions (output from strategies)
 // ---------------------------------------------------------------------------
 
+/// Actions a strategy can emit in response to a market tick.
+///
+/// Returned from [`Strategy::on_tick`](crate::traits::Strategy::on_tick) and
+/// routed through risk checks before reaching the exchange.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OrderAction {
+    /// Place a new order.
     Place(NewOrder),
+    /// Cancel a specific order.
     Cancel(CancelOrder),
+    /// Cancel all matching orders.
     CancelAll(CancelAllOrders),
+    /// Amend an existing order's price and/or quantity.
     Amend {
         client_order_id: String,
         new_price: Option<Decimal>,
@@ -469,44 +559,62 @@ pub enum OrderAction {
 // Risk
 // ---------------------------------------------------------------------------
 
+/// Aggregate portfolio-level risk metrics used by [`RiskCheck`](crate::traits::RiskCheck) evaluations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortfolioRisk {
+    /// Value-at-Risk at 95% confidence level.
     pub total_var_95: Decimal,
+    /// Value-at-Risk at 99% confidence level.
     pub total_var_99: Decimal,
+    /// Net directional exposure (longs minus shorts).
     pub net_exposure: Decimal,
+    /// Gross exposure (sum of absolute position values).
     pub gross_exposure: Decimal,
+    /// Peak-to-trough drawdown since inception or last reset.
     pub max_drawdown: Decimal,
+    /// Running daily P&L.
     pub daily_pnl: Decimal,
+    /// All open positions in the portfolio.
     pub positions: Vec<Position>,
     pub timestamp: DateTime<Utc>,
 }
 
+/// Outcome of a risk check evaluation on a proposed order or portfolio state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RiskAction {
+    /// Order passes all checks and may proceed.
     Allow,
-    Reject {
-        reason: String,
-    },
+    /// Order is rejected outright.
+    Reject { reason: String },
+    /// Order is allowed but size must be reduced to `max_quantity`.
     ReduceSize {
         max_quantity: Decimal,
         reason: String,
     },
-    KillSwitch {
-        reason: String,
-    },
+    /// Severe risk event: activate the kill switch and cancel all activity.
+    KillSwitch { reason: String },
 }
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
+/// Configuration for instantiating a strategy at runtime.
+///
+/// The `strategy_type` field selects the concrete strategy implementation
+/// (e.g. "spread", "avellaneda", "grid"), and `params` carries the
+/// strategy-specific configuration as a JSON value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrategyConfig {
+    /// Unique identifier for this strategy instance.
     pub strategy_id: String,
+    /// Strategy type key (e.g. "spread", "avellaneda", "grid", "twap").
     pub strategy_type: String,
     pub exchange: Exchange,
     pub symbol: Symbol,
+    /// Whether this strategy should be active on startup.
     pub enabled: bool,
+    /// Strategy-specific parameters, deserialized into the concrete config struct.
     pub params: serde_json::Value,
 }
 

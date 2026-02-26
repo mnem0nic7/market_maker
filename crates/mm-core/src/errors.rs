@@ -1,10 +1,16 @@
+//! Error types for the market maker platform.
+
 use thiserror::Error;
 
 use crate::Exchange;
 
+/// Unified error type covering all failure modes in the market maker platform.
+///
+/// Variants are grouped by domain: exchange connectivity, order management,
+/// risk limits, strategy logic, market data, and infrastructure.
 #[derive(Error, Debug)]
 pub enum MmError {
-    // Exchange connectivity
+    // -- Exchange connectivity --
     #[error("exchange error ({exchange}): {message}")]
     Exchange { exchange: Exchange, message: String },
 
@@ -20,7 +26,7 @@ pub enum MmError {
     #[error("authentication failed for {exchange}: {message}")]
     AuthenticationFailed { exchange: Exchange, message: String },
 
-    // Order errors
+    // -- Order errors --
     #[error("order rejected: {reason}")]
     OrderRejected { reason: String },
 
@@ -34,7 +40,7 @@ pub enum MmError {
         currency: String,
     },
 
-    // Risk errors
+    // -- Risk errors --
     #[error("risk limit breached: {reason}")]
     RiskLimitBreached { reason: String },
 
@@ -44,21 +50,21 @@ pub enum MmError {
     #[error("circuit breaker triggered: {reason}")]
     CircuitBreakerTriggered { reason: String },
 
-    // Strategy errors
+    // -- Strategy errors --
     #[error("strategy error ({strategy_id}): {message}")]
     Strategy {
         strategy_id: String,
         message: String,
     },
 
-    // Data errors
+    // -- Data errors --
     #[error("market data unavailable for {symbol} on {exchange}")]
     MarketDataUnavailable { exchange: Exchange, symbol: String },
 
     #[error("stale data: last update was {age_ms}ms ago (threshold: {threshold_ms}ms)")]
     StaleData { age_ms: u64, threshold_ms: u64 },
 
-    // Infrastructure
+    // -- Infrastructure --
     #[error("database error: {0}")]
     Database(String),
 
@@ -75,4 +81,5 @@ pub enum MmError {
     Internal(String),
 }
 
+/// Convenience type alias for results throughout the market maker platform.
 pub type MmResult<T> = Result<T, MmError>;

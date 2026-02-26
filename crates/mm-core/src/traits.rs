@@ -10,10 +10,14 @@ use crate::types::*;
 // Market Data Connector
 // ---------------------------------------------------------------------------
 
-/// Trait for exchange-specific market data connections.
-/// Each exchange implements this to provide normalized market data.
+/// Adapter for streaming normalized market data from a specific exchange.
+///
+/// Lifecycle: call [`connect`](Self::connect) with the desired symbols and `mpsc`
+/// channels, then consume `OrderBook` and `Trade` updates. Use
+/// [`disconnect`](Self::disconnect) for graceful teardown.
 #[async_trait]
 pub trait MarketDataConnector: Send + Sync {
+    /// Returns the exchange this connector is bound to.
     fn exchange(&self) -> Exchange;
 
     /// Connect to the exchange and begin streaming data.
@@ -39,14 +43,20 @@ pub trait MarketDataConnector: Send + Sync {
 // Execution Connector
 // ---------------------------------------------------------------------------
 
-/// Trait for exchange-specific order execution.
+/// Adapter for submitting and managing orders on a specific exchange.
+///
+/// Lifecycle: call [`connect`](Self::connect) to start receiving real-time
+/// `OrderUpdate` events, then use [`submit_order`](Self::submit_order),
+/// [`cancel_order`](Self::cancel_order), etc. for order management.
 #[async_trait]
 pub trait ExecutionConnector: Send + Sync {
+    /// Returns the exchange this connector is bound to.
     fn exchange(&self) -> Exchange;
 
     /// Connect and start receiving order updates via the provided channel.
     async fn connect(&mut self, update_tx: mpsc::Sender<OrderUpdate>) -> MmResult<()>;
 
+    /// Disconnect from the exchange and stop receiving updates.
     async fn disconnect(&mut self) -> MmResult<()>;
 
     /// Submit a new order. Returns the client_order_id.
@@ -61,14 +71,19 @@ pub trait ExecutionConnector: Send + Sync {
     /// Fetch current balances.
     async fn fetch_balances(&self) -> MmResult<Vec<Balance>>;
 
+    /// Check if the connection is alive.
     fn is_connected(&self) -> bool;
 }
 
+/// Exchange account balance for a single currency.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Balance {
     pub currency: String,
+    /// Available (unlocked) balance.
     pub free: Decimal,
+    /// Balance locked in open orders.
     pub locked: Decimal,
+    /// Total balance (`free + locked`).
     pub total: Decimal,
 }
 
@@ -76,10 +91,15 @@ pub struct Balance {
 // Strategy
 // ---------------------------------------------------------------------------
 
-/// Core strategy trait. Strategies receive market snapshots and emit order actions.
-/// All strategies — live and backtest — implement this same interface.
+/// Core trading strategy interface.
+///
+/// All strategies -- live and backtest -- implement this same trait. The main
+/// loop calls [`on_tick`](Self::on_tick) with each new [`MarketSnapshot`] and
+/// routes the returned [`OrderAction`]s through risk checks to execution.
 pub trait Strategy: Send + Sync {
+    /// Human-readable strategy name (e.g. "avellaneda_stoikov").
     fn name(&self) -> &str;
+    /// Unique identifier for this running strategy instance.
     fn strategy_id(&self) -> &str;
 
     /// Called on each tick with the current market state.
@@ -103,15 +123,19 @@ pub trait Strategy: Send + Sync {
 // Risk Check
 // ---------------------------------------------------------------------------
 
-/// Pre-trade risk check. Every order passes through risk checks before execution.
+/// Pre-trade risk check run on every order before it reaches the exchange.
+///
+/// Risk checks are evaluated sequentially by the `RiskEngine`. The first
+/// non-[`Allow`](RiskAction::Allow) result short-circuits the pipeline.
 #[async_trait]
 pub trait RiskCheck: Send + Sync {
+    /// Human-readable name of this risk check (used in rejection reasons and logs).
     fn name(&self) -> &str;
 
-    /// Evaluate whether an order should be allowed, rejected, or modified.
+    /// Evaluate whether a proposed order should be allowed, rejected, or resized.
     async fn check_order(&self, order: &NewOrder, portfolio: &PortfolioRisk) -> RiskAction;
 
-    /// Periodic portfolio-level risk evaluation.
+    /// Periodic portfolio-level risk evaluation (called independently of order flow).
     async fn check_portfolio(&self, portfolio: &PortfolioRisk) -> RiskAction;
 }
 
