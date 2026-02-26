@@ -105,8 +105,10 @@ struct IbReplyConfirmation {
 
 /// IB may return either an order confirmation or a reply prompt.
 /// We try to parse both shapes.
+///
+/// Fields are populated via serde deserialization from the IB Client Portal
+/// API response in [`IbExecutionConnector::submit_order`].
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct IbOrderResponse {
     /// Present when the order is accepted.
     order_id: Option<String>,
@@ -119,8 +121,11 @@ struct IbOrderResponse {
 }
 
 /// Order status from GET `/iserver/account/orders`.
+///
+/// Deserialized from the IB Client Portal API response. Used by
+/// [`IbExecutionConnector::fetch_open_orders`] and the background order
+/// polling task to detect state changes and emit [`OrderUpdate`] events.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct IbOpenOrder {
     #[serde(rename = "orderId")]
     order_id: Option<u64>,

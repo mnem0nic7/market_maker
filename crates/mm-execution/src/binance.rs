@@ -55,6 +55,11 @@ const WS_RECONNECT_DELAY_SECS: u64 = 5;
 /// Maximum number of consecutive reconnection attempts before giving up.
 const WS_MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
+/// Interval in seconds between listen key keepalive PUT requests.
+/// Binance listen keys expire after 60 minutes; sending a keepalive every
+/// 30 minutes provides a comfortable safety margin.
+const KEEPALIVE_INTERVAL_SECS: u64 = 30 * 60;
+
 /// Calculate exponential backoff delay for a given attempt, capped at 60 seconds.
 fn ws_backoff_secs(attempt: u32) -> u64 {
     (WS_RECONNECT_DELAY_SECS.saturating_mul(2u64.saturating_pow(attempt))).min(60)
@@ -92,7 +97,6 @@ pub struct BinanceExecutionConnector {
     http: Client,
     connected: Arc<AtomicBool>,
     ws_handle: Option<JoinHandle<()>>,
-    keepalive_handle: Option<JoinHandle<()>>,
 }
 
 impl BinanceExecutionConnector {
@@ -107,7 +111,6 @@ impl BinanceExecutionConnector {
             http,
             connected: Arc::new(AtomicBool::new(false)),
             ws_handle: None,
-            keepalive_handle: None,
         }
     }
 
@@ -173,17 +176,24 @@ impl BinanceExecutionConnector {
             })
     }
 
-    /// Keep-alive: PUT the listen key every 30 minutes.
-    #[allow(dead_code)]
-    async fn keepalive_listen_key(&self, listen_key: &str) -> MmResult<()> {
+    /// Keep-alive: PUT the listen key to prevent expiration.
+    ///
+    /// Binance listen keys expire after 60 minutes of inactivity. This method
+    /// sends a PUT request to reset the timer. Called periodically by the
+    /// keepalive timer inside [`spawn_ws_listener`].
+    async fn keepalive_listen_key(
+        http: &Client,
+        base_url: &str,
+        api_key: &str,
+        listen_key: &str,
+    ) -> MmResult<()> {
         let url = format!(
             "{}/api/v3/userDataStream?listenKey={}",
-            self.config.base_url, listen_key
+            base_url, listen_key
         );
-        let resp = self
-            .http
+        let resp = http
             .put(&url)
-            .header("X-MBX-APIKEY", &self.config.api_key)
+            .header("X-MBX-APIKEY", api_key)
             .send()
             .await
             .map_err(|e| MmError::Exchange {
@@ -230,6 +240,9 @@ impl BinanceExecutionConnector {
     // -----------------------------------------------------------------------
 
     fn spawn_ws_listener(
+        http: Client,
+        base_url: String,
+        api_key: String,
         ws_url: String,
         listen_key: String,
         update_tx: mpsc::Sender<OrderUpdate>,
@@ -268,34 +281,66 @@ impl BinanceExecutionConnector {
                     }
                 };
 
-                let (mut _write, mut read) = ws_stream.split();
+                let (mut write, mut read) = ws_stream.split();
                 info!("Binance: user data stream connected");
 
-                while let Some(msg_result) = read.next().await {
-                    let msg = match msg_result {
-                        Ok(m) => m,
-                        Err(e) => {
-                            error!(error = %e, "Binance: WebSocket read error");
-                            break;
-                        }
-                    };
+                // Keepalive timer: sends a PUT every KEEPALIVE_INTERVAL_SECS to
+                // prevent the listen key from expiring (60-minute TTL).
+                let mut keepalive_interval =
+                    tokio::time::interval(Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
+                // The first tick completes immediately; skip it so we don't
+                // send a redundant keepalive right after obtaining the key.
+                keepalive_interval.tick().await;
 
-                    match msg {
-                        WsMessage::Text(text) => {
-                            if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
-                                warn!(error = %e, "Binance: failed to process WS message");
+                loop {
+                    tokio::select! {
+                        msg_opt = read.next() => {
+                            let msg_result = match msg_opt {
+                                Some(r) => r,
+                                None => {
+                                    info!("Binance: WebSocket stream ended");
+                                    break;
+                                }
+                            };
+
+                            let msg = match msg_result {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    error!(error = %e, "Binance: WebSocket read error");
+                                    break;
+                                }
+                            };
+
+                            match msg {
+                                WsMessage::Text(text) => {
+                                    if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
+                                        warn!(error = %e, "Binance: failed to process WS message");
+                                    }
+                                }
+                                WsMessage::Ping(data) => {
+                                    if let Err(e) = write.send(WsMessage::Pong(data)).await {
+                                        warn!(error = %e, "Binance: failed to send pong");
+                                    }
+                                }
+                                WsMessage::Close(_) => {
+                                    info!("Binance: WebSocket closed by server");
+                                    break;
+                                }
+                                _ => {}
                             }
                         }
-                        WsMessage::Ping(data) => {
-                            if let Err(e) = _write.send(WsMessage::Pong(data)).await {
-                                warn!(error = %e, "Binance: failed to send pong");
+                        _ = keepalive_interval.tick() => {
+                            match Self::keepalive_listen_key(
+                                &http, &base_url, &api_key, &listen_key,
+                            ).await {
+                                Ok(()) => {
+                                    debug!("Binance: listen key keepalive sent");
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "Binance: listen key keepalive failed");
+                                }
                             }
                         }
-                        WsMessage::Close(_) => {
-                            info!("Binance: WebSocket closed by server");
-                            break;
-                        }
-                        _ => {}
                     }
                 }
 
@@ -415,43 +460,6 @@ impl BinanceExecutionConnector {
         })
     }
 
-    fn spawn_keepalive(
-        http: Client,
-        base_url: String,
-        api_key: String,
-        listen_key: String,
-        connected: Arc<AtomicBool>,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(30 * 60));
-            loop {
-                interval.tick().await;
-                if !connected.load(Ordering::SeqCst) {
-                    info!("Binance: keepalive stopping — not connected");
-                    break;
-                }
-                let url = format!(
-                    "{}/api/v3/userDataStream?listenKey={}",
-                    base_url, listen_key
-                );
-                match http.put(&url).header("X-MBX-APIKEY", &api_key).send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        debug!("Binance: listen key keepalive sent");
-                    }
-                    Ok(resp) => {
-                        warn!(
-                            status = %resp.status(),
-                            "Binance: listen key keepalive failed"
-                        );
-                    }
-                    Err(e) => {
-                        error!(error = %e, "Binance: listen key keepalive error");
-                    }
-                }
-            }
-        })
-    }
-
     // -----------------------------------------------------------------------
     // Order side/type mappers
     // -----------------------------------------------------------------------
@@ -500,20 +508,14 @@ impl ExecutionConnector for BinanceExecutionConnector {
 
         self.connected.store(true, Ordering::SeqCst);
 
-        // Spawn WebSocket listener.
+        // Spawn WebSocket listener (includes keepalive timer).
         self.ws_handle = Some(Self::spawn_ws_listener(
-            self.config.ws_url.clone(),
-            listen_key.clone(),
-            update_tx,
-            Arc::clone(&self.connected),
-        ));
-
-        // Spawn keep-alive.
-        self.keepalive_handle = Some(Self::spawn_keepalive(
             self.http.clone(),
             self.config.base_url.clone(),
             self.config.api_key.clone(),
+            self.config.ws_url.clone(),
             listen_key,
+            update_tx,
             Arc::clone(&self.connected),
         ));
 
@@ -524,9 +526,6 @@ impl ExecutionConnector for BinanceExecutionConnector {
         info!("Binance: disconnecting");
         self.connected.store(false, Ordering::SeqCst);
         if let Some(h) = self.ws_handle.take() {
-            h.abort();
-        }
-        if let Some(h) = self.keepalive_handle.take() {
             h.abort();
         }
         Ok(())
@@ -1192,5 +1191,42 @@ mod tests {
         let connector = test_connector();
         assert!(!connector.is_connected());
         assert_eq!(connector.exchange(), Exchange::Binance);
+    }
+
+    // -- Listen key keepalive --
+
+    #[test]
+    fn test_keepalive_interval_reasonable() {
+        // The keepalive interval should be between 15 and 45 minutes.
+        // Binance listen keys expire after 60 minutes, so anything in this
+        // range provides a safe margin while avoiding unnecessary traffic.
+        let interval_mins = KEEPALIVE_INTERVAL_SECS / 60;
+        assert!(
+            interval_mins >= 15 && interval_mins <= 45,
+            "keepalive interval should be between 15 and 45 minutes, got {} minutes",
+            interval_mins
+        );
+    }
+
+    #[test]
+    fn test_keepalive_interval_less_than_expiry() {
+        // Listen keys expire after 60 minutes (3600 seconds). The keepalive
+        // interval must be strictly less to prevent expiration.
+        const LISTEN_KEY_EXPIRY_SECS: u64 = 60 * 60;
+        assert!(
+            KEEPALIVE_INTERVAL_SECS < LISTEN_KEY_EXPIRY_SECS,
+            "keepalive interval ({} s) must be less than listen key expiry ({} s)",
+            KEEPALIVE_INTERVAL_SECS,
+            LISTEN_KEY_EXPIRY_SECS,
+        );
+    }
+
+    #[test]
+    fn test_keepalive_interval_is_30_minutes() {
+        assert_eq!(
+            KEEPALIVE_INTERVAL_SECS,
+            30 * 60,
+            "keepalive interval should be exactly 30 minutes"
+        );
     }
 }
