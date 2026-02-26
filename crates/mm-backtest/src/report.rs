@@ -572,4 +572,135 @@ mod tests {
         assert_eq!(result.sharpe_ratio, Decimal::ZERO);
         assert_eq!(result.sortino_ratio, Decimal::ZERO);
     }
+
+    #[test]
+    fn test_equity_curve_tracking() {
+        let mut calc = PerformanceCalculator::new(dec!(100_000));
+
+        let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 1, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 2, 0, 0).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2025, 1, 1, 3, 0, 0).unwrap();
+
+        // Buy 1 BTC at 50000
+        calc.record_fill(&make_fill(Side::Buy, dec!(50000), dec!(1), dec!(0), t0));
+        // Sell 1 BTC at 51000 -> profit +1000, equity = 101000
+        calc.record_fill(&make_fill(Side::Sell, dec!(51000), dec!(1), dec!(0), t1));
+        // Buy 1 BTC at 51000
+        calc.record_fill(&make_fill(Side::Buy, dec!(51000), dec!(1), dec!(0), t2));
+        // Sell 1 BTC at 50500 -> loss -500, equity = 100500
+        calc.record_fill(&make_fill(Side::Sell, dec!(50500), dec!(1), dec!(0), t3));
+
+        let result = calc.finalize();
+        assert_eq!(result.equity_curve.len(), 4);
+        // After buy: no realized PnL yet, equity = 100000
+        assert_eq!(result.equity_curve[0].1, dec!(100_000));
+        // After sell at 51000: realized +1000, equity = 101000
+        assert_eq!(result.equity_curve[1].1, dec!(101_000));
+        // After buy: no new realized PnL, equity still 101000
+        assert_eq!(result.equity_curve[2].1, dec!(101_000));
+        // After sell at 50500: realized -500, equity = 100500
+        assert_eq!(result.equity_curve[3].1, dec!(100_500));
+    }
+
+    #[test]
+    fn test_max_drawdown_calculation() {
+        let mut calc = PerformanceCalculator::new(dec!(100_000));
+
+        let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 1, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 2, 0, 0).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2025, 1, 1, 3, 0, 0).unwrap();
+
+        // Win trade: buy 50000, sell 51000 -> equity = 101000
+        calc.record_fill(&make_fill(Side::Buy, dec!(50000), dec!(1), dec!(0), t0));
+        calc.record_fill(&make_fill(Side::Sell, dec!(51000), dec!(1), dec!(0), t1));
+
+        // Losing trade: buy 50000, sell 48000 -> equity = 99000
+        calc.record_fill(&make_fill(Side::Buy, dec!(50000), dec!(1), dec!(0), t2));
+        calc.record_fill(&make_fill(Side::Sell, dec!(48000), dec!(1), dec!(0), t3));
+
+        let result = calc.finalize();
+        // Max drawdown = peak (101000) - trough (99000) = 2000
+        assert_eq!(result.max_drawdown, dec!(2000));
+        // Max drawdown % = 2000 / 101000 * 100 ≈ 1.98%
+        let expected_dd_pct = dec!(2000) / dec!(101000) * dec!(100);
+        assert_eq!(result.max_drawdown_pct, expected_dd_pct);
+    }
+
+    #[test]
+    fn test_short_selling_pnl() {
+        let mut calc = PerformanceCalculator::new(dec!(100_000));
+
+        let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 1, 0, 0).unwrap();
+
+        // Sell 1 BTC at 50000 (open short)
+        calc.record_fill(&make_fill(Side::Sell, dec!(50000), dec!(1), dec!(0), t0));
+        // Buy 1 BTC at 49000 (close short)
+        calc.record_fill(&make_fill(Side::Buy, dec!(49000), dec!(1), dec!(0), t1));
+
+        let result = calc.finalize();
+        // Short PnL = entry (50000) - exit (49000) = +1000
+        assert_eq!(result.total_pnl, dec!(1000));
+    }
+
+    #[test]
+    fn test_partial_position_closing() {
+        let mut calc = PerformanceCalculator::new(dec!(100_000));
+
+        let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 1, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 2, 0, 0).unwrap();
+
+        // Buy 2.0 at 50000
+        calc.record_fill(&make_fill(Side::Buy, dec!(50000), dec!(2), dec!(0), t0));
+        // Sell 1.0 at 51000 -> realized PnL on 1.0 = +1000
+        calc.record_fill(&make_fill(Side::Sell, dec!(51000), dec!(1), dec!(0), t1));
+        // Sell 1.0 at 52000 -> realized PnL on remaining 1.0 = +2000
+        calc.record_fill(&make_fill(Side::Sell, dec!(52000), dec!(1), dec!(0), t2));
+
+        let result = calc.finalize();
+        assert_eq!(result.total_pnl, dec!(3000));
+        assert_eq!(result.num_trades, 2);
+    }
+
+    #[test]
+    fn test_position_flip() {
+        let mut calc = PerformanceCalculator::new(dec!(100_000));
+
+        let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 1, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 2, 0, 0).unwrap();
+
+        // Buy 1.0 at 50000 (long 1.0)
+        calc.record_fill(&make_fill(Side::Buy, dec!(50000), dec!(1), dec!(0), t0));
+        // Sell 2.0 at 51000 (close long at +1000, open short 1.0)
+        calc.record_fill(&make_fill(Side::Sell, dec!(51000), dec!(2), dec!(0), t1));
+        // Buy 1.0 at 50500 (close short at +500)
+        calc.record_fill(&make_fill(Side::Buy, dec!(50500), dec!(1), dec!(0), t2));
+
+        let result = calc.finalize();
+        assert_eq!(result.total_pnl, dec!(1500));
+        assert_eq!(result.num_trades, 2);
+    }
+
+    #[test]
+    fn test_adding_to_position_updates_avg_entry() {
+        let mut calc = PerformanceCalculator::new(dec!(100_000));
+
+        let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 1, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 2, 0, 0).unwrap();
+
+        // Buy 1.0 at 50000
+        calc.record_fill(&make_fill(Side::Buy, dec!(50000), dec!(1), dec!(0), t0));
+        // Buy 1.0 at 52000 -> avg entry = (50000 + 52000) / 2 = 51000
+        calc.record_fill(&make_fill(Side::Buy, dec!(52000), dec!(1), dec!(0), t1));
+        // Sell 2.0 at 53000 -> PnL = 2 * (53000 - 51000) = 4000
+        calc.record_fill(&make_fill(Side::Sell, dec!(53000), dec!(2), dec!(0), t2));
+
+        let result = calc.finalize();
+        assert_eq!(result.total_pnl, dec!(4000));
+    }
 }
