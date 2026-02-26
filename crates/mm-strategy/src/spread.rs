@@ -46,6 +46,31 @@ pub struct SpreadConfig {
     pub reprice_threshold_bps: Decimal,
 }
 
+impl SpreadConfig {
+    /// Validate logical constraints on the configuration parameters.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.spread_bps <= Decimal::ZERO {
+            return Err("spread_bps must be positive".to_string());
+        }
+        if self.order_size <= Decimal::ZERO {
+            return Err("order_size must be positive".to_string());
+        }
+        if self.num_levels == 0 {
+            return Err("num_levels must be greater than zero".to_string());
+        }
+        if self.refresh_interval_ms <= 0 {
+            return Err("refresh_interval_ms must be positive".to_string());
+        }
+        if self.min_spread_bps < Decimal::ZERO {
+            return Err("min_spread_bps must be non-negative".to_string());
+        }
+        if self.reprice_threshold_bps < Decimal::ZERO {
+            return Err("reprice_threshold_bps must be non-negative".to_string());
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Strategy State
 // ---------------------------------------------------------------------------
@@ -333,7 +358,7 @@ mod tests {
         MarketSnapshot {
             exchange: Exchange::Simulated,
             symbol: Symbol::new("BTC", "USDT"),
-            order_book,
+            order_book: std::sync::Arc::new(order_book),
             last_trade: None,
             position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
             open_orders: Vec::new(),
@@ -358,7 +383,7 @@ mod tests {
         MarketSnapshot {
             exchange: Exchange::Simulated,
             symbol: Symbol::new("BTC", "USDT"),
-            order_book,
+            order_book: std::sync::Arc::new(order_book),
             last_trade: None,
             position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
             open_orders: Vec::new(),
@@ -817,5 +842,55 @@ mod tests {
             assert_eq!(order.time_in_force, TimeInForce::GTC);
             assert!(!order.reduce_only);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Validation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = make_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_zero_spread_bps() {
+        let mut config = make_config();
+        config.spread_bps = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("spread_bps must be positive"));
+    }
+
+    #[test]
+    fn test_validate_negative_order_size() {
+        let mut config = make_config();
+        config.order_size = dec!(-1);
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("order_size must be positive"));
+    }
+
+    #[test]
+    fn test_validate_zero_num_levels() {
+        let mut config = make_config();
+        config.num_levels = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("num_levels must be greater than zero"));
+    }
+
+    #[test]
+    fn test_validate_zero_refresh_interval() {
+        let mut config = make_config();
+        config.refresh_interval_ms = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("refresh_interval_ms must be positive"));
     }
 }

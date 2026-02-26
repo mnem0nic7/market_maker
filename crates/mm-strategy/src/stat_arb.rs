@@ -76,6 +76,31 @@ pub struct StatArbConfig {
     pub max_position: Decimal,
 }
 
+impl StatArbConfig {
+    /// Validate logical constraints on the configuration parameters.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.lookback_periods < 2 {
+            return Err("lookback_periods must be at least 2".to_string());
+        }
+        if self.entry_z_score <= Decimal::ZERO {
+            return Err("entry_z_score must be positive".to_string());
+        }
+        if self.exit_z_score < Decimal::ZERO {
+            return Err("exit_z_score must be non-negative".to_string());
+        }
+        if self.exit_z_score >= self.entry_z_score {
+            return Err("exit_z_score must be less than entry_z_score".to_string());
+        }
+        if self.order_size <= Decimal::ZERO {
+            return Err("order_size must be positive".to_string());
+        }
+        if self.max_position <= Decimal::ZERO {
+            return Err("max_position must be positive".to_string());
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Strategy State
 // ---------------------------------------------------------------------------
@@ -484,7 +509,7 @@ mod tests {
         MarketSnapshot {
             exchange,
             symbol: symbol.clone(),
-            order_book: OrderBook {
+            order_book: std::sync::Arc::new(OrderBook {
                 exchange,
                 symbol,
                 bids: vec![PriceLevel {
@@ -497,7 +522,7 @@ mod tests {
                 }],
                 timestamp: ts,
                 sequence: 1,
-            },
+            }),
             last_trade: None,
             position,
             open_orders: vec![],
@@ -998,5 +1023,57 @@ mod tests {
         assert!((result - dec!(1.4142)).abs() < dec!(0.001));
 
         assert_eq!(decimal_sqrt(dec!(-5)), Decimal::ZERO);
+    }
+
+    // -----------------------------------------------------------------------
+    // Validation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = test_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_lookback_too_small() {
+        let mut config = test_config();
+        config.lookback_periods = 1;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("lookback_periods must be at least 2"));
+    }
+
+    #[test]
+    fn test_validate_exit_z_score_gte_entry() {
+        let mut config = test_config();
+        config.exit_z_score = dec!(2); // equal to entry_z_score
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("exit_z_score must be less than entry_z_score"));
+    }
+
+    #[test]
+    fn test_validate_zero_order_size() {
+        let mut config = test_config();
+        config.order_size = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("order_size must be positive"));
+    }
+
+    #[test]
+    fn test_validate_zero_max_position() {
+        let mut config = test_config();
+        config.max_position = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("max_position must be positive"));
     }
 }

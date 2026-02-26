@@ -61,7 +61,7 @@ fn make_snapshot(mid: Decimal) -> MarketSnapshot {
     MarketSnapshot {
         exchange: Exchange::Simulated,
         symbol: make_symbol(),
-        order_book: make_order_book(mid),
+        order_book: std::sync::Arc::new(make_order_book(mid)),
         last_trade: Some(Trade {
             exchange: Exchange::Simulated,
             symbol: make_symbol(),

@@ -276,7 +276,7 @@ mod tests {
         MarketSnapshot {
             exchange: Exchange::Simulated,
             symbol: sym.clone(),
-            order_book: OrderBook {
+            order_book: std::sync::Arc::new(OrderBook {
                 exchange: Exchange::Simulated,
                 symbol: sym.clone(),
                 bids: vec![PriceLevel {
@@ -289,7 +289,7 @@ mod tests {
                 }],
                 timestamp: now,
                 sequence: 1,
-            },
+            }),
             last_trade: None,
             position: Position::new(Exchange::Simulated, sym),
             open_orders: vec![],

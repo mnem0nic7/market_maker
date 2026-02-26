@@ -50,6 +50,31 @@ pub struct AvellanedaStoikovConfig {
     pub session_duration_secs: i64,
 }
 
+impl AvellanedaStoikovConfig {
+    /// Validate logical constraints on the configuration parameters.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.order_size <= Decimal::ZERO {
+            return Err("order_size must be positive".to_string());
+        }
+        if self.max_position <= Decimal::ZERO {
+            return Err("max_position must be positive".to_string());
+        }
+        if self.gamma <= Decimal::ZERO {
+            return Err("gamma (risk aversion) must be positive".to_string());
+        }
+        if self.sigma <= Decimal::ZERO {
+            return Err("sigma (volatility) must be positive".to_string());
+        }
+        if self.kappa <= Decimal::ZERO {
+            return Err("kappa (liquidity parameter) must be positive".to_string());
+        }
+        if self.session_duration_secs <= 0 {
+            return Err("session_duration_secs must be positive".to_string());
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Strategy State
 // ---------------------------------------------------------------------------
@@ -390,7 +415,7 @@ mod tests {
         MarketSnapshot {
             exchange: Exchange::Simulated,
             symbol: Symbol::new("BTC", "USDT"),
-            order_book: OrderBook {
+            order_book: std::sync::Arc::new(OrderBook {
                 exchange: Exchange::Simulated,
                 symbol: Symbol::new("BTC", "USDT"),
                 bids: vec![PriceLevel {
@@ -403,7 +428,7 @@ mod tests {
                 }],
                 timestamp: ts,
                 sequence: 1,
-            },
+            }),
             last_trade: None,
             position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
             open_orders: vec![],
@@ -804,5 +829,44 @@ mod tests {
             "Inactive strategy should return empty actions, got {} actions",
             actions.len()
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Validation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = make_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_zero_order_size() {
+        let mut config = make_config();
+        config.order_size = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("order_size must be positive"));
+    }
+
+    #[test]
+    fn test_validate_zero_gamma() {
+        let mut config = make_config();
+        config.gamma = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("gamma"));
+    }
+
+    #[test]
+    fn test_validate_negative_session_duration() {
+        let mut config = make_config();
+        config.session_duration_secs = -1;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("session_duration_secs must be positive"));
     }
 }

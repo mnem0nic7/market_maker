@@ -240,11 +240,12 @@ impl ReplayEngine {
                 position = Some(Position::new(exchange, symbol.clone()));
             }
 
-            // Build the market snapshot
+            // Build the market snapshot.
+            // Wrap in Arc to match the hot-path convention (cheap clone).
             let snapshot = MarketSnapshot {
                 exchange,
                 symbol: symbol.clone(),
-                order_book: book.clone(),
+                order_book: std::sync::Arc::new(book.clone()),
                 last_trade: last_trade.clone(),
                 position: position
                     .clone()

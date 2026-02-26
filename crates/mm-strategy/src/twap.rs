@@ -41,6 +41,31 @@ pub struct TwapConfig {
     pub max_deviation_bps: Decimal,
 }
 
+impl TwapConfig {
+    /// Validate logical constraints on the configuration parameters.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.target_quantity <= Decimal::ZERO {
+            return Err("target_quantity must be positive".to_string());
+        }
+        if self.duration_secs == 0 {
+            return Err("duration_secs must be positive".to_string());
+        }
+        if self.slice_interval_secs == 0 {
+            return Err("slice_interval_secs must be positive".to_string());
+        }
+        if self.max_deviation_bps < Decimal::ZERO {
+            return Err("max_deviation_bps must be non-negative".to_string());
+        }
+        if self.duration_secs / self.slice_interval_secs == 0 {
+            return Err(
+                "duration_secs must be at least slice_interval_secs (need at least 1 slice)"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Strategy State
 // ---------------------------------------------------------------------------
@@ -351,7 +376,7 @@ mod tests {
         MarketSnapshot {
             exchange: Exchange::Simulated,
             symbol: Symbol::new("BTC", "USDT"),
-            order_book: OrderBook {
+            order_book: std::sync::Arc::new(OrderBook {
                 exchange: Exchange::Simulated,
                 symbol: Symbol::new("BTC", "USDT"),
                 bids: vec![PriceLevel {
@@ -364,7 +389,7 @@ mod tests {
                 }],
                 timestamp: ts,
                 sequence: 1,
-            },
+            }),
             last_trade: None,
             position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
             open_orders: vec![],
@@ -548,9 +573,13 @@ mod tests {
 
         let now = Utc::now();
         let mut snapshot = make_snapshot(dec!(50000), dec!(50010), now);
-        // Clear the order book
-        snapshot.order_book.bids.clear();
-        snapshot.order_book.asks.clear();
+        // Clear the order book (Arc::make_mut gives mutable access in tests)
+        std::sync::Arc::make_mut(&mut snapshot.order_book)
+            .bids
+            .clear();
+        std::sync::Arc::make_mut(&mut snapshot.order_book)
+            .asks
+            .clear();
 
         let actions = strategy.on_tick(&snapshot);
         assert!(actions.is_empty());
@@ -739,6 +768,52 @@ mod tests {
     // -----------------------------------------------------------------------
     // Test 14: Rebalancing — underfilled early slices cause later slices
     //          to compensate
+    // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Validation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = test_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_zero_target_quantity() {
+        let mut config = test_config();
+        config.target_quantity = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("target_quantity must be positive"));
+    }
+
+    #[test]
+    fn test_validate_zero_slice_interval() {
+        let mut config = test_config();
+        config.slice_interval_secs = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("slice_interval_secs must be positive"));
+    }
+
+    #[test]
+    fn test_validate_negative_max_deviation() {
+        let mut config = test_config();
+        config.max_deviation_bps = dec!(-1);
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("max_deviation_bps must be non-negative"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 14: Rebalancing compensates for underfilled slices
     // -----------------------------------------------------------------------
     #[test]
     fn test_rebalancing_compensates_for_underfilled_slices() {

@@ -44,41 +44,49 @@ pub fn build_strategy_from_config(
         "spread" => {
             let cfg: SpreadConfig = serde_json::from_value(params)
                 .map_err(|e| format!("invalid spread params: {e}"))?;
+            cfg.validate()?;
             Ok(Box::new(SpreadStrategy::new(cfg)))
         }
         "avellaneda" => {
             let cfg: AvellanedaStoikovConfig = serde_json::from_value(params)
                 .map_err(|e| format!("invalid avellaneda params: {e}"))?;
+            cfg.validate()?;
             Ok(Box::new(AvellanedaStoikovStrategy::new(cfg)))
         }
         "grid" => {
             let cfg: GridConfig =
                 serde_json::from_value(params).map_err(|e| format!("invalid grid params: {e}"))?;
+            cfg.validate()?;
             Ok(Box::new(GridStrategy::new(cfg)))
         }
         "twap" => {
             let cfg: TwapConfig =
                 serde_json::from_value(params).map_err(|e| format!("invalid twap params: {e}"))?;
+            cfg.validate()?;
             Ok(Box::new(TwapStrategy::new(cfg)))
         }
         "vwap" => {
             let cfg: VwapConfig =
                 serde_json::from_value(params).map_err(|e| format!("invalid vwap params: {e}"))?;
+            cfg.validate()?;
             Ok(Box::new(VwapStrategy::new(cfg)))
         }
         "momentum" => {
             let cfg: MomentumConfig = serde_json::from_value(params)
                 .map_err(|e| format!("invalid momentum params: {e}"))?;
+            cfg.validate()?;
             Ok(Box::new(MomentumStrategy::new(cfg)))
         }
         "mean_reversion" => {
             let cfg: MeanReversionConfig = serde_json::from_value(params)
                 .map_err(|e| format!("invalid mean_reversion params: {e}"))?;
+            cfg.validate()?;
             Ok(Box::new(MeanReversionStrategy::new(cfg)))
         }
         "stat_arb" => {
             let cfg: StatArbConfig = serde_json::from_value(params)
                 .map_err(|e| format!("invalid stat_arb params: {e}"))?;
+            cfg.validate()?;
             Ok(Box::new(StatArbStrategy::new(cfg)))
         }
         other => Err(format!("unsupported strategy type: {other}")),

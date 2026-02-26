@@ -51,6 +51,31 @@ pub struct MomentumConfig {
     pub max_position: Decimal,
 }
 
+impl MomentumConfig {
+    /// Validate logical constraints on the configuration parameters.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.lookback_periods < 2 {
+            return Err("lookback_periods must be at least 2".to_string());
+        }
+        if self.entry_threshold_bps <= Decimal::ZERO {
+            return Err("entry_threshold_bps must be positive".to_string());
+        }
+        if self.exit_threshold_bps < Decimal::ZERO {
+            return Err("exit_threshold_bps must be non-negative".to_string());
+        }
+        if self.order_size <= Decimal::ZERO {
+            return Err("order_size must be positive".to_string());
+        }
+        if self.max_position <= Decimal::ZERO {
+            return Err("max_position must be positive".to_string());
+        }
+        if self.trailing_stop_bps <= Decimal::ZERO {
+            return Err("trailing_stop_bps must be positive".to_string());
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Strategy State
 // ---------------------------------------------------------------------------
@@ -472,7 +497,7 @@ mod tests {
         MarketSnapshot {
             exchange: Exchange::Simulated,
             symbol: Symbol::new("BTC", "USDT"),
-            order_book: OrderBook {
+            order_book: std::sync::Arc::new(OrderBook {
                 exchange: Exchange::Simulated,
                 symbol: Symbol::new("BTC", "USDT"),
                 bids: vec![PriceLevel {
@@ -485,7 +510,7 @@ mod tests {
                 }],
                 timestamp: ts,
                 sequence: 1,
-            },
+            }),
             last_trade: None,
             position,
             open_orders: vec![],
@@ -979,11 +1004,68 @@ mod tests {
         let mut strategy = MomentumStrategy::new(config);
 
         let mut snapshot = make_snapshot(dec!(100), Decimal::ZERO);
-        snapshot.order_book.bids.clear();
-        snapshot.order_book.asks.clear();
+        // Arc::make_mut gives mutable access in tests
+        std::sync::Arc::make_mut(&mut snapshot.order_book)
+            .bids
+            .clear();
+        std::sync::Arc::make_mut(&mut snapshot.order_book)
+            .asks
+            .clear();
 
         let actions = strategy.on_tick(&snapshot);
         assert!(actions.is_empty());
         assert!(strategy.price_history.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Validation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = test_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_lookback_too_small() {
+        let mut config = test_config();
+        config.lookback_periods = 1;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("lookback_periods must be at least 2"));
+    }
+
+    #[test]
+    fn test_validate_zero_entry_threshold() {
+        let mut config = test_config();
+        config.entry_threshold_bps = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("entry_threshold_bps must be positive"));
+    }
+
+    #[test]
+    fn test_validate_zero_order_size() {
+        let mut config = test_config();
+        config.order_size = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("order_size must be positive"));
+    }
+
+    #[test]
+    fn test_validate_zero_max_position() {
+        let mut config = test_config();
+        config.max_position = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("max_position must be positive"));
     }
 }
