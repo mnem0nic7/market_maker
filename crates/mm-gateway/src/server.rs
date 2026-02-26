@@ -11,7 +11,7 @@ use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::rest::{self, ApiState};
 use crate::ws::{self, DashboardBroadcaster};
@@ -157,14 +157,21 @@ impl GatewayServer {
                         .and_then(|v| v.to_str().ok())
                     {
                         Some(v) if v == expected => next.run(req).await,
-                        _ => (
-                            StatusCode::UNAUTHORIZED,
-                            axum::Json(serde_json::json!({
-                                "status": "error",
-                                "error": "missing or invalid bearer token"
-                            })),
-                        )
-                            .into_response(),
+                        _ => {
+                            warn!(
+                                path = %path,
+                                method = %req.method(),
+                                "Authentication failure: missing or invalid bearer token"
+                            );
+                            (
+                                StatusCode::UNAUTHORIZED,
+                                axum::Json(serde_json::json!({
+                                    "status": "error",
+                                    "error": "missing or invalid bearer token"
+                                })),
+                            )
+                                .into_response()
+                        }
                     }
                 }
             });

@@ -42,6 +42,26 @@ impl Default for NatsConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Retry constants
+// ---------------------------------------------------------------------------
+
+/// Maximum number of retry attempts for NATS publish operations.
+pub const NATS_PUBLISH_MAX_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff on NATS publish retries (1 second).
+pub const NATS_PUBLISH_BASE_DELAY: Duration = Duration::from_secs(1);
+
+/// Compute the backoff delay for a given attempt (0-indexed).
+/// Returns base_delay * 2^attempt (i.e., 1s, 2s, 4s for the default base).
+/// Saturates to `Duration::MAX` on overflow rather than panicking.
+pub fn nats_publish_backoff(attempt: u32, base_delay: Duration) -> Duration {
+    match 2u32.checked_pow(attempt) {
+        Some(factor) => base_delay.saturating_mul(factor),
+        None => Duration::MAX,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Publisher
 // ---------------------------------------------------------------------------
 
@@ -104,8 +124,12 @@ impl NatsEventPublisher {
 
 #[async_trait]
 impl EventPublisher for NatsEventPublisher {
-    /// Serialize the envelope to JSON and publish to JetStream on the subject
-    /// returned by [`Envelope::nats_subject`].
+    /// Serialize the envelope to JSON and publish to JetStream with retry.
+    ///
+    /// On failure, retries up to [`NATS_PUBLISH_MAX_RETRIES`] times with
+    /// exponential backoff (1s, 2s, 4s). Each retry is logged at `warn!`
+    /// level. After exhausting retries the error is returned (never silently
+    /// swallowed).
     #[instrument(skip_all, fields(
         event_id = %envelope.event_id,
         subject = %envelope.nats_subject(),
@@ -115,20 +139,65 @@ impl EventPublisher for NatsEventPublisher {
         let payload = serde_json::to_vec(&envelope)
             .map_err(|e| MmError::Serialization(format!("envelope serialization failed: {e}")))?;
 
-        let ack = self
-            .jetstream
-            .publish(subject.clone(), payload.into())
-            .await
-            .map_err(|e| MmError::Messaging(format!("JetStream publish failed: {e}")))?;
+        let mut last_err: Option<MmError> = None;
 
-        // Await the publish acknowledgment from the server to guarantee
-        // the message has been persisted in the stream.
-        ack.await
-            .map_err(|e| MmError::Messaging(format!("JetStream publish ack failed: {e}")))?;
+        for attempt in 0..=NATS_PUBLISH_MAX_RETRIES {
+            if attempt > 0 {
+                let delay = nats_publish_backoff(attempt - 1, NATS_PUBLISH_BASE_DELAY);
+                warn!(
+                    attempt,
+                    max_retries = NATS_PUBLISH_MAX_RETRIES,
+                    delay_ms = delay.as_millis() as u64,
+                    subject = %subject,
+                    "retrying NATS publish after failure"
+                );
+                tokio::time::sleep(delay).await;
+            }
 
-        debug!(subject = %subject, "event published to JetStream");
+            let publish_result = self
+                .jetstream
+                .publish(subject.clone(), payload.clone().into())
+                .await;
 
-        Ok(())
+            match publish_result {
+                Ok(ack_future) => {
+                    // Await the publish acknowledgment from the server to
+                    // guarantee the message has been persisted in the stream.
+                    match ack_future.await {
+                        Ok(_) => {
+                            if attempt > 0 {
+                                info!(
+                                    attempt,
+                                    subject = %subject,
+                                    "NATS publish succeeded after retry"
+                                );
+                            }
+                            debug!(subject = %subject, "event published to JetStream");
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            last_err = Some(MmError::Messaging(format!(
+                                "JetStream publish ack failed: {e}"
+                            )));
+                        }
+                    }
+                }
+                Err(e) => {
+                    last_err = Some(MmError::Messaging(format!("JetStream publish failed: {e}")));
+                }
+            }
+        }
+
+        let err = last_err.unwrap_or_else(|| {
+            MmError::Messaging("NATS publish failed after all retries".to_string())
+        });
+        error!(
+            retries = NATS_PUBLISH_MAX_RETRIES,
+            subject = %subject,
+            error = %err,
+            "NATS publish failed after all retries"
+        );
+        Err(err)
     }
 }
 
@@ -319,5 +388,53 @@ mod tests {
         let back: NatsConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.stream_name, cfg.stream_name);
         assert_eq!(back.max_age_secs, cfg.max_age_secs);
+    }
+
+    #[test]
+    fn retry_constants_are_reasonable() {
+        assert!(
+            NATS_PUBLISH_MAX_RETRIES >= 1 && NATS_PUBLISH_MAX_RETRIES <= 10,
+            "max retries should be between 1 and 10"
+        );
+        assert!(
+            NATS_PUBLISH_BASE_DELAY >= Duration::from_millis(100)
+                && NATS_PUBLISH_BASE_DELAY <= Duration::from_secs(10),
+            "base delay should be between 100ms and 10s"
+        );
+    }
+
+    #[test]
+    fn backoff_calculation_exponential() {
+        let base = Duration::from_secs(1);
+        // attempt 0 -> 1s, attempt 1 -> 2s, attempt 2 -> 4s
+        assert_eq!(nats_publish_backoff(0, base), Duration::from_secs(1));
+        assert_eq!(nats_publish_backoff(1, base), Duration::from_secs(2));
+        assert_eq!(nats_publish_backoff(2, base), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn backoff_does_not_overflow() {
+        let base = Duration::from_secs(1);
+        // Very large attempt number should saturate, not panic.
+        let result = nats_publish_backoff(63, base);
+        assert!(
+            result >= base,
+            "backoff should always be at least base_delay"
+        );
+    }
+
+    #[test]
+    fn total_backoff_time_bounded() {
+        // Verify the total worst-case delay is bounded and reasonable.
+        let base = NATS_PUBLISH_BASE_DELAY;
+        let total: Duration = (0..NATS_PUBLISH_MAX_RETRIES)
+            .map(|a| nats_publish_backoff(a, base))
+            .sum();
+        // With defaults (1s, 2s, 4s) = 7s total
+        assert!(
+            total <= Duration::from_secs(30),
+            "total backoff should not exceed 30s, got {:?}",
+            total
+        );
     }
 }

@@ -5,7 +5,8 @@
 //! is created in the `trading-core` binary and shared via `Arc<MetricsRegistry>`.
 
 use prometheus::{
-    opts, Encoder, Gauge, GaugeVec, HistogramOpts, HistogramVec, Registry, TextEncoder,
+    opts, Encoder, Gauge, GaugeVec, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Registry,
+    TextEncoder,
 };
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,16 @@ pub struct MetricsRegistry {
 
     /// WebSocket connection status per exchange (labels: exchange).
     pub websocket_connected: GaugeVec,
+
+    // -- API metrics --
+    /// Total API requests (labels: endpoint, method, status).
+    pub api_requests_total: IntCounterVec,
+
+    /// API request duration in seconds (labels: endpoint, method).
+    pub api_request_duration_seconds: HistogramVec,
+
+    /// Current number of active WebSocket connections.
+    pub ws_active_connections: IntGauge,
 
     // -- Histograms --
     /// Strategy tick duration in seconds (labels: strategy_id).
@@ -124,6 +135,32 @@ impl MetricsRegistry {
         )
         .expect("metric: websocket_connected");
 
+        // -- API metrics --
+
+        let api_requests_total = IntCounterVec::new(
+            opts!("mm_api_requests_total", "Total API requests"),
+            &["endpoint", "method", "status"],
+        )
+        .expect("metric: api_requests_total");
+
+        let api_request_duration_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "mm_api_request_duration_seconds",
+                "API request duration in seconds",
+            )
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0,
+            ]),
+            &["endpoint", "method"],
+        )
+        .expect("metric: api_request_duration_seconds");
+
+        let ws_active_connections = IntGauge::with_opts(opts!(
+            "mm_ws_active_connections",
+            "Current number of active WebSocket connections"
+        ))
+        .expect("metric: ws_active_connections");
+
         // -- Histograms --
 
         let strategy_tick_duration = HistogramVec::new(
@@ -171,6 +208,15 @@ impl MetricsRegistry {
             .register(Box::new(websocket_connected.clone()))
             .unwrap();
         registry
+            .register(Box::new(api_requests_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(api_request_duration_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(ws_active_connections.clone()))
+            .unwrap();
+        registry
             .register(Box::new(strategy_tick_duration.clone()))
             .unwrap();
         registry.register(Box::new(order_latency.clone())).unwrap();
@@ -186,6 +232,9 @@ impl MetricsRegistry {
             order_book_spread_bps,
             kill_switch_active,
             websocket_connected,
+            api_requests_total,
+            api_request_duration_seconds,
+            ws_active_connections,
             strategy_tick_duration,
             order_latency,
         }
@@ -279,6 +328,15 @@ mod tests {
             .order_latency
             .with_label_values(&["test"])
             .observe(0.01);
+        registry
+            .api_requests_total
+            .with_label_values(&["/api/v1/health", "GET", "200"])
+            .inc();
+        registry
+            .api_request_duration_seconds
+            .with_label_values(&["/api/v1/health", "GET"])
+            .observe(0.005);
+        registry.ws_active_connections.inc();
 
         let output = registry.encode();
 
@@ -288,5 +346,8 @@ mod tests {
         assert!(output.contains("mm_kill_switch_active"));
         assert!(output.contains("mm_strategy_tick_duration_seconds"));
         assert!(output.contains("mm_order_latency_seconds"));
+        assert!(output.contains("mm_api_requests_total"));
+        assert!(output.contains("mm_api_request_duration_seconds"));
+        assert!(output.contains("mm_ws_active_connections"));
     }
 }
