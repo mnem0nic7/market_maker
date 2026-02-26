@@ -144,6 +144,9 @@ pub struct ApiState {
     /// Parameter optimisation jobs keyed by job_id.
     pub optimization_jobs: RwLock<HashMap<String, OptimizationJobState>>,
 
+    /// Stored backtest results from completed runs.
+    pub backtest_results: RwLock<Vec<mm_backtest::BacktestResult>>,
+
     /// Optional Claude AI assistant configuration.
     pub assistant_config: Option<AssistantConfig>,
 
@@ -183,6 +186,7 @@ impl ApiState {
             metrics: None,
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
+            backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
         })
@@ -201,6 +205,7 @@ impl ApiState {
             metrics: Some(metrics),
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
+            backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
         })
@@ -222,6 +227,7 @@ impl ApiState {
             metrics: Some(metrics),
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
+            backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: Some(engine),
         })
@@ -245,6 +251,7 @@ impl ApiState {
             metrics: Some(metrics),
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
+            backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: Some(engine),
         })
@@ -264,6 +271,7 @@ impl Default for ApiState {
             metrics: None,
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
+            backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
         }
@@ -308,6 +316,9 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
             "/api/v1/market-data/{exchange}/{symbol}/orderbook",
             get(get_orderbook),
         )
+        // Backtest results & quick run
+        .route("/api/v1/backtest/results", get(get_backtest_results))
+        .route("/api/v1/backtest/run", post(run_backtest))
         // Backtest optimisation
         .route("/api/v1/backtest/optimize", post(start_optimization))
         .route(
@@ -737,6 +748,114 @@ async fn get_orderbook(
             "order book not found for {exchange_parsed} {normalised_symbol}"
         ))),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Backtest — results & quick run
+// ---------------------------------------------------------------------------
+
+async fn get_backtest_results(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
+    let results = state.backtest_results.read().await;
+    ApiResponse::ok(results.clone())
+}
+
+#[derive(Debug, Deserialize)]
+struct BacktestRequest {
+    strategy_type: String,
+    symbol: String,
+    #[serde(default = "default_initial_capital")]
+    initial_capital: String,
+    #[serde(default = "default_backtest_num_events")]
+    num_events: usize,
+    #[serde(default)]
+    params: serde_json::Value,
+}
+
+fn default_initial_capital() -> String {
+    "100000".to_string()
+}
+
+fn default_backtest_num_events() -> usize {
+    500
+}
+
+async fn run_backtest(
+    State(state): State<Arc<ApiState>>,
+    Json(req): Json<BacktestRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    // Validate strategy type.
+    if !VALID_STRATEGY_TYPES.contains(&req.strategy_type.as_str()) {
+        return Err(ApiResponse::bad_request(format!(
+            "invalid strategy_type: '{}'. Must be one of: {}",
+            req.strategy_type,
+            VALID_STRATEGY_TYPES.join(", ")
+        )));
+    }
+
+    // Parse initial capital.
+    let initial_capital: rust_decimal::Decimal = req
+        .initial_capital
+        .parse()
+        .map_err(|e| ApiResponse::bad_request(format!("invalid initial_capital: {e}")))?;
+
+    // Parse symbol (expected format: "BTC/USDT" or "BTC-USDT").
+    let normalised = req.symbol.replace('-', "/");
+    let parts: Vec<&str> = normalised.split('/').collect();
+    if parts.len() != 2 {
+        return Err(ApiResponse::bad_request(format!(
+            "invalid symbol format: '{}'. Expected BASE/QUOTE (e.g. BTC/USDT)",
+            req.symbol
+        )));
+    }
+    let symbol = mm_core::types::Symbol::new(parts[0], parts[1]);
+
+    // Build a StrategyConfig so we can use build_strategy_from_config.
+    let strategy_config = StrategyConfig {
+        strategy_id: format!("backtest-{}", uuid::Uuid::new_v4()),
+        strategy_type: req.strategy_type.clone(),
+        exchange: Exchange::Simulated,
+        symbol: symbol.clone(),
+        enabled: true,
+        params: req.params,
+    };
+
+    let mut strategy = build_strategy_from_config(&strategy_config)
+        .map_err(|e| ApiResponse::bad_request(format!("failed to build strategy: {e}")))?;
+
+    // Generate synthetic market data and run the backtest in a blocking task
+    // to avoid blocking the async runtime.
+    let num_events = req.num_events;
+    let result = tokio::task::spawn_blocking(move || {
+        let events = generate_optimizer_events(num_events);
+
+        let config = mm_backtest::BacktestConfig {
+            initial_capital,
+            fee_rate: rust_decimal::Decimal::new(1, 3),
+            slippage_bps: rust_decimal::Decimal::ZERO,
+            start_time: None,
+            end_time: None,
+        };
+
+        let engine = mm_backtest::ReplayEngine::new(config);
+        engine.run(strategy.as_mut(), events)
+    })
+    .await
+    .map_err(|e| ApiResponse::error(format!("backtest task failed: {e}")))?;
+
+    // Store the result.
+    {
+        let mut results = state.backtest_results.write().await;
+        results.push(result.clone());
+    }
+
+    info!(
+        strategy_type = %req.strategy_type,
+        net_pnl = %result.net_pnl,
+        num_fills = result.num_fills,
+        "Backtest completed via API"
+    );
+
+    Ok(ApiResponse::ok(result))
 }
 
 // ---------------------------------------------------------------------------
@@ -1418,6 +1537,88 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- AI Assistant tests ---
+
+    // --- Backtest results tests ---
+
+    #[tokio::test]
+    async fn test_get_backtest_results_empty() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/backtest/results")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        let data = json["data"].as_array().unwrap();
+        assert!(data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_backtest_results_with_data() {
+        let state = ApiState::new();
+        {
+            let mut results = state.backtest_results.write().await;
+            results.push(mm_backtest::BacktestResult {
+                total_pnl: rust_decimal::Decimal::new(1000, 2),
+                total_fees: rust_decimal::Decimal::new(10, 2),
+                net_pnl: rust_decimal::Decimal::new(990, 2),
+                num_trades: 5,
+                num_fills: 10,
+                win_rate: rust_decimal::Decimal::new(60, 2),
+                max_drawdown: rust_decimal::Decimal::new(50, 2),
+                max_drawdown_pct: rust_decimal::Decimal::new(1, 2),
+                sharpe_ratio: rust_decimal::Decimal::new(15, 1),
+                sortino_ratio: rust_decimal::Decimal::new(20, 1),
+                avg_trade_pnl: rust_decimal::Decimal::new(200, 2),
+                profit_factor: rust_decimal::Decimal::new(3, 0),
+                total_volume: rust_decimal::Decimal::new(100000, 2),
+                start_time: Utc::now(),
+                end_time: Utc::now(),
+                duration: chrono::Duration::hours(1),
+                equity_curve: vec![],
+            });
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/backtest/results")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        let data = json["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["num_trades"], 5);
+        assert_eq!(data[0]["num_fills"], 10);
     }
 
     // --- AI Assistant tests ---

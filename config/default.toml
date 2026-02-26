@@ -196,6 +196,10 @@ max_bytes = 0
 enabled = true
 host = "127.0.0.1"
 port = 8080
+# CORS origins (empty = no CORS; use ["*"] for development).
+cors_origins = []
+# Bearer token for API authentication (empty = no auth).
+api_token = ""
 
 # =============================================================================
 # Main trading loop
@@ -206,3 +210,6 @@ port = 8080
 # Lower values provide faster reaction times but increase CPU load
 # and order submission rate. 100ms is a reasonable starting point.
 tick_interval_ms = 100
+# Maximum age in milliseconds for an order book to be considered fresh.
+# Books older than this threshold are skipped to prevent trading on stale data.
+order_book_stale_ms = 5000
