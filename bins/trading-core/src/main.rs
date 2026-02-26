@@ -120,7 +120,8 @@ async fn main() -> Result<()> {
     let cfg = config::load_config().context("failed to load configuration")?;
     info!(?cfg.trading_loop, "configuration loaded");
 
-    // ----- (c) TradingConfig is already parsed by the loader -----
+    // ----- (c) Validate configuration before proceeding -----
+    cfg.validate().context("startup configuration validation")?;
 
     // ----- (d) Initialize shared state -----
     let order_manager = Arc::new(OrderManager::new());

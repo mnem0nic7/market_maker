@@ -108,7 +108,7 @@ struct PoolReserves {
     /// Raw base token reserve (in smallest units, i.e. lamports for SOL).
     base_raw: u64,
     /// Raw quote token reserve (in smallest units).
-    quote_raw: u64,
+    _quote_raw: u64,
     /// Human-readable base reserve (adjusted for decimals).
     base_amount: Decimal,
     /// Human-readable quote reserve (adjusted for decimals).
@@ -803,7 +803,7 @@ fn parse_pool_reserves(
 
     Ok(PoolReserves {
         base_raw,
-        quote_raw,
+        _quote_raw: quote_raw,
         base_amount,
         quote_amount,
     })
@@ -936,7 +936,7 @@ mod tests {
     fn test_build_virtual_order_book_structure() {
         let reserves = PoolReserves {
             base_raw: 1_000_000_000,
-            quote_raw: 150_000_000,
+            _quote_raw: 150_000_000,
             base_amount: Decimal::from(1000),
             quote_amount: Decimal::from(150_000),
         };
@@ -982,7 +982,7 @@ mod tests {
         // With reserves 1000 SOL / 150000 USDC, spot price = 150.
         let reserves = PoolReserves {
             base_raw: 1_000_000_000_000,
-            quote_raw: 150_000_000_000,
+            _quote_raw: 150_000_000_000,
             base_amount: Decimal::from(1000),
             quote_amount: Decimal::from(150_000),
         };

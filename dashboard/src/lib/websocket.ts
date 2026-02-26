@@ -45,7 +45,10 @@ export class WebSocketManager {
       }
     };
 
-    this.ws.onerror = () => {};
+    this.ws.onerror = (event) => {
+      console.error("WebSocket error on", this.url, event);
+      this.onStatus(false);
+    };
   }
 
   disconnect() {

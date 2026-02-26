@@ -167,6 +167,7 @@ impl BinanceExecutionConnector {
     }
 
     /// Keep-alive: PUT the listen key every 30 minutes.
+    #[allow(dead_code)]
     async fn keepalive_listen_key(&self, listen_key: &str) -> MmResult<()> {
         let url = format!(
             "{}/api/v3/userDataStream?listenKey={}",

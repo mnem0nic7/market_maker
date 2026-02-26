@@ -59,6 +59,7 @@ use mm_core::{
 // ---------------------------------------------------------------------------
 
 /// Raydium AMM V4 program ID on Solana mainnet.
+#[allow(dead_code)]
 const RAYDIUM_AMM_PROGRAM_ID: &str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 
 /// SPL Token program ID.
@@ -69,6 +70,7 @@ const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
 
 /// Serum DEX program ID (used by Raydium for order book routing).
+#[allow(dead_code)]
 const SERUM_PROGRAM_ID: &str = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
 
 /// Default slippage tolerance in basis points (50 bps = 0.5%).
@@ -126,7 +128,7 @@ struct PendingTransaction {
     /// The trading symbol.
     symbol: Symbol,
     /// The order side.
-    side: Side,
+    _side: Side,
     /// The quantity submitted.
     quantity: Decimal,
     /// The expected price (for order update reporting).
@@ -827,7 +829,7 @@ impl ExecutionConnector for RaydiumExecutionConnector {
                 signature: signature.clone(),
                 client_order_id: client_order_id.clone(),
                 symbol: order.symbol.clone(),
-                side: order.side,
+                _side: order.side,
                 quantity: order.quantity,
                 expected_price: order.price,
                 polls: 0,

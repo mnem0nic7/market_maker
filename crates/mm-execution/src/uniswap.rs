@@ -58,7 +58,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -84,6 +84,7 @@ const DEFAULT_FEE_TIER: u32 = 3000;
 const RECEIPT_POLL_INTERVAL_MS: u64 = 3_000;
 
 /// Maximum number of receipt poll attempts before giving up.
+#[allow(dead_code)]
 const MAX_RECEIPT_POLL_ATTEMPTS: u32 = 100;
 
 /// Default deadline offset in seconds (30 minutes from now).
@@ -138,7 +139,7 @@ struct PendingSwap {
     client_order_id: String,
     tx_hash: String,
     symbol: Symbol,
-    side: Side,
+    _side: Side,
     quantity: Decimal,
     submitted_at: chrono::DateTime<Utc>,
 }
@@ -531,7 +532,7 @@ impl UniswapExecutionConnector {
             return Some(SwapFillData {
                 amount0,
                 amount1,
-                sqrt_price_x96_hex: sqrt_price_hex.to_string(),
+                _sqrt_price_x96_hex: sqrt_price_hex.to_string(),
             });
         }
 
@@ -570,7 +571,7 @@ impl UniswapExecutionConnector {
 struct SwapFillData {
     amount0: f64,
     amount1: f64,
-    sqrt_price_x96_hex: String,
+    _sqrt_price_x96_hex: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -881,7 +882,7 @@ impl ExecutionConnector for UniswapExecutionConnector {
                 client_order_id: client_order_id.clone(),
                 tx_hash: tx_hash.clone(),
                 symbol: order.symbol.clone(),
-                side: order.side,
+                _side: order.side,
                 quantity: order.quantity,
                 submitted_at: Utc::now(),
             });
