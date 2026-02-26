@@ -5,15 +5,135 @@
 //! events. Time-series tables are created as TimescaleDB hypertables for
 //! efficient range queries and automatic chunk management.
 
+use std::future::Future;
+use std::time::Duration;
+
 use chrono::{DateTime, Utc};
 use mm_core::Envelope;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::errors::PipelineError;
+
+// ---------------------------------------------------------------------------
+// Retry constants
+// ---------------------------------------------------------------------------
+
+/// Maximum number of retry attempts for transient database errors.
+pub const DB_MAX_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff on database retries (500ms).
+pub const DB_BASE_DELAY: Duration = Duration::from_millis(500);
+
+/// Compute the backoff delay for a given attempt (0-indexed).
+/// Returns base_delay * 2^attempt (i.e., 500ms, 1s, 2s for the default base).
+/// Saturates to `Duration::MAX` on overflow rather than panicking.
+pub fn db_backoff(attempt: u32, base_delay: Duration) -> Duration {
+    match 2u32.checked_pow(attempt) {
+        Some(factor) => base_delay.saturating_mul(factor),
+        None => Duration::MAX,
+    }
+}
+
+/// Determine whether a `sqlx::Error` is transient (connection-related) and
+/// therefore worth retrying, as opposed to a permanent error such as a
+/// constraint violation or SQL syntax error.
+pub fn is_transient_error(e: &sqlx::Error) -> bool {
+    match e {
+        // The connection to the database was lost or timed out.
+        sqlx::Error::Io(_) => true,
+
+        // Pool timed out waiting for a connection.
+        sqlx::Error::PoolTimedOut => true,
+
+        // Protocol-level errors are often transient (e.g., unexpected EOF).
+        sqlx::Error::Protocol(_) => true,
+
+        // A database-level error: inspect the PG error code.
+        sqlx::Error::Database(db_err) => {
+            // PostgreSQL error codes:
+            //   08xxx = connection exceptions
+            //   40xxx = transaction rollback (serialization failure, deadlock)
+            //   53xxx = insufficient resources (out of memory, too many conns)
+            //   57xxx = operator intervention (crash recovery, etc.)
+            if let Some(code) = db_err.code() {
+                let c = code.as_ref();
+                c.starts_with("08")
+                    || c.starts_with("40")
+                    || c.starts_with("53")
+                    || c.starts_with("57")
+            } else {
+                false
+            }
+        }
+
+        // Tls, ColumnNotFound, RowNotFound, TypeNotFound, etc. are permanent.
+        _ => false,
+    }
+}
+
+/// Execute an async database operation with retry on transient errors.
+///
+/// * `op_name` -- human-readable label for logging.
+/// * `max_retries` -- how many times to retry (not counting the initial attempt).
+/// * `base_delay` -- base duration for exponential backoff.
+/// * `f` -- a closure that returns a Future producing `Result<T, sqlx::Error>`.
+///
+/// Permanent errors are returned immediately. Transient errors trigger up to
+/// `max_retries` additional attempts with exponential backoff.
+pub async fn retry_db_operation<T, F, Fut>(
+    op_name: &str,
+    max_retries: u32,
+    base_delay: Duration,
+    f: F,
+) -> Result<T, PipelineError>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<T, sqlx::Error>>,
+{
+    let mut last_err: Option<sqlx::Error> = None;
+
+    for attempt in 0..=max_retries {
+        if attempt > 0 {
+            let delay = db_backoff(attempt - 1, base_delay);
+            warn!(
+                operation = op_name,
+                attempt,
+                max_retries,
+                delay_ms = delay.as_millis() as u64,
+                "retrying database operation after transient error"
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        match f().await {
+            Ok(val) => {
+                if attempt > 0 {
+                    info!(
+                        operation = op_name,
+                        attempt, "database operation succeeded after retry"
+                    );
+                }
+                return Ok(val);
+            }
+            Err(e) => {
+                if !is_transient_error(&e) {
+                    // Permanent error -- no point retrying.
+                    return Err(PipelineError::Database(format!("{op_name}: {e}")));
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+
+    let err = last_err.expect("at least one attempt was made");
+    Err(PipelineError::Database(format!(
+        "{op_name}: failed after {max_retries} retries: {err}"
+    )))
+}
 
 // ---------------------------------------------------------------------------
 // Store
@@ -234,7 +354,7 @@ impl TimescaleStore {
     // Insert helpers
     // -----------------------------------------------------------------------
 
-    /// Insert a market data tick.
+    /// Insert a market data tick (with retry on transient errors).
     #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn insert_market_tick(
@@ -248,28 +368,30 @@ impl TimescaleStore {
         spread_bps: Decimal,
         volume: Decimal,
     ) -> Result<(), PipelineError> {
-        sqlx::query(
-            r#"
-            INSERT INTO market_data_ticks (time, exchange, symbol, bid, ask, mid_price, spread_bps, volume)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-        )
-        .bind(time)
-        .bind(exchange)
-        .bind(symbol)
-        .bind(bid)
-        .bind(ask)
-        .bind(mid_price)
-        .bind(spread_bps)
-        .bind(volume)
-        .execute(&self.pool)
+        let pool = &self.pool;
+        retry_db_operation("insert_market_tick", DB_MAX_RETRIES, DB_BASE_DELAY, || async {
+            sqlx::query(
+                r#"
+                INSERT INTO market_data_ticks (time, exchange, symbol, bid, ask, mid_price, spread_bps, volume)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                "#,
+            )
+            .bind(time)
+            .bind(exchange)
+            .bind(symbol)
+            .bind(bid)
+            .bind(ask)
+            .bind(mid_price)
+            .bind(spread_bps)
+            .bind(volume)
+            .execute(pool)
+            .await
+            .map(|_| ())
+        })
         .await
-        .map_err(|e| PipelineError::Database(format!("insert_market_tick: {e}")))?;
-
-        Ok(())
     }
 
-    /// Insert a trade record.
+    /// Insert a trade record (with retry on transient errors).
     #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn insert_trade(
@@ -282,27 +404,30 @@ impl TimescaleStore {
         quantity: Decimal,
         trade_id: &str,
     ) -> Result<(), PipelineError> {
-        sqlx::query(
-            r#"
-            INSERT INTO trades (time, exchange, symbol, side, price, quantity, trade_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-        )
-        .bind(time)
-        .bind(exchange)
-        .bind(symbol)
-        .bind(side)
-        .bind(price)
-        .bind(quantity)
-        .bind(trade_id)
-        .execute(&self.pool)
+        let pool = &self.pool;
+        retry_db_operation("insert_trade", DB_MAX_RETRIES, DB_BASE_DELAY, || async {
+            sqlx::query(
+                r#"
+                INSERT INTO trades (time, exchange, symbol, side, price, quantity, trade_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                "#,
+            )
+            .bind(time)
+            .bind(exchange)
+            .bind(symbol)
+            .bind(side)
+            .bind(price)
+            .bind(quantity)
+            .bind(trade_id)
+            .execute(pool)
+            .await
+            .map(|_| ())
+        })
         .await
-        .map_err(|e| PipelineError::Database(format!("insert_trade: {e}")))?;
-
-        Ok(())
     }
 
     /// Upsert an order (insert or update on conflict with client_order_id).
+    /// Retries on transient database errors.
     #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn upsert_order(
@@ -322,44 +447,46 @@ impl TimescaleStore {
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Result<(), PipelineError> {
-        sqlx::query(
-            r#"
-            INSERT INTO orders (
-                client_order_id, exchange_order_id, exchange, symbol, side,
-                order_type, status, price, quantity, filled_quantity,
-                avg_fill_price, strategy_id, created_at, updated_at
+        let pool = &self.pool;
+        retry_db_operation("upsert_order", DB_MAX_RETRIES, DB_BASE_DELAY, || async {
+            sqlx::query(
+                r#"
+                INSERT INTO orders (
+                    client_order_id, exchange_order_id, exchange, symbol, side,
+                    order_type, status, price, quantity, filled_quantity,
+                    avg_fill_price, strategy_id, created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                ON CONFLICT (client_order_id) DO UPDATE SET
+                    exchange_order_id = COALESCE(EXCLUDED.exchange_order_id, orders.exchange_order_id),
+                    status            = EXCLUDED.status,
+                    filled_quantity   = EXCLUDED.filled_quantity,
+                    avg_fill_price    = EXCLUDED.avg_fill_price,
+                    updated_at        = EXCLUDED.updated_at
+                "#,
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-            ON CONFLICT (client_order_id) DO UPDATE SET
-                exchange_order_id = COALESCE(EXCLUDED.exchange_order_id, orders.exchange_order_id),
-                status            = EXCLUDED.status,
-                filled_quantity   = EXCLUDED.filled_quantity,
-                avg_fill_price    = EXCLUDED.avg_fill_price,
-                updated_at        = EXCLUDED.updated_at
-            "#,
-        )
-        .bind(client_order_id)
-        .bind(exchange_order_id)
-        .bind(exchange)
-        .bind(symbol)
-        .bind(side)
-        .bind(order_type)
-        .bind(status)
-        .bind(price)
-        .bind(quantity)
-        .bind(filled_quantity)
-        .bind(avg_fill_price)
-        .bind(strategy_id)
-        .bind(created_at)
-        .bind(updated_at)
-        .execute(&self.pool)
+            .bind(client_order_id)
+            .bind(exchange_order_id)
+            .bind(exchange)
+            .bind(symbol)
+            .bind(side)
+            .bind(order_type)
+            .bind(status)
+            .bind(price)
+            .bind(quantity)
+            .bind(filled_quantity)
+            .bind(avg_fill_price)
+            .bind(strategy_id)
+            .bind(created_at)
+            .bind(updated_at)
+            .execute(pool)
+            .await
+            .map(|_| ())
+        })
         .await
-        .map_err(|e| PipelineError::Database(format!("upsert_order: {e}")))?;
-
-        Ok(())
     }
 
-    /// Insert a fill record.
+    /// Insert a fill record (with retry on transient errors).
     #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn insert_fill(
@@ -375,30 +502,33 @@ impl TimescaleStore {
         fee: Decimal,
         fee_currency: &str,
     ) -> Result<(), PipelineError> {
-        sqlx::query(
-            r#"
-            INSERT INTO fills (time, fill_id, client_order_id, exchange, symbol, side, price, quantity, fee, fee_currency)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            "#,
-        )
-        .bind(time)
-        .bind(fill_id)
-        .bind(client_order_id)
-        .bind(exchange)
-        .bind(symbol)
-        .bind(side)
-        .bind(price)
-        .bind(quantity)
-        .bind(fee)
-        .bind(fee_currency)
-        .execute(&self.pool)
+        let pool = &self.pool;
+        retry_db_operation("insert_fill", DB_MAX_RETRIES, DB_BASE_DELAY, || async {
+            sqlx::query(
+                r#"
+                INSERT INTO fills (time, fill_id, client_order_id, exchange, symbol, side, price, quantity, fee, fee_currency)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                "#,
+            )
+            .bind(time)
+            .bind(fill_id)
+            .bind(client_order_id)
+            .bind(exchange)
+            .bind(symbol)
+            .bind(side)
+            .bind(price)
+            .bind(quantity)
+            .bind(fee)
+            .bind(fee_currency)
+            .execute(pool)
+            .await
+            .map(|_| ())
+        })
         .await
-        .map_err(|e| PipelineError::Database(format!("insert_fill: {e}")))?;
-
-        Ok(())
     }
 
     /// Upsert a position (insert or update on conflict with exchange + symbol).
+    /// Retries on transient database errors.
     #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn upsert_position(
@@ -411,33 +541,35 @@ impl TimescaleStore {
         realized_pnl: Decimal,
         updated_at: DateTime<Utc>,
     ) -> Result<(), PipelineError> {
-        sqlx::query(
-            r#"
-            INSERT INTO positions (exchange, symbol, quantity, avg_entry_price, unrealized_pnl, realized_pnl, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (exchange, symbol) DO UPDATE SET
-                quantity        = EXCLUDED.quantity,
-                avg_entry_price = EXCLUDED.avg_entry_price,
-                unrealized_pnl  = EXCLUDED.unrealized_pnl,
-                realized_pnl    = EXCLUDED.realized_pnl,
-                updated_at      = EXCLUDED.updated_at
-            "#,
-        )
-        .bind(exchange)
-        .bind(symbol)
-        .bind(quantity)
-        .bind(avg_entry_price)
-        .bind(unrealized_pnl)
-        .bind(realized_pnl)
-        .bind(updated_at)
-        .execute(&self.pool)
+        let pool = &self.pool;
+        retry_db_operation("upsert_position", DB_MAX_RETRIES, DB_BASE_DELAY, || async {
+            sqlx::query(
+                r#"
+                INSERT INTO positions (exchange, symbol, quantity, avg_entry_price, unrealized_pnl, realized_pnl, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (exchange, symbol) DO UPDATE SET
+                    quantity        = EXCLUDED.quantity,
+                    avg_entry_price = EXCLUDED.avg_entry_price,
+                    unrealized_pnl  = EXCLUDED.unrealized_pnl,
+                    realized_pnl    = EXCLUDED.realized_pnl,
+                    updated_at      = EXCLUDED.updated_at
+                "#,
+            )
+            .bind(exchange)
+            .bind(symbol)
+            .bind(quantity)
+            .bind(avg_entry_price)
+            .bind(unrealized_pnl)
+            .bind(realized_pnl)
+            .bind(updated_at)
+            .execute(pool)
+            .await
+            .map(|_| ())
+        })
         .await
-        .map_err(|e| PipelineError::Database(format!("upsert_position: {e}")))?;
-
-        Ok(())
     }
 
-    /// Insert a generic event into the events hypertable.
+    /// Insert a generic event into the events hypertable (with retry on transient errors).
     #[instrument(skip(self, payload))]
     pub async fn insert_event(
         &self,
@@ -448,23 +580,29 @@ impl TimescaleStore {
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Result<(), PipelineError> {
-        sqlx::query(
-            r#"
-            INSERT INTO events (time, event_id, correlation_id, source, event_type, payload)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            "#,
-        )
-        .bind(time)
-        .bind(event_id)
-        .bind(correlation_id)
-        .bind(source)
-        .bind(event_type)
-        .bind(payload)
-        .execute(&self.pool)
+        let pool = &self.pool;
+        let payload = payload.clone();
+        retry_db_operation("insert_event", DB_MAX_RETRIES, DB_BASE_DELAY, || {
+            let payload = payload.clone();
+            async move {
+                sqlx::query(
+                    r#"
+                    INSERT INTO events (time, event_id, correlation_id, source, event_type, payload)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    "#,
+                )
+                .bind(time)
+                .bind(event_id)
+                .bind(correlation_id)
+                .bind(source)
+                .bind(event_type)
+                .bind(&payload)
+                .execute(pool)
+                .await
+                .map(|_| ())
+            }
+        })
         .await
-        .map_err(|e| PipelineError::Database(format!("insert_event: {e}")))?;
-
-        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -696,4 +834,166 @@ pub struct MarketTickRow {
     pub mid_price: Decimal,
     pub spread_bps: Decimal,
     pub volume: Decimal,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // is_transient_error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn transient_io_error() {
+        let err = sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "connection reset",
+        ));
+        assert!(is_transient_error(&err), "IO errors should be transient");
+    }
+
+    #[test]
+    fn transient_pool_timeout() {
+        let err = sqlx::Error::PoolTimedOut;
+        assert!(is_transient_error(&err), "pool timeout should be transient");
+    }
+
+    #[test]
+    fn transient_protocol_error() {
+        let err = sqlx::Error::Protocol("unexpected EOF".to_string());
+        assert!(
+            is_transient_error(&err),
+            "protocol errors should be transient"
+        );
+    }
+
+    #[test]
+    fn permanent_row_not_found() {
+        let err = sqlx::Error::RowNotFound;
+        assert!(!is_transient_error(&err), "RowNotFound should be permanent");
+    }
+
+    #[test]
+    fn permanent_column_not_found() {
+        let err = sqlx::Error::ColumnNotFound("missing_col".to_string());
+        assert!(
+            !is_transient_error(&err),
+            "ColumnNotFound should be permanent"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Retry constants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn retry_constants_are_reasonable() {
+        assert!(
+            DB_MAX_RETRIES >= 1 && DB_MAX_RETRIES <= 10,
+            "max retries should be between 1 and 10"
+        );
+        assert!(
+            DB_BASE_DELAY >= Duration::from_millis(100) && DB_BASE_DELAY <= Duration::from_secs(10),
+            "base delay should be between 100ms and 10s"
+        );
+    }
+
+    #[test]
+    fn backoff_calculation_exponential() {
+        let base = Duration::from_millis(500);
+        // attempt 0 -> 500ms, attempt 1 -> 1s, attempt 2 -> 2s
+        assert_eq!(db_backoff(0, base), Duration::from_millis(500));
+        assert_eq!(db_backoff(1, base), Duration::from_millis(1000));
+        assert_eq!(db_backoff(2, base), Duration::from_millis(2000));
+    }
+
+    #[test]
+    fn backoff_does_not_overflow() {
+        let base = Duration::from_millis(500);
+        // Very large attempt number should saturate, not panic.
+        let result = db_backoff(63, base);
+        assert!(
+            result >= base,
+            "backoff should always be at least base_delay"
+        );
+    }
+
+    #[test]
+    fn total_backoff_time_bounded() {
+        let base = DB_BASE_DELAY;
+        let total: Duration = (0..DB_MAX_RETRIES).map(|a| db_backoff(a, base)).sum();
+        // With defaults (500ms, 1s, 2s) = 3.5s total
+        assert!(
+            total <= Duration::from_secs(15),
+            "total backoff should not exceed 15s, got {:?}",
+            total
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // retry_db_operation
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn retry_succeeds_on_first_attempt() {
+        let result = retry_db_operation("test_op", 3, Duration::from_millis(1), || async {
+            Ok::<_, sqlx::Error>(42)
+        })
+        .await;
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn retry_succeeds_after_transient_failures() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let counter = AtomicU32::new(0);
+
+        let result = retry_db_operation("test_op", 3, Duration::from_millis(1), || {
+            let attempt = counter.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if attempt < 2 {
+                    Err(sqlx::Error::PoolTimedOut)
+                } else {
+                    Ok(99)
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), 99);
+        assert_eq!(counter.load(Ordering::SeqCst), 3); // initial + 2 retries
+    }
+
+    #[tokio::test]
+    async fn retry_fails_immediately_on_permanent_error() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let counter = AtomicU32::new(0);
+
+        let result = retry_db_operation("test_op", 3, Duration::from_millis(1), || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            async { Err::<(), _>(sqlx::Error::RowNotFound) }
+        })
+        .await;
+
+        assert!(result.is_err());
+        // Should have only tried once since RowNotFound is permanent.
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn retry_exhausts_all_attempts_on_transient_error() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let counter = AtomicU32::new(0);
+
+        let result = retry_db_operation("test_op", 3, Duration::from_millis(1), || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            async { Err::<(), _>(sqlx::Error::PoolTimedOut) }
+        })
+        .await;
+
+        assert!(result.is_err());
+        // initial attempt + 3 retries = 4 total
+        assert_eq!(counter.load(Ordering::SeqCst), 4);
+    }
 }

@@ -13,12 +13,14 @@
 //!
 //! where `hash = hex(SHA256(previous_hash || envelope_json))`.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use chrono::Utc;
 use futures::StreamExt;
+use mm_core::Envelope;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::fs::OpenOptions;
@@ -28,7 +30,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::event_store::NatsEventSubscriber;
-use crate::timescale::TimescaleStore;
+use crate::timescale::{self, TimescaleStore};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,6 +63,86 @@ impl AuditStats {
 
     pub fn errors(&self) -> u64 {
         self.errors.load(Ordering::Relaxed)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Retry / buffer constants
+// ---------------------------------------------------------------------------
+
+/// Maximum number of retry attempts for audit DB writes.
+pub const AUDIT_DB_MAX_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff on audit DB retries (500ms).
+pub const AUDIT_DB_BASE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Default maximum capacity for the in-memory buffer of failed events.
+pub const FAILED_EVENT_BUFFER_CAPACITY: usize = 10_000;
+
+// ---------------------------------------------------------------------------
+// FailedEventBuffer
+// ---------------------------------------------------------------------------
+
+/// A bounded in-memory buffer for events that failed to persist to the
+/// database after exhausting retries. These events are re-attempted on the
+/// next successful write cycle.
+///
+/// When the buffer is at capacity, the oldest events are dropped to make
+/// room for newer ones (this is a last-resort measure — operators should be
+/// alerted when this happens).
+pub struct FailedEventBuffer {
+    buffer: VecDeque<Envelope>,
+    capacity: usize,
+    dropped_count: u64,
+}
+
+impl FailedEventBuffer {
+    /// Create a new buffer with the given maximum capacity.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            buffer: VecDeque::with_capacity(capacity.min(1024)),
+            capacity,
+            dropped_count: 0,
+        }
+    }
+
+    /// Push an event into the buffer. If full, the oldest event is dropped.
+    pub fn push(&mut self, envelope: Envelope) {
+        if self.buffer.len() >= self.capacity {
+            self.buffer.pop_front();
+            self.dropped_count += 1;
+            error!(
+                buffer_capacity = self.capacity,
+                total_dropped = self.dropped_count,
+                "audit failed-event buffer full, dropping oldest event — operator alert required"
+            );
+        }
+        self.buffer.push_back(envelope);
+    }
+
+    /// Drain all events currently in the buffer for re-processing.
+    pub fn drain_all(&mut self) -> Vec<Envelope> {
+        self.buffer.drain(..).collect()
+    }
+
+    /// Number of events currently buffered.
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Whether the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    /// Total number of events that were dropped because the buffer was full.
+    pub fn dropped_count(&self) -> u64 {
+        self.dropped_count
+    }
+
+    /// Maximum capacity of the buffer.
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 }
 
@@ -189,6 +271,7 @@ impl AuditLogger {
 
         let mut prev_hash = initial_hash.unwrap_or_else(|| vec![0u8; 32]);
         let mut seq = start_seq;
+        let mut failed_buffer = FailedEventBuffer::new(FAILED_EVENT_BUFFER_CAPACITY);
 
         while let Some(envelope) = event_stream.next().await {
             seq += 1;
@@ -255,16 +338,43 @@ impl AuditLogger {
                 }
             }
 
-            // Write to TimescaleDB.
-            if let Err(e) = store.persist_envelope(&envelope).await {
-                error!(
-                    error = %e,
-                    event_id = %envelope.event_id,
-                    "failed to persist envelope to TimescaleDB"
+            // Write to TimescaleDB with retry.
+            let db_ok = Self::persist_with_retry(&store, &envelope, &stats).await;
+
+            if db_ok {
+                // DB is healthy — attempt to flush any previously buffered events.
+                if !failed_buffer.is_empty() {
+                    let buffered = failed_buffer.drain_all();
+                    let count = buffered.len();
+                    info!(
+                        buffered_count = count,
+                        "attempting to flush buffered failed events to TimescaleDB"
+                    );
+                    let mut re_failed = 0u64;
+                    for buffered_envelope in buffered {
+                        if !Self::persist_with_retry(&store, &buffered_envelope, &stats).await {
+                            re_failed += 1;
+                            failed_buffer.push(buffered_envelope);
+                        }
+                    }
+                    if re_failed > 0 {
+                        warn!(
+                            re_failed,
+                            remaining = failed_buffer.len(),
+                            "some buffered events still failed to persist"
+                        );
+                    } else {
+                        info!(count, "all buffered events flushed successfully");
+                    }
+                }
+            } else {
+                // DB write failed after retries — buffer the event.
+                failed_buffer.push(envelope.clone());
+                warn!(
+                    buffered = failed_buffer.len(),
+                    dropped = failed_buffer.dropped_count(),
+                    "event buffered for later retry"
                 );
-                stats.errors.fetch_add(1, Ordering::Relaxed);
-                // Non-fatal: the file write succeeded so we have an audit
-                // record.
             }
 
             prev_hash = current_hash;
@@ -275,6 +385,8 @@ impl AuditLogger {
                     seq,
                     events = stats.events_processed(),
                     errors = stats.errors(),
+                    buffered = failed_buffer.len(),
+                    dropped = failed_buffer.dropped_count(),
                     lag_ms,
                     "audit logger checkpoint"
                 );
@@ -285,6 +397,73 @@ impl AuditLogger {
 
         info!(seq, "event stream ended, audit logger stopping");
         Ok(())
+    }
+
+    /// Persist an envelope to TimescaleDB with retry on transient errors.
+    ///
+    /// Returns `true` if the write succeeded (possibly after retries), `false`
+    /// if it failed after exhausting all retry attempts.
+    async fn persist_with_retry(
+        store: &TimescaleStore,
+        envelope: &Envelope,
+        stats: &Arc<AuditStats>,
+    ) -> bool {
+        let payload = match serde_json::to_value(&envelope.payload) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(error = %e, "failed to serialize envelope payload for DB");
+                stats.errors.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+        };
+
+        let event_type = payload
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
+
+        let pool = store.pool();
+        let result = timescale::retry_db_operation(
+            "audit_persist_envelope",
+            AUDIT_DB_MAX_RETRIES,
+            AUDIT_DB_BASE_DELAY,
+            || {
+                let payload = payload.clone();
+                let event_type = event_type.clone();
+                async move {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO events (time, event_id, correlation_id, source, event_type, payload)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        "#,
+                    )
+                    .bind(envelope.timestamp)
+                    .bind(&envelope.event_id)
+                    .bind(&envelope.correlation_id)
+                    .bind(&envelope.source)
+                    .bind(&event_type)
+                    .bind(&payload)
+                    .execute(pool)
+                    .await
+                    .map(|_| ())
+                }
+            },
+        )
+        .await;
+
+        match result {
+            Ok(()) => true,
+            Err(e) => {
+                error!(
+                    error = %e,
+                    event_id = %envelope.event_id,
+                    "failed to persist envelope to TimescaleDB after retries"
+                );
+                stats.errors.fetch_add(1, Ordering::Relaxed);
+                false
+            }
+        }
     }
 
     /// Read the last hash and sequence number from the existing audit file in
@@ -397,5 +576,134 @@ mod tests {
         let back: AuditLine = serde_json::from_str(&json).unwrap();
         assert_eq!(back.seq, 1);
         assert_eq!(back.hash, "aabbcc");
+    }
+
+    // -----------------------------------------------------------------------
+    // Retry / buffer constants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn audit_retry_constants_are_reasonable() {
+        assert!(
+            AUDIT_DB_MAX_RETRIES >= 1 && AUDIT_DB_MAX_RETRIES <= 10,
+            "max retries should be between 1 and 10"
+        );
+        assert!(
+            AUDIT_DB_BASE_DELAY >= std::time::Duration::from_millis(100)
+                && AUDIT_DB_BASE_DELAY <= std::time::Duration::from_secs(10),
+            "base delay should be between 100ms and 10s"
+        );
+    }
+
+    #[test]
+    fn buffer_capacity_constant_is_reasonable() {
+        assert!(
+            FAILED_EVENT_BUFFER_CAPACITY >= 100 && FAILED_EVENT_BUFFER_CAPACITY <= 1_000_000,
+            "buffer capacity should be between 100 and 1,000,000"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // FailedEventBuffer
+    // -----------------------------------------------------------------------
+
+    /// Create a minimal test Envelope for buffer tests.
+    fn test_envelope(id: &str) -> Envelope {
+        Envelope {
+            event_id: id.to_string(),
+            correlation_id: "corr-1".to_string(),
+            causation_id: None,
+            source: "test".to_string(),
+            timestamp: Utc::now(),
+            payload: mm_core::Event::SystemHealthCheck {
+                component: "test".to_string(),
+                status: "ok".to_string(),
+                details: serde_json::json!({"id": id}),
+            },
+        }
+    }
+
+    #[test]
+    fn buffer_push_and_drain() {
+        let mut buf = FailedEventBuffer::new(10);
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+
+        buf.push(test_envelope("e1"));
+        buf.push(test_envelope("e2"));
+        assert_eq!(buf.len(), 2);
+
+        let drained = buf.drain_all();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].event_id, "e1");
+        assert_eq!(drained[1].event_id, "e2");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn buffer_drops_oldest_when_full() {
+        let mut buf = FailedEventBuffer::new(3);
+
+        buf.push(test_envelope("e1"));
+        buf.push(test_envelope("e2"));
+        buf.push(test_envelope("e3"));
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.dropped_count(), 0);
+
+        // This should drop e1 (oldest).
+        buf.push(test_envelope("e4"));
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.dropped_count(), 1);
+
+        let drained = buf.drain_all();
+        assert_eq!(drained[0].event_id, "e2");
+        assert_eq!(drained[1].event_id, "e3");
+        assert_eq!(drained[2].event_id, "e4");
+    }
+
+    #[test]
+    fn buffer_drops_multiple_oldest() {
+        let mut buf = FailedEventBuffer::new(2);
+
+        buf.push(test_envelope("e1"));
+        buf.push(test_envelope("e2"));
+        buf.push(test_envelope("e3"));
+        buf.push(test_envelope("e4"));
+        buf.push(test_envelope("e5"));
+
+        assert_eq!(buf.len(), 2);
+        assert_eq!(buf.dropped_count(), 3);
+
+        let drained = buf.drain_all();
+        assert_eq!(drained[0].event_id, "e4");
+        assert_eq!(drained[1].event_id, "e5");
+    }
+
+    #[test]
+    fn buffer_capacity_one() {
+        let mut buf = FailedEventBuffer::new(1);
+
+        buf.push(test_envelope("e1"));
+        assert_eq!(buf.len(), 1);
+
+        buf.push(test_envelope("e2"));
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.dropped_count(), 1);
+
+        let drained = buf.drain_all();
+        assert_eq!(drained[0].event_id, "e2");
+    }
+
+    #[test]
+    fn buffer_reports_capacity() {
+        let buf = FailedEventBuffer::new(42);
+        assert_eq!(buf.capacity(), 42);
+    }
+
+    #[test]
+    fn drain_on_empty_buffer_returns_empty_vec() {
+        let mut buf = FailedEventBuffer::new(10);
+        let drained = buf.drain_all();
+        assert!(drained.is_empty());
     }
 }

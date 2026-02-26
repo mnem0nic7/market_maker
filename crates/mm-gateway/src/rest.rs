@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
-    response::IntoResponse,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
 };
@@ -280,6 +281,45 @@ impl Default for ApiState {
 }
 
 // ---------------------------------------------------------------------------
+// Metrics middleware
+// ---------------------------------------------------------------------------
+
+/// Axum middleware that records per-request Prometheus metrics.
+///
+/// For every request it:
+/// 1. Records the start time.
+/// 2. Passes the request to the next handler.
+/// 3. Increments `api_requests_total` with endpoint, method, and status labels.
+/// 4. Observes the duration in `api_request_duration_seconds`.
+async fn metrics_middleware(
+    State(state): State<Arc<ApiState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
+    let start = std::time::Instant::now();
+
+    let response = next.run(req).await;
+
+    let status = response.status().as_u16().to_string();
+    let duration = start.elapsed().as_secs_f64();
+
+    if let Some(ref metrics) = state.metrics {
+        metrics
+            .api_requests_total
+            .with_label_values(&[&path, &method, &status])
+            .inc();
+        metrics
+            .api_request_duration_seconds
+            .with_label_values(&[&path, &method])
+            .observe(duration);
+    }
+
+    response
+}
+
+// ---------------------------------------------------------------------------
 // Router construction
 // ---------------------------------------------------------------------------
 
@@ -294,7 +334,11 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/positions", get(list_positions))
         // Orders
         .route("/api/v1/orders", get(list_orders).post(place_order))
-        .route("/api/v1/orders/{order_id}", get(get_order))
+        .route("/api/v1/orders/cancel-all", post(cancel_all_orders))
+        .route(
+            "/api/v1/orders/{order_id}",
+            get(get_order).delete(cancel_order),
+        )
         // Portfolio risk
         .route("/api/v1/portfolio/risk", get(get_portfolio_risk))
         // Strategies
@@ -328,6 +372,11 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         )
         // AI assistant
         .route("/api/v1/assistant/chat", post(assistant_chat))
+        // Metrics middleware — records request count and latency for every request.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            metrics_middleware,
+        ))
         .with_state(state)
 }
 
@@ -341,6 +390,24 @@ pub struct OrderQuery {
     pub exchange: Option<String>,
     pub symbol: Option<String>,
     pub strategy_id: Option<String>,
+}
+
+/// Optional request body for cancelling all orders with filters.
+#[derive(Debug, Deserialize, Default)]
+struct CancelAllRequest {
+    /// Filter by exchange name (e.g. "binance").
+    pub exchange: Option<String>,
+    /// Filter by symbol (e.g. "BTC/USDT").
+    pub symbol: Option<String>,
+}
+
+/// Response body for the cancel-all endpoint.
+#[derive(Debug, Serialize)]
+struct CancelAllResponse {
+    /// Number of cancellation requests sent.
+    pub cancelled: usize,
+    /// Client order IDs of orders that were cancelled.
+    pub order_ids: Vec<String>,
 }
 
 /// Request body for placing a new order.
@@ -572,10 +639,104 @@ async fn place_order(
         symbol = %response_order.symbol,
         side = %response_order.side,
         order_type = %response_order.order_type,
+        quantity = %response_order.quantity,
         "Order placed via REST API"
     );
 
     Ok((StatusCode::CREATED, ApiResponse::ok(response_order)))
+}
+
+// ---------------------------------------------------------------------------
+// Cancel order
+// ---------------------------------------------------------------------------
+
+async fn cancel_order(
+    State(state): State<Arc<ApiState>>,
+    Path(order_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let mut orders = state.orders.write().await;
+
+    let found = orders.iter_mut().find(|o| {
+        o.client_order_id == order_id || o.exchange_order_id.as_deref() == Some(order_id.as_str())
+    });
+
+    match found {
+        Some(order) => {
+            // Check if the order is in a cancellable state.
+            if order.status.is_terminal() {
+                return Err(ApiResponse::conflict(format!(
+                    "order {} is in non-cancellable state: {}",
+                    order_id, order.status
+                )));
+            }
+
+            order.status = OrderStatus::Cancelled;
+            order.updated_at = Utc::now();
+
+            info!(
+                client_order_id = %order.client_order_id,
+                exchange = %order.exchange,
+                symbol = %order.symbol,
+                "Order cancelled via REST API"
+            );
+
+            Ok(ApiResponse::ok(order.clone()))
+        }
+        None => Err(ApiResponse::not_found(format!(
+            "order not found: {order_id}"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cancel all orders
+// ---------------------------------------------------------------------------
+
+async fn cancel_all_orders(
+    State(state): State<Arc<ApiState>>,
+    body: Option<Json<CancelAllRequest>>,
+) -> impl IntoResponse {
+    let filter = body.map(|Json(b)| b).unwrap_or_default();
+    let mut orders = state.orders.write().await;
+
+    let now = Utc::now();
+    let mut cancelled_ids = Vec::new();
+
+    for order in orders.iter_mut() {
+        // Skip orders that are already in a terminal state.
+        if order.status.is_terminal() {
+            continue;
+        }
+
+        // Apply optional exchange filter.
+        if let Some(ref exch) = filter.exchange {
+            let order_exchange = order.exchange.to_string().to_lowercase();
+            if order_exchange != exch.to_lowercase() {
+                continue;
+            }
+        }
+
+        // Apply optional symbol filter.
+        if let Some(ref sym) = filter.symbol {
+            if order.symbol.canonical().to_lowercase() != sym.to_lowercase() {
+                continue;
+            }
+        }
+
+        order.status = OrderStatus::Cancelled;
+        order.updated_at = now;
+        cancelled_ids.push(order.client_order_id.clone());
+    }
+
+    info!(
+        count = cancelled_ids.len(),
+        "Cancel-all orders request via REST API"
+    );
+
+    ApiResponse::ok(CancelAllResponse {
+        cancelled: cancelled_ids.len(),
+        order_ids: cancelled_ids,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1943,5 +2104,506 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // --- Cancel order tests ---
+
+    /// Helper to create a test order with the given status and fields.
+    fn test_order(
+        client_order_id: &str,
+        exchange: Exchange,
+        symbol: Symbol,
+        status: OrderStatus,
+    ) -> Order {
+        let now = Utc::now();
+        Order {
+            client_order_id: client_order_id.to_string(),
+            exchange_order_id: None,
+            exchange,
+            symbol,
+            side: Side::Buy,
+            order_type: OrderType::Limit,
+            time_in_force: TimeInForce::GTC,
+            price: Some(rust_decimal::Decimal::new(50000, 0)),
+            quantity: rust_decimal::Decimal::new(1, 1),
+            status,
+            filled_quantity: rust_decimal::Decimal::ZERO,
+            remaining_quantity: rust_decimal::Decimal::new(1, 1),
+            average_fill_price: rust_decimal::Decimal::ZERO,
+            strategy_id: "test".to_string(),
+            reduce_only: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_open_order_returns_200() {
+        let state = ApiState::new();
+        {
+            let mut orders = state.orders.write().await;
+            orders.push(test_order(
+                "cancel-me-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::New,
+            ));
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/orders/cancel-me-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["data"]["client_order_id"], "cancel-me-1");
+        assert_eq!(json["data"]["status"], "Cancelled");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_nonexistent_order_returns_404() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/orders/does-not-exist")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_filled_order_returns_409() {
+        let state = ApiState::new();
+        {
+            let mut orders = state.orders.write().await;
+            orders.push(test_order(
+                "filled-order-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::Filled,
+            ));
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/orders/filled-order-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_already_cancelled_order_returns_409() {
+        let state = ApiState::new();
+        {
+            let mut orders = state.orders.write().await;
+            orders.push(test_order(
+                "already-cancelled-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::Cancelled,
+            ));
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/orders/already-cancelled-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_partially_filled_order_returns_200() {
+        let state = ApiState::new();
+        {
+            let mut orders = state.orders.write().await;
+            orders.push(test_order(
+                "partial-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::PartiallyFilled,
+            ));
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/orders/partial-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["data"]["status"], "Cancelled");
+    }
+
+    // --- Cancel-all orders tests ---
+
+    #[tokio::test]
+    async fn test_cancel_all_no_filters() {
+        let state = ApiState::new();
+        {
+            let mut orders = state.orders.write().await;
+            orders.push(test_order(
+                "open-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::New,
+            ));
+            orders.push(test_order(
+                "open-2",
+                Exchange::Coinbase,
+                Symbol::new("ETH", "USD"),
+                OrderStatus::PartiallyFilled,
+            ));
+            orders.push(test_order(
+                "filled-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::Filled,
+            ));
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders/cancel-all")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        // Only the 2 open orders should be cancelled, not the filled one.
+        assert_eq!(json["data"]["cancelled"], 2);
+        let ids = json["data"]["order_ids"].as_array().unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&serde_json::json!("open-1")));
+        assert!(ids.contains(&serde_json::json!("open-2")));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_all_with_exchange_filter() {
+        let state = ApiState::new();
+        {
+            let mut orders = state.orders.write().await;
+            orders.push(test_order(
+                "binance-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::New,
+            ));
+            orders.push(test_order(
+                "coinbase-1",
+                Exchange::Coinbase,
+                Symbol::new("ETH", "USD"),
+                OrderStatus::New,
+            ));
+        }
+        let app = rest_router(state);
+
+        let body = serde_json::json!({ "exchange": "binance" });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders/cancel-all")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["data"]["cancelled"], 1);
+        let ids = json["data"]["order_ids"].as_array().unwrap();
+        assert_eq!(ids[0], "binance-1");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_all_with_symbol_filter() {
+        let state = ApiState::new();
+        {
+            let mut orders = state.orders.write().await;
+            orders.push(test_order(
+                "btc-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::New,
+            ));
+            orders.push(test_order(
+                "eth-1",
+                Exchange::Binance,
+                Symbol::new("ETH", "USDT"),
+                OrderStatus::New,
+            ));
+        }
+        let app = rest_router(state);
+
+        let body = serde_json::json!({ "symbol": "BTC/USDT" });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders/cancel-all")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["data"]["cancelled"], 1);
+        let ids = json["data"]["order_ids"].as_array().unwrap();
+        assert_eq!(ids[0], "btc-1");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_all_with_no_body() {
+        let state = ApiState::new();
+        {
+            let mut orders = state.orders.write().await;
+            orders.push(test_order(
+                "open-no-body-1",
+                Exchange::Binance,
+                Symbol::new("BTC", "USDT"),
+                OrderStatus::New,
+            ));
+        }
+        let app = rest_router(state);
+
+        // Send POST with empty body (no JSON) to test the Option<Json<...>> handling.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders/cancel-all")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["data"]["cancelled"], 1);
+    }
+
+    // --- Metrics middleware tests ---
+
+    #[tokio::test]
+    async fn test_metrics_middleware_records_request_count() {
+        let metrics = Arc::new(MetricsRegistry::new());
+        let state = ApiState::with_metrics(metrics.clone());
+        let app = rest_router(state);
+
+        // Make a request to the health endpoint.
+        let _resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Verify api_requests_total was incremented.
+        let count = metrics
+            .api_requests_total
+            .with_label_values(&["/api/v1/health", "GET", "200"])
+            .get();
+        assert_eq!(count, 1, "api_requests_total should be 1 after one request");
+    }
+
+    #[tokio::test]
+    async fn test_metrics_middleware_records_duration() {
+        let metrics = Arc::new(MetricsRegistry::new());
+        let state = ApiState::with_metrics(metrics.clone());
+        let app = rest_router(state);
+
+        let _resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Verify duration was observed (sample count should be 1).
+        let metric = metrics
+            .api_request_duration_seconds
+            .with_label_values(&["/api/v1/health", "GET"]);
+        let sample_count = metric.get_sample_count();
+        assert_eq!(
+            sample_count, 1,
+            "api_request_duration_seconds should have 1 observation"
+        );
+        assert!(
+            metric.get_sample_sum() > 0.0,
+            "observed duration should be > 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_metrics_middleware_labels_correct_for_post() {
+        let metrics = Arc::new(MetricsRegistry::new());
+        let state = ApiState::with_metrics(metrics.clone());
+        let app = rest_router(state);
+
+        let body = serde_json::json!({
+            "exchange": "binance",
+            "symbol": "BTC/USDT",
+            "side": "Buy",
+            "order_type": "Market",
+            "quantity": "0.1"
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/orders")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let status = resp.status().as_u16().to_string();
+
+        // Verify request was recorded with correct method and status labels.
+        let count = metrics
+            .api_requests_total
+            .with_label_values(&["/api/v1/orders", "POST", &status])
+            .get();
+        assert_eq!(count, 1, "POST /api/v1/orders should be counted once");
+    }
+
+    #[tokio::test]
+    async fn test_metrics_middleware_records_404_status() {
+        let metrics = Arc::new(MetricsRegistry::new());
+        let state = ApiState::with_metrics(metrics.clone());
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/orders/nonexistent-id")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let count = metrics
+            .api_requests_total
+            .with_label_values(&["/api/v1/orders/nonexistent-id", "GET", "404"])
+            .get();
+        assert_eq!(count, 1, "404 response should be counted");
+    }
+
+    #[tokio::test]
+    async fn test_ws_active_connections_gauge() {
+        let metrics = Arc::new(MetricsRegistry::new());
+
+        // Simulate increment/decrement as done in ws.rs handler.
+        assert_eq!(metrics.ws_active_connections.get(), 0);
+
+        metrics.ws_active_connections.inc();
+        assert_eq!(metrics.ws_active_connections.get(), 1);
+
+        metrics.ws_active_connections.inc();
+        assert_eq!(metrics.ws_active_connections.get(), 2);
+
+        metrics.ws_active_connections.dec();
+        assert_eq!(metrics.ws_active_connections.get(), 1);
+
+        metrics.ws_active_connections.dec();
+        assert_eq!(metrics.ws_active_connections.get(), 0);
     }
 }

@@ -229,6 +229,11 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<WsState>) {
 
     let mut broadcast_rx = state.broadcaster.subscribe();
 
+    // Track active WebSocket connections in Prometheus.
+    if let Some(ref metrics) = state.api_state.metrics {
+        metrics.ws_active_connections.inc();
+    }
+
     info!("WebSocket client connected");
 
     // Spawn a task that forwards broadcast messages to this client.
@@ -307,6 +312,11 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<WsState>) {
         _ = &mut recv_task => {
             send_task.abort();
         }
+    }
+
+    // Decrement active WebSocket connections gauge.
+    if let Some(ref metrics) = state.api_state.metrics {
+        metrics.ws_active_connections.dec();
     }
 
     info!("WebSocket client disconnected");
