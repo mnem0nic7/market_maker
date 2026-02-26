@@ -1,0 +1,96 @@
+# Prometheus alerting rules for the market maker platform.
+#
+# These rules reference metrics defined in crates/mm-core/src/metrics.rs
+# (mm_kill_switch_active, mm_websocket_connected, mm_orders_total, etc.)
+# as well as standard Prometheus targets (up{}).
+
+groups:
+  - name: market_maker_critical
+    rules:
+      - alert: KillSwitchActive
+        expr: mm_kill_switch_active == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kill switch has been activated"
+          description: "The trading kill switch is active. All trading has been halted."
+
+      - alert: CircuitBreakerTripped
+        expr: mm_circuit_breaker_level >= 3
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker at level {{ $value }}"
+          description: "Circuit breaker has reached level {{ $value }} (L3+). Trading may be impaired."
+
+      - alert: ExchangeDisconnected
+        expr: mm_websocket_connected == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Exchange WebSocket disconnected"
+          description: "WebSocket connection to exchange has been down for >2 minutes."
+
+      - alert: HighOrderRejectionRate
+        expr: rate(mm_orders_rejected_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High order rejection rate"
+          description: "More than 0.5 orders/sec being rejected over the last 5 minutes."
+
+      - alert: LargeDrawdown
+        expr: mm_portfolio_drawdown_pct > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Portfolio drawdown exceeds 5%"
+          description: "Current drawdown is {{ $value }}%. Consider risk review."
+
+      - alert: PositionLimitApproaching
+        expr: abs(mm_position_quantity) / mm_position_limit > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Position approaching limit"
+          description: "Position is at {{ $value }}% of limit."
+
+      - alert: APIHighLatency
+        expr: histogram_quantile(0.95, rate(mm_api_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 latency above 1 second"
+
+      - alert: GatewayDown
+        expr: up{job="market_maker"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Market maker gateway is down"
+
+  - name: market_maker_data_pipeline
+    rules:
+      - alert: NATSPublishFailures
+        expr: rate(mm_nats_publish_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NATS publish failures detected"
+
+      - alert: DatabaseWriteFailures
+        expr: rate(mm_db_write_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TimescaleDB write failures detected"

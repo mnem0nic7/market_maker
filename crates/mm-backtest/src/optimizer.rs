@@ -598,6 +598,7 @@ mod tests {
     fn extract_metric_returns_correct_value() {
         // Create a minimal BacktestResult to test metric extraction.
         let result = BacktestResult {
+            strategy_name: "test".to_string(),
             total_pnl: dec!(1500),
             total_fees: dec!(50),
             net_pnl: dec!(1450),

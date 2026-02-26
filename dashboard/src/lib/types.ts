@@ -242,6 +242,7 @@ export interface OptimizationResult {
 }
 
 export interface BacktestResult {
+  strategy_name: string;
   total_pnl: string;
   total_fees: string;
   net_pnl: string;

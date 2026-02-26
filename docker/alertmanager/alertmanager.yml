@@ -1,0 +1,31 @@
+# AlertManager configuration for the market maker platform.
+#
+# Routes critical alerts (kill switch, drawdown, gateway down) with zero
+# group-wait for immediate delivery.  All alerts are forwarded to the
+# gateway webhook endpoint for display in the dashboard.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical'
+      group_wait: 0s
+
+receivers:
+  - name: 'default'
+    webhook_configs:
+      - url: 'http://host.docker.internal:8080/api/v1/webhooks/alerts'
+        send_resolved: true
+
+  - name: 'critical'
+    webhook_configs:
+      - url: 'http://host.docker.internal:8080/api/v1/webhooks/alerts'
+        send_resolved: true

@@ -155,6 +155,7 @@ impl ReplayEngine {
         let mut sim_exchange =
             SimulatedExchange::new(self.config.initial_capital, fee_model, slippage_model);
         let mut perf_calc = PerformanceCalculator::new(self.config.initial_capital);
+        perf_calc.set_strategy_name(strategy.name());
 
         // State: current order book and last trade per (exchange, symbol)
         let mut current_book: Option<OrderBook> = None;
