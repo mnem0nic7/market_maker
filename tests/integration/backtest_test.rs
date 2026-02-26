@@ -2,11 +2,8 @@
 
 use rust_decimal_macros::dec;
 
-use mm_backtest::{BacktestConfig, MarketEvent, ReplayEngine, print_report};
-use mm_core::{
-    traits::Strategy,
-    types::{Exchange, PriceLevel, Side, Symbol},
-};
+use mm_backtest::{BacktestConfig, MarketEvent, ReplayEngine};
+use mm_core::types::{Exchange, PriceLevel, Side, Symbol};
 use mm_strategy::{SpreadConfig, SpreadStrategy};
 
 use chrono::{Duration, Utc};
@@ -132,8 +129,8 @@ fn backtest_spread_strategy_completes_with_valid_report() {
     // Basic sanity checks on the report.
     assert!(result.num_trades >= 0);
     assert!(result.num_fills >= 0);
-    // Initial capital should be set correctly.
-    assert_eq!(result.initial_capital, dec!(100_000));
+    // Net PnL should equal total_pnl minus total_fees.
+    assert_eq!(result.net_pnl, result.total_pnl - result.total_fees);
 }
 
 #[test]

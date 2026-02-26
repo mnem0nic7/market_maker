@@ -96,10 +96,9 @@ impl OrderRouter {
         }
 
         // Take the receiver out — it can only be consumed once.
-        let rx = self
-            .update_rx
-            .take()
-            .expect("connect_all called more than once");
+        let rx = self.update_rx.take().ok_or_else(|| {
+            mm_core::MmError::Internal("connect_all called more than once".into())
+        })?;
 
         let oms = Arc::clone(&self.oms);
         let forward_tx = self.forward_tx.clone();
