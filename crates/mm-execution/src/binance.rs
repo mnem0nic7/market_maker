@@ -533,7 +533,13 @@ impl ExecutionConnector for BinanceExecutionConnector {
         let signed_query = self.sign_params(&params);
         let url = format!("{}/api/v3/order?{}", self.config.base_url, signed_query);
 
-        debug!(url = %url, "Binance: submitting order");
+        debug!(
+            symbol = %symbol,
+            side = %side,
+            quantity = %quantity,
+            order_type = %order_type,
+            "Binance: submitting order"
+        );
 
         let resp = self
             .http

@@ -96,10 +96,24 @@ impl AuditLogger {
         let stats = Arc::new(AuditStats::default());
         let stats_inner = Arc::clone(&stats);
 
-        // Determine the last hash from the existing file so we can continue
-        // the chain.
-        let last_hash = Self::read_last_hash(&path).await;
-        let sequence_start = Self::read_last_sequence(&path).await;
+        // Determine the last hash and sequence from the existing file so we
+        // can continue the chain (single read instead of two).
+        let (last_hash, sequence_start) = Self::read_last_state(&path).await;
+
+        // Verify the existing audit file integrity before continuing the chain.
+        if sequence_start > 0 {
+            match verify_audit_file(&path).await {
+                Ok(verified_count) => {
+                    info!(verified_count, "audit file integrity verified");
+                }
+                Err(e) => {
+                    error!(error = %e, "audit file integrity check failed");
+                    return Err(crate::errors::PipelineError::Internal(
+                        format!("audit file integrity check failed: {}", e),
+                    ));
+                }
+            }
+        }
 
         info!(
             sequence_start,
@@ -272,27 +286,24 @@ impl AuditLogger {
         Ok(())
     }
 
-    /// Read the last hash from the existing audit file, if any.
-    async fn read_last_hash(path: &Path) -> Option<Vec<u8>> {
-        let contents = tokio::fs::read_to_string(path).await.ok()?;
-        let last_line = contents.lines().rev().find(|l| !l.trim().is_empty())?;
-        let audit_line: AuditLine = serde_json::from_str(last_line).ok()?;
-        hex::decode(&audit_line.hash).ok()
-    }
-
-    /// Read the last sequence number from the existing audit file, if any.
-    async fn read_last_sequence(path: &Path) -> u64 {
+    /// Read the last hash and sequence number from the existing audit file in
+    /// a single pass, avoiding the cost of reading the file twice.
+    async fn read_last_state(path: &Path) -> (Option<Vec<u8>>, u64) {
         let contents = match tokio::fs::read_to_string(path).await {
             Ok(c) => c,
-            Err(_) => return 0,
+            Err(_) => return (None, 0),
         };
-        contents
-            .lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .and_then(|l| serde_json::from_str::<AuditLine>(l).ok())
-            .map(|a| a.seq)
-            .unwrap_or(0)
+        let last_line = contents.lines().rev().find(|l| !l.trim().is_empty());
+        match last_line {
+            Some(line) => match serde_json::from_str::<AuditLine>(line) {
+                Ok(audit_line) => {
+                    let hash = hex::decode(&audit_line.hash).ok();
+                    (hash, audit_line.seq)
+                }
+                Err(_) => (None, 0),
+            },
+            None => (None, 0),
+        }
     }
 }
 

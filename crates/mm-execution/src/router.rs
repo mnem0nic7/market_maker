@@ -41,6 +41,9 @@ pub struct OrderRouter {
     update_tx: mpsc::Sender<mm_core::OrderUpdate>,
     /// Receiver side — consumed by the background task.
     update_rx: Option<mpsc::Receiver<mm_core::OrderUpdate>>,
+    /// Optional forwarding channel so the main loop can observe order updates
+    /// (fills, cancellations, etc.) in addition to the OMS.
+    forward_tx: Option<mpsc::Sender<mm_core::OrderUpdate>>,
 }
 
 impl OrderRouter {
@@ -56,6 +59,7 @@ impl OrderRouter {
             update_task: None,
             update_tx,
             update_rx: Some(update_rx),
+            forward_tx: None,
         }
     }
 
@@ -65,6 +69,12 @@ impl OrderRouter {
         let exchange = connector.exchange();
         info!(%exchange, "Router: connector registered");
         self.connectors.insert(exchange, connector);
+    }
+
+    /// Set an optional forwarding channel so the main loop can observe every
+    /// `OrderUpdate` (fills, cancellations, etc.) in addition to the OMS.
+    pub fn set_forward_channel(&mut self, tx: mpsc::Sender<mm_core::OrderUpdate>) {
+        self.forward_tx = Some(tx);
     }
 
     // -----------------------------------------------------------------------
@@ -92,10 +102,16 @@ impl OrderRouter {
             .expect("connect_all called more than once");
 
         let oms = Arc::clone(&self.oms);
-        let handle = tokio::spawn(Self::run_update_loop(oms, rx));
+        let forward_tx = self.forward_tx.clone();
+        let handle = tokio::spawn(Self::run_update_loop(oms, rx, forward_tx));
         self.update_task = Some(handle);
 
         info!("Router: all connectors connected, update loop started");
+
+        if let Some(e) = first_error {
+            return Err(e);
+        }
+
         Ok(())
     }
 
@@ -104,6 +120,7 @@ impl OrderRouter {
     async fn run_update_loop(
         oms: Arc<OrderManager>,
         mut rx: mpsc::Receiver<mm_core::OrderUpdate>,
+        forward_tx: Option<mpsc::Sender<mm_core::OrderUpdate>>,
     ) {
         info!("Router: update loop started");
         while let Some(update) = rx.recv().await {
@@ -118,6 +135,12 @@ impl OrderRouter {
                     client_order_id = %update.client_order_id,
                     "Router: OMS rejected the update"
                 );
+            }
+            // Forward to main loop for strategy/position processing
+            if let Some(ref fwd) = forward_tx {
+                if fwd.try_send(update).is_err() {
+                    warn!("Router: forward channel full or closed, dropping update");
+                }
             }
         }
         info!("Router: update loop terminated (channel closed)");

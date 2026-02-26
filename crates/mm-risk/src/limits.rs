@@ -40,6 +40,11 @@ impl RiskCheck for PositionLimitCheck {
     }
 
     async fn check_order(&self, order: &NewOrder, portfolio: &PortfolioRisk) -> RiskAction {
+        // Reduce-only orders decrease risk — always allow them.
+        if order.reduce_only {
+            return RiskAction::Allow;
+        }
+
         // Find the current position for this symbol (if any).
         let current_position_qty = portfolio
             .positions
@@ -54,6 +59,11 @@ impl RiskCheck for PositionLimitCheck {
         };
 
         let projected_position = (current_position_qty + signed_order_qty).abs();
+
+        // If the order reduces the absolute position (moves toward zero), allow it.
+        if projected_position < current_position_qty.abs() {
+            return RiskAction::Allow;
+        }
 
         // Per-symbol position limit.
         if projected_position > self.config.max_position_per_symbol {
@@ -231,6 +241,8 @@ struct DailyPnlState {
     high_water_mark: Decimal,
     /// The date of the current PnL tracking window.
     date: chrono::NaiveDate,
+    /// Whether at least one PnL delta has been recorded for the current day.
+    has_recorded: bool,
 }
 
 impl PnlLimitCheck {
@@ -242,6 +254,7 @@ impl PnlLimitCheck {
                 pnl: Decimal::ZERO,
                 high_water_mark: Decimal::ZERO,
                 date: today,
+                has_recorded: false,
             }),
         }
     }
@@ -257,9 +270,11 @@ impl PnlLimitCheck {
             state.pnl = Decimal::ZERO;
             state.high_water_mark = Decimal::ZERO;
             state.date = today;
+            state.has_recorded = false;
         }
 
         state.pnl += delta;
+        state.has_recorded = true;
         if state.pnl > state.high_water_mark {
             state.high_water_mark = state.pnl;
         }
@@ -287,7 +302,7 @@ impl RiskCheck for PnlLimitCheck {
         // Prefer the internally tracked PnL if available, fall back to
         // portfolio snapshot.
         let state = self.daily_pnl.lock();
-        let effective_pnl = if state.pnl != Decimal::ZERO {
+        let effective_pnl = if state.has_recorded {
             state.pnl
         } else {
             portfolio.daily_pnl
@@ -469,6 +484,9 @@ impl RiskCheck for RateLimitCheck {
                 ),
             };
         }
+
+        // Record this order in the window so future checks account for it.
+        window.record(now);
 
         RiskAction::Allow
     }

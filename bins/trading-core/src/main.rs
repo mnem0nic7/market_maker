@@ -15,6 +15,7 @@ use chrono::Utc;
 use rust_decimal::Decimal;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use mm_core::{
     events::{Envelope, Event, OrderUpdate},
@@ -39,8 +40,9 @@ use mm_market_data::{
     IbConfig, IbConnector, KrakenConnector, MarketDataManager,
 };
 use mm_risk::{
-    KillSwitch, KillSwitchConfig, OrderSizeCheck, OrderSizeConfig, PnlLimitCheck, PnlLimitConfig,
-    PositionLimitCheck, PositionLimitConfig, RateLimitCheck, RateLimitConfig, RiskEngine,
+    ExchangeState, KillSwitch, KillSwitchConfig, OrderSizeCheck, OrderSizeConfig, PnlLimitCheck,
+    PnlLimitConfig, PositionLimitCheck, PositionLimitConfig, RateLimitCheck, RateLimitConfig,
+    RiskEngine,
 };
 use mm_strategy::{
     AvellanedaStoikovConfig, AvellanedaStoikovStrategy, GridConfig, GridStrategy,
@@ -64,6 +66,37 @@ const ORDER_UPDATE_CHANNEL_CAPACITY: usize = 4096;
 // ---------------------------------------------------------------------------
 
 type PositionMap = HashMap<(Exchange, Symbol), Position>;
+
+// ---------------------------------------------------------------------------
+// ArcPnlCheck wrapper — delegates RiskCheck to Arc<PnlLimitCheck>
+// ---------------------------------------------------------------------------
+
+/// Wrapper to allow `Arc<PnlLimitCheck>` to be used as a `Box<dyn RiskCheck>`.
+/// This lets the main loop retain a reference to call `record_pnl` while the
+/// `RiskEngine` also holds the check behind its `Box<dyn RiskCheck>` pipeline.
+struct ArcPnlCheck(Arc<PnlLimitCheck>);
+
+#[async_trait::async_trait]
+impl mm_core::traits::RiskCheck for ArcPnlCheck {
+    fn name(&self) -> &str {
+        "pnl_limit"
+    }
+
+    async fn check_order(
+        &self,
+        order: &mm_core::types::NewOrder,
+        portfolio: &mm_core::types::PortfolioRisk,
+    ) -> mm_core::types::RiskAction {
+        self.0.check_order(order, portfolio).await
+    }
+
+    async fn check_portfolio(
+        &self,
+        portfolio: &mm_core::types::PortfolioRisk,
+    ) -> mm_core::types::RiskAction {
+        self.0.check_portfolio(portfolio).await
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -149,7 +182,7 @@ async fn main() -> Result<()> {
     // We also need a separate order-update channel for the main loop to
     // process order updates (the router has its own internal one for the OMS,
     // but we need to observe updates too).
-    let (_order_update_tx, mut order_update_rx) = mpsc::channel::<OrderUpdate>(ORDER_UPDATE_CHANNEL_CAPACITY);
+    let (order_update_tx, mut order_update_rx) = mpsc::channel::<OrderUpdate>(ORDER_UPDATE_CHANNEL_CAPACITY);
 
     // Track which (exchange, symbols) pairs we're subscribed to.
     let mut subscribed_pairs: Vec<(Exchange, Vec<Symbol>)> = Vec::new();
@@ -263,6 +296,10 @@ async fn main() -> Result<()> {
             subscribed_pairs.push((exchange, symbols));
         }
     }
+
+    // Wire the forwarding channel so the router's update loop sends order
+    // updates (fills, cancellations, etc.) to the main event loop.
+    order_router.set_forward_channel(order_update_tx);
 
     // Connect all execution connectors (starts their WebSocket user-data
     // streams and the internal update loop).
@@ -535,10 +572,11 @@ async fn main() -> Result<()> {
         max_order_notional: cfg.risk.order_limits.max_order_notional,
     })));
 
-    risk_engine.add_check(Box::new(PnlLimitCheck::new(PnlLimitConfig {
+    let pnl_limit_check = Arc::new(PnlLimitCheck::new(PnlLimitConfig {
         max_daily_loss: cfg.risk.pnl_limits.max_daily_loss,
         max_drawdown_pct: cfg.risk.pnl_limits.max_drawdown_pct,
-    })));
+    }));
+    risk_engine.add_check(Box::new(ArcPnlCheck(Arc::clone(&pnl_limit_check))));
 
     risk_engine.add_check(Box::new(RateLimitCheck::new(RateLimitConfig {
         max_orders_per_second: cfg.risk.rate_limits.max_orders_per_second,
@@ -549,7 +587,7 @@ async fn main() -> Result<()> {
 
     // ----- (j) Initialize gateway (REST API + WebSocket) -----
     let metrics = Arc::new(MetricsRegistry::new());
-    let api_state = ApiState::with_engine(Arc::clone(&metrics), Arc::clone(&strategy_engine_shared));
+    let api_state = ApiState::with_engine_and_kill_switch(Arc::clone(&metrics), Arc::clone(&strategy_engine_shared), Arc::clone(&kill_switch));
 
     // Create the broadcaster externally so the main loop can publish events.
     let broadcaster = DashboardBroadcaster::new(4096, 1024);
@@ -559,6 +597,8 @@ async fn main() -> Result<()> {
         let gw_config = GatewayConfig {
             host: cfg.gateway.host.clone(),
             port: cfg.gateway.port,
+            cors_origins: cfg.gateway.cors_origins.clone(),
+            api_token: cfg.gateway.api_token.clone(),
         };
         let gw_state = Arc::clone(&api_state);
         let gw_broadcaster = Arc::clone(&broadcaster);
@@ -581,6 +621,8 @@ async fn main() -> Result<()> {
     // Latest order book and trade snapshots for building MarketSnapshot.
     let mut latest_books: HashMap<(Exchange, String), OrderBook> = HashMap::new();
     let mut latest_trades: HashMap<(Exchange, String), Trade> = HashMap::new();
+    // Track last order book receive time per exchange for disconnect detection.
+    let mut last_book_time: HashMap<Exchange, chrono::DateTime<Utc>> = HashMap::new();
 
     // Graceful shutdown signal.
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
@@ -634,6 +676,7 @@ async fn main() -> Result<()> {
                     let _ = broadcast_tx.try_send(tick_msg);
                 }
 
+                last_book_time.insert(book.exchange, Utc::now());
                 latest_books.insert(key, book);
             }
 
@@ -661,6 +704,7 @@ async fn main() -> Result<()> {
                     &api_state,
                     event_publisher.as_ref(),
                     &mut strategy_metrics_tracker,
+                    &pnl_limit_check,
                 ).await;
             }
 
@@ -686,8 +730,21 @@ async fn main() -> Result<()> {
                     current_daily_pnl,
                 );
 
+                // Build exchange connectivity states from last book timestamps.
+                let exchange_states: Vec<ExchangeState> = subscribed_pairs
+                    .iter()
+                    .map(|(exchange, _)| {
+                        let last_msg = last_book_time.get(exchange).copied();
+                        ExchangeState {
+                            exchange: *exchange,
+                            connected: last_msg.is_some(),
+                            last_message_at: last_msg,
+                        }
+                    })
+                    .collect();
+
                 // Check kill switch triggers.
-                if let Some(activation) = kill_switch.check_triggers(&portfolio_risk, &[]) {
+                if let Some(activation) = kill_switch.check_triggers(&portfolio_risk, &exchange_states) {
                     error!(
                         reason = %activation.trigger,
                         "kill switch activated — cancelling all orders"
@@ -810,15 +867,24 @@ async fn main() -> Result<()> {
                                             None
                                         }
                                         RiskAction::ReduceSize { max_quantity, reason } => {
-                                            info!(
-                                                max_quantity = %max_quantity,
-                                                reason = %reason,
-                                                "risk engine reducing order size"
-                                            );
-                                            strategy_metrics_tracker.on_order_placed(&new_order.strategy_id);
-                                            let mut reduced = new_order.clone();
-                                            reduced.quantity = max_quantity;
-                                            Some(OrderAction::Place(reduced))
+                                            if max_quantity <= Decimal::ZERO {
+                                                warn!(
+                                                    reason = %reason,
+                                                    "risk engine reduced order to zero quantity, dropping"
+                                                );
+                                                strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
+                                                None
+                                            } else {
+                                                info!(
+                                                    max_quantity = %max_quantity,
+                                                    reason = %reason,
+                                                    "risk engine reducing order size"
+                                                );
+                                                strategy_metrics_tracker.on_order_placed(&new_order.strategy_id);
+                                                let mut reduced = new_order.clone();
+                                                reduced.quantity = max_quantity;
+                                                Some(OrderAction::Place(reduced))
+                                            }
                                         }
                                         RiskAction::KillSwitch { reason } => {
                                             error!(
@@ -1012,6 +1078,7 @@ async fn handle_order_update(
     _api_state: &Arc<ApiState>,
     event_publisher: Option<&Arc<dyn EventPublisher>>,
     strategy_metrics_tracker: &mut StrategyMetricsTracker,
+    pnl_limit_check: &Arc<PnlLimitCheck>,
 ) {
     // Apply the update to the OMS.
     let updated_order = order_manager.update_order(update);
@@ -1029,7 +1096,7 @@ async fn handle_order_update(
                 (update.last_fill_price, update.last_fill_quantity)
             {
                 let fill = Fill {
-                    fill_id: format!("{}-{}", update.client_order_id, Utc::now().timestamp_millis()),
+                    fill_id: Uuid::new_v4().to_string(),
                     client_order_id: update.client_order_id.clone(),
                     exchange_order_id: update
                         .exchange_order_id
@@ -1051,12 +1118,21 @@ async fn handle_order_update(
                     let pos = pos_map
                         .entry((update.exchange, update.symbol.clone()))
                         .or_insert_with(|| Position::new(update.exchange, update.symbol.clone()));
+                    let prev_realized = pos.realized_pnl;
                     pos.update_on_fill(&fill);
 
-                    // Track realized PnL.
-                    let realized = pos.realized_pnl;
+                    // Accumulate the realized PnL delta from this fill.
+                    let realized_delta = pos.realized_pnl - prev_realized;
                     drop(pos_map);
-                    *daily_pnl.write().await = realized;
+                    if realized_delta != Decimal::ZERO {
+                        *daily_pnl.write().await += realized_delta;
+                    }
+
+                    // Feed realized PnL delta into the PnlLimitCheck's internal
+                    // tracker so drawdown / daily-loss checks work correctly.
+                    if realized_delta != Decimal::ZERO {
+                        pnl_limit_check.record_pnl(realized_delta);
+                    }
                 }
 
                 // Route fill to strategy.

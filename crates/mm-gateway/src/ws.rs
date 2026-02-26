@@ -277,7 +277,6 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<WsState>) {
 
     // Receive loop: handle client commands (subscribe / unsubscribe / ping).
     let subs_clone = subscriptions.clone();
-    let broadcaster = state.broadcaster.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(result) = ws_stream.next().await {
             let msg = match result {
@@ -290,7 +289,7 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<WsState>) {
 
             match msg {
                 Message::Text(text) => {
-                    handle_client_message(&text, &subs_clone, &broadcaster).await;
+                    handle_client_message(&text, &subs_clone).await;
                 }
                 Message::Close(_) => {
                     debug!("WebSocket client sent Close frame");
@@ -320,18 +319,15 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<WsState>) {
 async fn handle_client_message(
     text: &str,
     subscriptions: &Arc<RwLock<HashSet<Channel>>>,
-    broadcaster: &Arc<DashboardBroadcaster>,
 ) {
     let parsed: ClientMessage = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {
             debug!("invalid client message: {e}");
-            let err = ServerMessage::Error {
-                message: format!("invalid message: {e}"),
-            };
-            let _ = broadcaster
-                .broadcast_tx
-                .send(err);
+            // Note: error is logged but not sent back to any client.
+            // The sender's ws_sink is owned by the send_task, so we can't
+            // reply directly here. Broadcasting errors to all clients would
+            // be a security issue.
             return;
         }
     };

@@ -265,8 +265,8 @@ impl RollingVolatility {
 /// Convert a `Decimal` to `f64`. Uses `to_string` + parse as a fallback-safe
 /// approach that avoids precision issues in `TryInto` for extreme values.
 fn decimal_to_f64(d: Decimal) -> f64 {
-    use std::str::FromStr;
-    f64::from_str(&d.to_string()).unwrap_or(0.0)
+    use rust_decimal::prelude::ToPrimitive;
+    d.to_f64().unwrap_or(0.0)
 }
 
 // ---------------------------------------------------------------------------

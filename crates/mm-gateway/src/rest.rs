@@ -134,6 +134,9 @@ pub struct ApiState {
     /// Whether the global kill-switch is currently active.
     pub kill_switch_active: Mutex<bool>,
 
+    /// Optional reference to the real AtomicBool kill switch used by the hot path.
+    pub kill_switch: Option<Arc<mm_risk::KillSwitch>>,
+
     /// Optional Prometheus metrics registry.
     pub metrics: Option<Arc<MetricsRegistry>>,
 
@@ -178,6 +181,7 @@ impl ApiState {
             strategies: RwLock::new(Vec::new()),
             order_books: RwLock::new(HashMap::new()),
             kill_switch_active: Mutex::new(false),
+            kill_switch: None,
             metrics: None,
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
@@ -195,6 +199,7 @@ impl ApiState {
             strategies: RwLock::new(Vec::new()),
             order_books: RwLock::new(HashMap::new()),
             kill_switch_active: Mutex::new(false),
+            kill_switch: None,
             metrics: Some(metrics),
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
@@ -215,6 +220,30 @@ impl ApiState {
             strategies: RwLock::new(Vec::new()),
             order_books: RwLock::new(HashMap::new()),
             kill_switch_active: Mutex::new(false),
+            kill_switch: None,
+            metrics: Some(metrics),
+            strategy_metrics: RwLock::new(HashMap::new()),
+            optimization_jobs: RwLock::new(HashMap::new()),
+            assistant_config: AssistantConfig::from_env(),
+            strategy_engine: Some(engine),
+        })
+    }
+
+    /// Create state with a Prometheus metrics registry, a shared strategy engine,
+    /// and a reference to the real AtomicBool kill switch.
+    pub fn with_engine_and_kill_switch(
+        metrics: Arc<MetricsRegistry>,
+        engine: Arc<Mutex<StrategyEngine>>,
+        kill_switch: Arc<mm_risk::KillSwitch>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            positions: RwLock::new(Vec::new()),
+            orders: RwLock::new(Vec::new()),
+            portfolio_risk: RwLock::new(None),
+            strategies: RwLock::new(Vec::new()),
+            order_books: RwLock::new(HashMap::new()),
+            kill_switch_active: Mutex::new(false),
+            kill_switch: Some(kill_switch),
             metrics: Some(metrics),
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
@@ -233,6 +262,7 @@ impl Default for ApiState {
             strategies: RwLock::new(Vec::new()),
             order_books: RwLock::new(HashMap::new()),
             kill_switch_active: Mutex::new(false),
+            kill_switch: None,
             metrics: None,
             strategy_metrics: RwLock::new(HashMap::new()),
             optimization_jobs: RwLock::new(HashMap::new()),
@@ -728,6 +758,11 @@ async fn activate_kill_switch(
 ) -> impl IntoResponse {
     let mut ks = state.kill_switch_active.lock().await;
     *ks = true;
+    if let Some(ref ks_real) = state.kill_switch {
+        ks_real.activate(mm_risk::KillSwitchTrigger::ManualActivation {
+            operator: "REST API".to_string(),
+        });
+    }
     warn!("KILL SWITCH activated via REST API");
 
     // Also mark all strategies as stopped.
@@ -751,6 +786,9 @@ async fn reset_kill_switch(
 ) -> impl IntoResponse {
     let mut ks = state.kill_switch_active.lock().await;
     *ks = false;
+    if let Some(ref ks_real) = state.kill_switch {
+        ks_real.reset();
+    }
     info!("Kill switch reset via REST API");
 
     ApiResponse::ok(KillSwitchResponse {

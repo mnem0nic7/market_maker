@@ -100,7 +100,9 @@ fn kill_switch_can_be_manually_activated_and_checked() {
     assert!(!kill_switch.is_active());
 
     // Manually activate.
-    let activation = kill_switch.activate(KillSwitchTrigger::ManualActivation);
+    let activation = kill_switch.activate(KillSwitchTrigger::ManualActivation {
+        operator: "test_operator".to_string(),
+    });
     assert!(kill_switch.is_active());
     assert!(!activation.cancel_messages.is_empty());
 }

@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use axum::extract::Request;
+use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
+use axum::http::{HeaderValue, StatusCode};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -24,6 +28,16 @@ pub struct GatewayConfig {
 
     /// TCP port to listen on.
     pub port: u16,
+
+    /// Allowed CORS origins. If empty, falls back to wildcard (`*`).
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+
+    /// Optional API bearer token. If set, all REST endpoints require
+    /// `Authorization: Bearer <token>` header. If empty/None, auth is disabled.
+    /// Health and WebSocket endpoints are exempt from authentication.
+    #[serde(default)]
+    pub api_token: Option<String>,
 }
 
 impl Default for GatewayConfig {
@@ -31,6 +45,11 @@ impl Default for GatewayConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: 8080,
+            cors_origins: vec![
+                "http://127.0.0.1:3000".to_string(),
+                "http://localhost:3000".to_string(),
+            ],
+            api_token: None,
         }
     }
 }
@@ -92,11 +111,22 @@ impl GatewayServer {
 
     /// Build the composed [`Router`] with all middleware applied.
     pub fn build_router(&self) -> Router {
-        // CORS — permissive for dashboard dev; tighten in production.
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
+        // CORS — restrict to configured origins; fall back to wildcard if empty.
+        let cors = if self.config.cors_origins.is_empty() {
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        } else {
+            let origins: Vec<HeaderValue> = self.config.cors_origins
+                .iter()
+                .filter_map(|o| o.parse().ok())
+                .collect();
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        };
 
         // Tracing layer logs each request/response cycle.
         let trace_layer = TraceLayer::new_for_http();
@@ -105,9 +135,46 @@ impl GatewayServer {
         let rest = rest::rest_router(self.state.clone());
         let ws = ws::ws_router(self.state.clone(), self.broadcaster.clone());
 
-        rest.merge(ws)
-            .layer(cors)
-            .layer(trace_layer)
+        // Layer order in axum: last added = first executed (outermost).
+        // trace_layer → cors → auth_layer → handler
+        // This ensures CORS preflight OPTIONS requests are handled before auth.
+        if let Some(ref token) = self.config.api_token {
+            let expected = format!("Bearer {}", token);
+            info!("API bearer-token authentication enabled");
+            let auth_layer = middleware::from_fn(move |req: Request, next: Next| {
+                let expected = expected.clone();
+                async move {
+                    let path = req.uri().path().to_string();
+                    // Skip auth for health check, metrics, and WebSocket upgrade
+                    if path == "/api/v1/health" || path == "/api/v1/ws" || path == "/metrics" {
+                        return next.run(req).await;
+                    }
+                    match req
+                        .headers()
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                    {
+                        Some(v) if v == expected => next.run(req).await,
+                        _ => (
+                            StatusCode::UNAUTHORIZED,
+                            axum::Json(serde_json::json!({
+                                "status": "error",
+                                "error": "missing or invalid bearer token"
+                            })),
+                        )
+                            .into_response(),
+                    }
+                }
+            });
+            rest.merge(ws)
+                .layer(auth_layer)
+                .layer(cors)
+                .layer(trace_layer)
+        } else {
+            rest.merge(ws)
+                .layer(cors)
+                .layer(trace_layer)
+        }
     }
 
     /// Start listening and serving requests.
