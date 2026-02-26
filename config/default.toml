@@ -200,6 +200,8 @@ port = 8080
 cors_origins = []
 # Bearer token for API authentication (empty = no auth).
 api_token = ""
+# Maximum API requests per second (global rate limit). Set to 0 to disable.
+rate_limit_rps = 100
 
 # =============================================================================
 # Main trading loop

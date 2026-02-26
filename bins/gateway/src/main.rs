@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
             "http://localhost:3000".to_string(),
         ],
         api_token: cfg.api_token,
+        rate_limit_rps: Some(100),
     };
 
     // Create the shared API state with defaults (empty collections).

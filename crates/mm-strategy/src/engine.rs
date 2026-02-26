@@ -3,7 +3,20 @@ use std::collections::HashMap;
 use mm_core::events::OrderUpdate;
 use mm_core::traits::Strategy;
 use mm_core::types::{Fill, MarketSnapshot, OrderAction};
+use mm_core::StrategyConfig;
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+use crate::build_strategy_from_config;
+
+/// A request to hot-update a running strategy's parameters.
+#[derive(Debug, Clone)]
+pub struct StrategyParamUpdate {
+    /// The strategy_id of the strategy to update.
+    pub strategy_id: String,
+    /// The full StrategyConfig with the new parameters applied.
+    pub config: StrategyConfig,
+}
 
 /// The strategy engine manages a collection of strategies and routes market data,
 /// fills, and order updates to the appropriate strategy instances.
@@ -12,6 +25,8 @@ pub struct StrategyEngine {
     strategies: Vec<Box<dyn Strategy>>,
     /// Maps strategy_id -> index into the strategies vec for routing.
     id_index: HashMap<String, usize>,
+    /// Receiver for hot parameter updates from the API layer.
+    param_update_rx: Option<mpsc::Receiver<StrategyParamUpdate>>,
 }
 
 impl StrategyEngine {
@@ -20,7 +35,13 @@ impl StrategyEngine {
         Self {
             strategies: Vec::new(),
             id_index: HashMap::new(),
+            param_update_rx: None,
         }
+    }
+
+    /// Attach a parameter update receiver to enable hot updates.
+    pub fn set_param_update_receiver(&mut self, rx: mpsc::Receiver<StrategyParamUpdate>) {
+        self.param_update_rx = Some(rx);
     }
 
     /// Add a strategy to the engine. Returns an error if a strategy with the
@@ -153,6 +174,60 @@ impl StrategyEngine {
             all_actions.extend(actions);
         }
         all_actions
+    }
+
+    /// Check the parameter update channel (non-blocking) and apply any pending
+    /// updates. For each update, builds a new strategy instance from the config.
+    /// If the build succeeds, the old strategy is replaced. If it fails, the old
+    /// strategy is kept and a warning is logged.
+    pub fn try_apply_updates(&mut self) {
+        let rx = match self.param_update_rx.as_mut() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        // Drain all pending updates in a non-blocking fashion.
+        loop {
+            match rx.try_recv() {
+                Ok(update) => {
+                    let strategy_id = &update.strategy_id;
+
+                    let index = match self.id_index.get(strategy_id) {
+                        Some(&idx) => idx,
+                        None => {
+                            warn!(
+                                strategy_id = %strategy_id,
+                                "param update for unknown strategy, ignoring"
+                            );
+                            continue;
+                        }
+                    };
+
+                    match build_strategy_from_config(&update.config) {
+                        Ok(new_strategy) => {
+                            info!(
+                                strategy_id = %strategy_id,
+                                strategy_type = %update.config.strategy_type,
+                                "hot-updating strategy parameters"
+                            );
+                            self.strategies[index] = new_strategy;
+                        }
+                        Err(e) => {
+                            warn!(
+                                strategy_id = %strategy_id,
+                                error = %e,
+                                "failed to build strategy with new params, keeping old strategy"
+                            );
+                        }
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    debug!("param update channel disconnected");
+                    break;
+                }
+            }
+        }
     }
 
     /// Return the number of registered strategies.
@@ -466,5 +541,123 @@ mod tests {
 
         assert_eq!(engine.strategy_count(), 3);
         assert_eq!(engine.active_count(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Hot parameter update tests
+    // -----------------------------------------------------------------------
+
+    /// Helper to create a valid StrategyConfig with spread params.
+    fn make_spread_config(strategy_id: &str, spread_bps: u32) -> mm_core::StrategyConfig {
+        mm_core::StrategyConfig {
+            strategy_id: strategy_id.to_string(),
+            strategy_type: "spread".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            enabled: true,
+            params: serde_json::json!({
+                "spread_bps": spread_bps,
+                "order_size": "0.1",
+                "num_levels": 1,
+                "refresh_interval_ms": 1000,
+                "min_spread_bps": "1",
+                "reprice_threshold_bps": "100"
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_try_apply_updates_replaces_strategy() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let mut engine = StrategyEngine::new();
+        engine.set_param_update_receiver(rx);
+
+        // Build and add a strategy from config.
+        let config = make_spread_config("s1", 10);
+        let strategy = crate::build_strategy_from_config(&config).unwrap();
+        engine.add_strategy(strategy).unwrap();
+
+        assert_eq!(engine.strategy_count(), 1);
+        assert!(engine.has_strategy("s1"));
+
+        // Send an update with new params.
+        let new_config = make_spread_config("s1", 20);
+        tx.send(super::StrategyParamUpdate {
+            strategy_id: "s1".to_string(),
+            config: new_config,
+        })
+        .await
+        .unwrap();
+
+        // Apply updates — should replace the strategy.
+        engine.try_apply_updates();
+
+        // Strategy should still exist with the same id.
+        assert_eq!(engine.strategy_count(), 1);
+        assert!(engine.has_strategy("s1"));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_update_keeps_old_strategy() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let mut engine = StrategyEngine::new();
+        engine.set_param_update_receiver(rx);
+
+        // Build and add a valid strategy.
+        let config = make_spread_config("s1", 10);
+        let strategy = crate::build_strategy_from_config(&config).unwrap();
+        engine.add_strategy(strategy).unwrap();
+
+        // Send an update with invalid params (unsupported strategy type).
+        let bad_config = mm_core::StrategyConfig {
+            strategy_id: "s1".to_string(),
+            strategy_type: "nonexistent_type".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            enabled: true,
+            params: serde_json::json!({}),
+        };
+
+        tx.send(super::StrategyParamUpdate {
+            strategy_id: "s1".to_string(),
+            config: bad_config,
+        })
+        .await
+        .unwrap();
+
+        // Apply updates — should fail and keep the old strategy.
+        engine.try_apply_updates();
+
+        // Strategy should still exist (old one kept).
+        assert_eq!(engine.strategy_count(), 1);
+        assert!(engine.has_strategy("s1"));
+    }
+
+    #[tokio::test]
+    async fn test_update_unknown_strategy_ignored() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let mut engine = StrategyEngine::new();
+        engine.set_param_update_receiver(rx);
+
+        // Send an update for a strategy that doesn't exist.
+        let config = make_spread_config("nonexistent", 10);
+        tx.send(super::StrategyParamUpdate {
+            strategy_id: "nonexistent".to_string(),
+            config,
+        })
+        .await
+        .unwrap();
+
+        // Should not panic — just ignore the update.
+        engine.try_apply_updates();
+
+        assert_eq!(engine.strategy_count(), 0);
+    }
+
+    #[test]
+    fn test_try_apply_updates_no_receiver() {
+        let mut engine = StrategyEngine::new();
+        // No receiver attached — should be a no-op.
+        engine.try_apply_updates();
     }
 }
