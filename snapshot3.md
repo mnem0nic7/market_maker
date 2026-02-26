@@ -1,0 +1,919 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - heading "MARKET MAKER" [level=1] [ref=e4]
+      - generic [ref=e6]: CONNECTED
+    - generic [ref=e10]:
+      - generic [ref=e12]:
+        - generic [ref=e14]: Market Data
+        - table [ref=e155]:
+          - rowgroup [ref=e156]:
+            - row "Symbol Exchange Bid Ask Mid Spread" [ref=e157]:
+              - columnheader "Symbol" [ref=e158]
+              - columnheader "Exchange" [ref=e159]
+              - columnheader "Bid" [ref=e160]
+              - columnheader "Ask" [ref=e161]
+              - columnheader "Mid" [ref=e162]
+              - columnheader "Spread" [ref=e163]
+          - rowgroup [ref=e164]:
+            - row "BTC/USD Coinbase 68456.03 68474.19 68465.11 2.7 bps" [ref=e797]:
+              - cell "BTC/USD" [ref=e166]
+              - cell "Coinbase" [ref=e167]
+              - cell "68456.03" [ref=e798]
+              - cell "68474.19" [ref=e799]
+              - cell "68465.11" [ref=e800]
+              - cell "2.7 bps" [ref=e801]
+            - row "ETH/USD Coinbase 2091.6 2116.57 2104.0850 118.7 bps" [ref=e802]:
+              - cell "ETH/USD" [ref=e173]
+              - cell "Coinbase" [ref=e174]
+              - cell "2091.6" [ref=e803]
+              - cell "2116.57" [ref=e804]
+              - cell "2104.0850" [ref=e805]
+              - cell "118.7 bps" [ref=e806]
+            - row "ETH/USDT Binance 2090.64000000 2091.34000000 2090.99000000 3.3 bps" [ref=e1086]:
+              - cell "ETH/USDT" [ref=e180]
+              - cell "Binance" [ref=e181]
+              - cell "2090.64000000" [ref=e1087]
+              - cell "2091.34000000" [ref=e1088]
+              - cell "2090.99000000" [ref=e1089]
+              - cell "3.3 bps" [ref=e1090]
+            - row "BTC/USDT Binance 68506.75000000 68528.49000000 68517.62000000 3.2 bps" [ref=e1091]:
+              - cell "BTC/USDT" [ref=e187]
+              - cell "Binance" [ref=e188]
+              - cell "68506.75000000" [ref=e1092]
+              - cell "68528.49000000" [ref=e1093]
+              - cell "68517.62000000" [ref=e1094]
+              - cell "3.2 bps" [ref=e1095]
+            - row "ETH/USD Kraken 2090.27 2092.95 2091.61 12.8 bps" [ref=e976]:
+              - cell "ETH/USD" [ref=e194]
+              - cell "Kraken" [ref=e195]
+              - cell "2090.27" [ref=e977]
+              - cell "2092.95" [ref=e978]
+              - cell "2091.61" [ref=e979]
+              - cell "12.8 bps" [ref=e980]
+            - row "BTC/USD Kraken 68493.2 68563.8 68528.5 10.3 bps" [ref=e1096]:
+              - cell "BTC/USD" [ref=e688]
+              - cell "Kraken" [ref=e689]
+              - cell "68493.2" [ref=e1097]
+              - cell "68563.8" [ref=e1098]
+              - cell "68528.5" [ref=e1099]
+              - cell "10.3 bps" [ref=e1100]
+      - generic [ref=e19]:
+        - generic [ref=e21]: Positions & PnL
+        - generic [ref=e23]:
+          - generic [ref=e24]:
+            - generic [ref=e25]: "Positions: 0"
+            - generic [ref=e26]: "Unrealized: 0.0000"
+            - generic [ref=e27]: "Realized: 0.0000"
+          - paragraph [ref=e28]: No open positions
+      - generic [ref=e31]:
+        - generic [ref=e33]: Order Book
+        - generic [ref=e35]:
+          - combobox [ref=e36]:
+            - option "Coinbase:BTC/USD" [selected]
+            - option "Coinbase:ETH/USD"
+            - option "Binance:ETH/USDT"
+            - option "Binance:BTC/USDT"
+            - option "Kraken:ETH/USD"
+            - option "Kraken:BTC/USD"
+          - generic [ref=e200]:
+            - generic [ref=e201]:
+              - generic [ref=e202]: ASKS
+              - generic [ref=e827]:
+                - generic [ref=e829]: "69775.2"
+                - generic [ref=e830]: "0.0934"
+              - generic [ref=e831]:
+                - generic [ref=e833]: "68917.48"
+                - generic [ref=e834]: "0.0934"
+              - generic [ref=e835]:
+                - generic [ref=e837]: "68606.76"
+                - generic [ref=e838]: "0.0740"
+              - generic [ref=e839]:
+                - generic [ref=e841]: "68548.66"
+                - generic [ref=e842]: "1.0226"
+              - generic [ref=e843]:
+                - generic [ref=e844]: "68540.47"
+                - generic [ref=e845]: "0.0000"
+              - generic [ref=e846]:
+                - generic [ref=e848]: "68524.03"
+                - generic [ref=e849]: "0.6884"
+              - generic [ref=e850]:
+                - generic [ref=e852]: "68520"
+                - generic [ref=e853]: "0.0010"
+              - generic [ref=e854]:
+                - generic [ref=e856]: "68490.33"
+                - generic [ref=e857]: "0.0338"
+              - generic [ref=e858]:
+                - generic [ref=e859]: "68490.32"
+                - generic [ref=e860]: "0.0000"
+              - generic [ref=e861]:
+                - generic [ref=e863]: "68490.31"
+                - generic [ref=e864]: "0.2779"
+              - generic [ref=e865]:
+                - generic [ref=e867]: "68490.3"
+                - generic [ref=e868]: "0.2531"
+              - generic [ref=e869]:
+                - generic [ref=e870]: "68475.29"
+                - generic [ref=e871]: "0.0000"
+              - generic [ref=e872]:
+                - generic [ref=e874]: "68474.19"
+                - generic [ref=e875]: "0.0730"
+            - generic [ref=e208]: "Spread: 18.1600"
+            - generic [ref=e209]:
+              - generic [ref=e210]: BIDS
+              - generic [ref=e876]:
+                - generic [ref=e878]: "68456.03"
+                - generic [ref=e879]: "0.0436"
+              - generic [ref=e880]:
+                - generic [ref=e882]: "68456.02"
+                - generic [ref=e883]: "0.0731"
+              - generic [ref=e884]:
+                - generic [ref=e886]: "68455.75"
+                - generic [ref=e887]: "0.0872"
+              - generic [ref=e888]:
+                - generic [ref=e889]: "68455.54"
+                - generic [ref=e890]: "0.0000"
+              - generic [ref=e891]:
+                - generic [ref=e893]: "68447.79"
+                - generic [ref=e894]: "0.0040"
+              - generic [ref=e895]:
+                - generic [ref=e897]: "68445.38"
+                - generic [ref=e898]: "0.2283"
+              - generic [ref=e899]:
+                - generic [ref=e901]: "68445.37"
+                - generic [ref=e902]: "0.1852"
+              - generic [ref=e903]:
+                - generic [ref=e904]: "68445.36"
+                - generic [ref=e905]: "0.0000"
+              - generic [ref=e906]:
+                - generic [ref=e907]: "68445.35"
+                - generic [ref=e908]: "0.0000"
+              - generic [ref=e909]:
+                - generic [ref=e910]: "68445.34"
+                - generic [ref=e911]: "0.0000"
+              - generic [ref=e912]:
+                - generic [ref=e913]: "68445.33"
+                - generic [ref=e914]: "0.0000"
+              - generic [ref=e915]:
+                - generic [ref=e917]: "68440.78"
+                - generic [ref=e918]: "0.0526"
+              - generic [ref=e919]:
+                - generic [ref=e921]: "68436.02"
+                - generic [ref=e922]: "0.6133"
+              - generic [ref=e923]:
+                - generic [ref=e925]: "68434.64"
+                - generic [ref=e926]: "0.0015"
+              - generic [ref=e927]:
+                - generic [ref=e928]: "68434.23"
+                - generic [ref=e929]: "0.0000"
+      - generic [ref=e40]:
+        - generic [ref=e42]: Order Entry
+        - generic [ref=e44]:
+          - generic [ref=e45]:
+            - generic [ref=e46]: Exchange
+            - combobox [ref=e47]:
+              - option "Binance" [selected]
+              - option "Coinbase"
+              - option "Kraken"
+              - option "Alpaca"
+              - option "Simulated"
+          - generic [ref=e48]:
+            - generic [ref=e49]: Symbol
+            - textbox "BTC/USDT" [ref=e50]
+          - generic [ref=e51]:
+            - generic [ref=e52]: Side
+            - generic [ref=e53]:
+              - button "BUY" [ref=e54]
+              - button "SELL" [ref=e55]
+          - generic [ref=e56]:
+            - generic [ref=e57]: Order Type
+            - generic [ref=e58]:
+              - button "LIMIT" [ref=e59]
+              - button "MARKET" [ref=e60]
+          - generic [ref=e61]:
+            - generic [ref=e62]: Price
+            - textbox "0.00" [ref=e63]
+          - generic [ref=e64]:
+            - generic [ref=e65]: Quantity
+            - textbox "0.00" [ref=e66]
+          - button "BUY ..." [ref=e67]
+      - generic [ref=e70]:
+        - generic [ref=e72]: Strategies
+        - paragraph [ref=e74]: No strategies configured
+      - generic [ref=e77]:
+        - generic [ref=e79]: Price Chart
+        - generic [ref=e81]:
+          - combobox [ref=e82]:
+            - option "Coinbase:BTC/USD" [selected]
+            - option "Coinbase:ETH/USD"
+            - option "Binance:ETH/USDT"
+            - option "Binance:BTC/USDT"
+            - option "Kraken:ETH/USD"
+            - option "Kraken:BTC/USD"
+          - table [ref=e219]:
+            - row [ref=e220]:
+              - cell
+              - cell [ref=e221]:
+                - link "Charting by TradingView" [ref=e225] [cursor=pointer]:
+                  - /url: https://www.tradingview.com/?utm_medium=lwc-link&utm_campaign=lwc-chart&utm_source=localhost/
+                  - img [ref=e226]
+              - cell [ref=e230]
+            - row [ref=e234]:
+              - cell
+              - cell [ref=e235]
+              - cell [ref=e239]
+      - generic [ref=e87]:
+        - generic [ref=e89]: Risk Dashboard
+        - generic [ref=e91]:
+          - paragraph [ref=e93]: No risk data available
+          - generic [ref=e94]:
+            - generic [ref=e95]: Emergency Kill Switch
+            - button "ACTIVATE KILL SWITCH" [ref=e96]
+      - generic [ref=e99]:
+        - generic [ref=e101]: Active Orders
+        - paragraph [ref=e103]: No orders
+      - generic [ref=e106]:
+        - generic [ref=e108]: Event Log
+        - generic [ref=e110]:
+          - generic [ref=e111]:
+            - button "ALL" [ref=e112]
+            - button "MarketDataTick" [ref=e113]
+            - button "Order" [ref=e114]
+            - button "Position" [ref=e115]
+            - button "Risk" [ref=e116]
+            - button "Error" [ref=e117]
+          - generic [ref=e242]:
+            - generic [ref=e243]:
+              - generic [ref=e244]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.64000000 ask=2091.34000000 spread=3.3476965456554072472847790000bps
+            - generic [ref=e245]:
+              - generic [ref=e246]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.07000000 ask=2091.34000000 spread=6.0745059680825367519568760000bps
+            - generic [ref=e247]:
+              - generic [ref=e248]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.77000000 ask=2091.33000000 spread=2.6780803902345711484660820000bps
+            - generic [ref=e249]:
+              - generic [ref=e250]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68506.75000000 ask=68528.49000000 spread=3.1729064728167732621185620000bps
+            - generic [ref=e251]:
+              - generic [ref=e252]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.60000000 ask=2091.33000000 spread=3.4912109958798927767800990000bps
+            - generic [ref=e253]:
+              - generic [ref=e254]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.38000000 ask=2090.26000000 spread=-0.5740747828083738374985650000bps
+            - generic [ref=e255]:
+              - generic [ref=e256]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68466.34000000 ask=68543.48000000 spread=11.260506728641786406259055000bps
+            - generic [ref=e257]:
+              - generic [ref=e258]: "[MarketDataTick]"
+              - text: Kraken BTC/USD bid=68493.2 ask=68563.8 spread=10.302282991747958878422846000bps
+            - generic [ref=e259]:
+              - generic [ref=e260]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68506.75000000 ask=68513.89000000 spread=1.042178754967134878365770000bps
+            - generic [ref=e261]:
+              - generic [ref=e262]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.13000000 ask=2090.67000000 spread=2.5832376578645235361653270000bps
+            - generic [ref=e263]:
+              - generic [ref=e264]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.92000000 ask=2090.67000000 spread=3.5880103047655952867896640000bps
+            - generic [ref=e265]:
+              - generic [ref=e266]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68498.47000000 ask=68514.98000000 spread=2.4099823776424869237290210000bps
+            - generic [ref=e267]:
+              - generic [ref=e268]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.13000000 ask=2090.64000000 spread=2.4397419614090227398302230000bps
+            - generic [ref=e269]:
+              - generic [ref=e270]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68461.75000000 ask=68653.40000000 spread=27.954606037334313531363967000bps
+            - generic [ref=e271]:
+              - generic [ref=e272]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68317.02000000 ask=68499.28000000 spread=26.643024259536327177390413000bps
+            - generic [ref=e273]:
+              - generic [ref=e274]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.97000000 ask=2090.58000000 spread=2.9182763033572137637392210000bps
+            - generic [ref=e275]:
+              - generic [ref=e276]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.82000000 ask=2090.59000000 spread=3.6838491918256821699307010000bps
+            - generic [ref=e277]:
+              - generic [ref=e278]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68495.42000000 ask=68496.60000000 spread=0.172272808299344735554670000bps
+            - generic [ref=e279]:
+              - generic [ref=e280]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68466.32000000 ask=68509.23000000 spread=6.265351736131010242338870000bps
+            - generic [ref=e281]:
+              - generic [ref=e282]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.82000000 ask=2090.47000000 spread=3.1098320929887639374301780000bps
+            - generic [ref=e283]:
+              - generic [ref=e284]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68489.38000000 ask=68496.61000000 spread=1.0555823993387936970780730000bps
+            - generic [ref=e285]:
+              - generic [ref=e286]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68480.90000000 ask=85584.23000000 spread=2220.2726859737826463392462660bps
+            - generic [ref=e287]:
+              - generic [ref=e288]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68480.90000000 ask=68503.50000000 spread=3.2996457990836912816349890000bps
+            - generic [ref=e289]:
+              - generic [ref=e290]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.65000000 ask=2090.44000000 spread=3.7798229224729611084928790000bps
+            - generic [ref=e291]:
+              - generic [ref=e292]: "[MarketDataTick]"
+              - text: Kraken BTC/USD bid=68469.7 ask=68542.4 spread=10.612201404109564045803254000bps
+            - generic [ref=e293]:
+              - generic [ref=e294]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.69000000 ask=2090.47000000 spread=3.7319145678634310648396230000bps
+            - generic [ref=e295]:
+              - generic [ref=e296]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68494.52000000 ask=68504.66000000 spread=1.4803008309976745846216010000bps
+            - generic [ref=e297]:
+              - generic [ref=e298]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68489.10000000 ask=68503.51000000 spread=2.1037631153972466106018420000bps
+            - generic [ref=e299]:
+              - generic [ref=e300]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.25000000 ask=2090.91000000 spread=3.1570186264098958183853280000bps
+            - generic [ref=e301]:
+              - generic [ref=e302]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68495.26000000 ask=68514.48000000 spread=2.8056399493933788940844640000bps
+            - generic [ref=e303]:
+              - generic [ref=e304]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68433.68000000 ask=68658.88000000 spread=32.853715766924186111923215000bps
+            - generic [ref=e305]:
+              - generic [ref=e306]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68494.52000000 ask=68563.62000000 spread=10.083312089307501181615335000bps
+            - generic [ref=e307]:
+              - generic [ref=e308]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68461.75000000 ask=68658.86000000 spread=28.749872101648322597164642000bps
+            - generic [ref=e309]:
+              - generic [ref=e310]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68485.60000000 ask=68511.61000000 spread=3.7971576209471711139226850000bps
+            - generic [ref=e311]:
+              - generic [ref=e312]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68480.90000000 ask=68509.30000000 spread=4.1462819968143706630109310000bps
+            - generic [ref=e313]:
+              - generic [ref=e314]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.41000000 ask=2090.95000000 spread=2.5828916907417682285189510000bps
+            - generic [ref=e315]:
+              - generic [ref=e316]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68495.26000000 ask=68514.88000000 spread=2.8640215972336062133795350000bps
+            - generic [ref=e317]:
+              - generic [ref=e318]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.69000000 ask=2091.03000000 spread=6.4103790734610306358713330000bps
+            - generic [ref=e319]:
+              - generic [ref=e320]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68485.61000000 ask=68502.89000000 spread=2.522839508425889764469280000bps
+            - generic [ref=e321]:
+              - generic [ref=e322]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.28000000 ask=2090.51000000 spread=1.1002705230351201567167930000bps
+            - generic [ref=e323]:
+              - generic [ref=e324]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68466.90000000 ask=68519.10000000 spread=7.6212167666768866891507160000bps
+            - generic [ref=e325]:
+              - generic [ref=e326]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.28000000 ask=2090.84000000 spread=2.6787080973519057094749730000bps
+            - generic [ref=e327]:
+              - generic [ref=e328]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68441.05000000 ask=68680.59000000 spread=34.938321916219788503113002000bps
+            - generic [ref=e329]:
+              - generic [ref=e330]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.10000000 ask=2090.68000000 spread=2.7746018685508445792411940000bps
+            - generic [ref=e331]:
+              - generic [ref=e332]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.93000000 ask=2090.65000000 spread=3.4444981318381659961058040000bps
+            - generic [ref=e333]:
+              - generic [ref=e334]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.44000000 ask=2090.82000000 spread=6.6024601340586470697994860000bps
+            - generic [ref=e335]:
+              - generic [ref=e336]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68485.60000000 ask=68504.67000000 spread=2.7841393406991606046181240000bps
+            - generic [ref=e337]:
+              - generic [ref=e338]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.36000000 ask=2091.14000000 spread=3.7307186416357766351787640000bps
+            - generic [ref=e339]:
+              - generic [ref=e340]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68409.83000000 ask=68632.71000000 spread=32.527126248535673667461213000bps
+            - generic [ref=e341]:
+              - generic [ref=e342]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.17000000 ask=2091.30000000 spread=5.404797834254460751840860000bps
+            - generic [ref=e343]:
+              - generic [ref=e344]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68460.49000000 ask=68473.70000000 spread=1.929393966546996042405480000bps
+            - generic [ref=e345]:
+              - generic [ref=e346]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.17000000 ask=2090.29000000 spread=0.5740995010118503705333860000bps
+            - generic [ref=e347]:
+              - generic [ref=e348]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.85000000 ask=2090.57000000 spread=3.4446299654101740973395020000bps
+            - generic [ref=e349]:
+              - generic [ref=e350]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.01000000 ask=2090.55000000 spread=2.5833859578621045984270050000bps
+            - generic [ref=e351]:
+              - generic [ref=e352]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.85000000 ask=2090.55000000 spread=3.3489618218352310783657070000bps
+            - generic [ref=e353]:
+              - generic [ref=e354]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=64245.85000000 ask=68479.08000000 spread=637.89523189049713569259369700bps
+            - generic [ref=e355]:
+              - generic [ref=e356]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.87000000 ask=2090.52000000 spread=3.1097577020325854764746830000bps
+            - generic [ref=e357]:
+              - generic [ref=e358]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.99000000 ask=2090.52000000 spread=2.535575802952271373588390000bps
+            - generic [ref=e359]:
+              - generic [ref=e360]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.99000000 ask=2090.67000000 spread=3.2530748733453569532083450000bps
+            - generic [ref=e361]:
+              - generic [ref=e362]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2088.93000000 ask=2090.82000000 spread=9.043603086308989772115557000bps
+            - generic [ref=e363]:
+              - generic [ref=e364]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.45000000 ask=2090.82000000 spread=6.5546005401564970683711820000bps
+            - generic [ref=e365]:
+              - generic [ref=e366]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.48000000 ask=2090.17000000 spread=3.3017118658260859162848560000bps
+            - generic [ref=e367]:
+              - generic [ref=e368]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68458.85000000 ask=85584.11000000 spread=2223.4394872703043358813671200bps
+            - generic [ref=e369]:
+              - generic [ref=e370]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.33000000 ask=2090.01000000 spread=3.2541023223762603664693470000bps
+            - generic [ref=e371]:
+              - generic [ref=e372]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68457.94000000 ask=68478.63000000 spread=3.0218370446988704332232070000bps
+            - generic [ref=e373]:
+              - generic [ref=e374]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.50000000 ask=2090.01000000 spread=2.4404774722395687532749050000bps
+            - generic [ref=e375]:
+              - generic [ref=e376]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.50000000 ask=2090.24000000 spread=3.5408901032121615220085460000bps
+            - generic [ref=e377]:
+              - generic [ref=e378]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.25000000 ask=2090.47000000 spread=5.8377116170461179217746640000bps
+            - generic [ref=e379]:
+              - generic [ref=e380]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68386.08000000 ask=68538.56000000 spread=22.272105298213674324796472000bps
+            - generic [ref=e381]:
+              - generic [ref=e382]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.64000000 ask=2090.25000000 spread=2.9187370959522858257035470000bps
+            - generic [ref=e383]:
+              - generic [ref=e384]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68450.45000000 ask=68471.17000000 spread=3.0265490577748057611354580000bps
+            - generic [ref=e385]:
+              - generic [ref=e386]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.91000000 ask=2090.50000000 spread=2.8226896404898084159209260000bps
+            - generic [ref=e387]:
+              - generic [ref=e388]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68450.45000000 ask=68478.53000000 spread=4.1013962128396779118635080000bps
+            - generic [ref=e389]:
+              - generic [ref=e390]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.91000000 ask=2090.72000000 spread=3.8750140529059017420819350000bps
+            - generic [ref=e391]:
+              - generic [ref=e392]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=64245.85000000 ask=68478.64000000 spread=637.83104384126848029327519000bps
+            - generic [ref=e393]:
+              - generic [ref=e394]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68470.64000000 ask=68484.90000000 spread=2.0824276257827905318762570000bps
+            - generic [ref=e395]:
+              - generic [ref=e396]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68464.71000000 ask=68484.17000000 spread=2.8419363488040208872098840000bps
+            - generic [ref=e397]:
+              - generic [ref=e398]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68470.65000000 ask=68490.75000000 spread=2.9351335485764602289404170000bps
+            - generic [ref=e399]:
+              - generic [ref=e400]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.98000000 ask=2090.88000000 spread=4.3053343092091100873982860000bps
+            - generic [ref=e401]:
+              - generic [ref=e402]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.64000000 ask=2093.06000000 spread=16.353073373658163387285725000bps
+            - generic [ref=e403]:
+              - generic [ref=e404]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.98000000 ask=2093.77000000 spread=18.117717358828801912160143000bps
+            - generic [ref=e405]:
+              - generic [ref=e406]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68470.64000000 ask=68496.58000000 spread=3.7877676133019272786583530000bps
+            - generic [ref=e407]:
+              - generic [ref=e408]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.54000000 ask=2091.03000000 spread=2.3436173494644356067218770000bps
+            - generic [ref=e409]:
+              - generic [ref=e410]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68477.57000000 ask=68508.32000000 spread=4.4895134820089864729863780000bps
+            - generic [ref=e411]:
+              - generic [ref=e412]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68414.74000000 ask=68637.50000000 spread=32.507312540094200576364166000bps
+            - generic [ref=e413]:
+              - generic [ref=e414]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68477.57000000 ask=68540.45000000 spread=9.178354788662104444364325000bps
+            - generic [ref=e415]:
+              - generic [ref=e416]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68490.58000000 ask=68637.51000000 spread=21.429599143399430415752163000bps
+            - generic [ref=e417]:
+              - generic [ref=e418]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68467.00000000 ask=68510.09000000 spread=6.2915630635750839793720250000bps
+            - generic [ref=e419]:
+              - generic [ref=e420]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68484.77000000 ask=68497.89000000 spread=1.9155709197061876298795770000bps
+            - generic [ref=e421]:
+              - generic [ref=e422]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68479.77000000 ask=68497.22000000 spread=2.5478731865841116818233490000bps
+            - generic [ref=e423]:
+              - generic [ref=e424]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68473.53000000 ask=68490.84000000 spread=2.527664676587056911224430000bps
+            - generic [ref=e425]:
+              - generic [ref=e426]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68448.08000000 ask=68491.03000000 spread=6.2728609817896435868467380000bps
+            - generic [ref=e427]:
+              - generic [ref=e428]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68476.30000000 ask=68536.92000000 spread=8.848781161409096144153097000bps
+            - generic [ref=e429]:
+              - generic [ref=e430]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68476.29000000 ask=68483.43000000 spread=1.0426423184860483067576360000bps
+            - generic [ref=e431]:
+              - generic [ref=e432]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2082.24000000 ask=2091.31000000 spread=43.464197146314288794910807000bps
+            - generic [ref=e433]:
+              - generic [ref=e434]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.39000000 ask=2091.29000000 spread=4.3044900614107248761263420000bps
+            - generic [ref=e435]:
+              - generic [ref=e436]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.78000000 ask=2092.40000000 spread=7.7453038119325489221118860000bps
+            - generic [ref=e437]:
+              - generic [ref=e438]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.76000000 ask=2091.50000000 spread=3.5387565574593640758824180000bps
+            - generic [ref=e439]:
+              - generic [ref=e440]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2091.25000000 ask=2091.77000000 spread=2.4862419974085708411626050000bps
+            - generic [ref=e441]:
+              - generic [ref=e442]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2091.55000000 ask=2091.57000000 spread=0.0956224062422306794928190000bps
+            - generic [ref=e443]:
+              - generic [ref=e444]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2091.55000000 ask=2092.15000000 spread=2.8682744938690632693548770000bps
+            - generic [ref=e445]:
+              - generic [ref=e446]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2091.40000000 ask=2091.98000000 spread=2.7728774340365924204829590000bps
+            - generic [ref=e447]:
+              - generic [ref=e448]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2091.41000000 ask=2091.98000000 spread=2.725062688393862393895860000bps
+            - generic [ref=e449]:
+              - generic [ref=e450]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68414.73000000 ask=68638.31000000 spread=32.626784491609963558633942000bps
+            - generic [ref=e451]:
+              - generic [ref=e452]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68414.73000000 ask=68474.04000000 spread=8.665429603903957936067363000bps
+            - generic [ref=e453]:
+              - generic [ref=e454]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68448.07000000 ask=68474.04000000 spread=3.7933975747233226248120190000bps
+            - generic [ref=e455]:
+              - generic [ref=e456]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68453.30000000 ask=68501.50000000 spread=7.0388186467360034113444730000bps
+            - generic [ref=e457]:
+              - generic [ref=e458]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2091.41000000 ask=2091.94000000 spread=2.5338544467950326891127920000bps
+            - generic [ref=e459]:
+              - generic [ref=e460]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.51000000 ask=2091.75000000 spread=5.9298082854724479109381050000bps
+            - generic [ref=e461]:
+              - generic [ref=e462]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.84000000 ask=2092.23000000 spread=11.429746513090407381990258000bps
+            - generic [ref=e463]:
+              - generic [ref=e464]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2091.25000000 ask=2091.75000000 spread=2.3906287353573989959359310000bps
+            - generic [ref=e465]:
+              - generic [ref=e466]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2091.09000000 ask=2091.35000000 spread=1.2432933885483115119403980000bps
+            - generic [ref=e467]:
+              - generic [ref=e468]: "[MarketDataTick]"
+              - text: Kraken ETH/USD bid=2090.27 ask=2092.95 spread=12.813096131688029795229512000bps
+            - generic [ref=e469]:
+              - generic [ref=e470]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.77000000 ask=2090.70000000 spread=-0.3348104853077984536538590000bps
+            - generic [ref=e471]:
+              - generic [ref=e472]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68414.72000000 ask=85584.11000000 spread=2229.8078498388591653585939580bps
+            - generic [ref=e473]:
+              - generic [ref=e474]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68409.56000000 ask=68484.23000000 spread=10.909187334209974024387812000bps
+            - generic [ref=e475]:
+              - generic [ref=e476]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68460.80000000 ask=68484.23000000 spread=3.4218109266177823320787910000bps
+            - generic [ref=e477]:
+              - generic [ref=e478]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.46000000 ask=2091.28000000 spread=3.9218124512762629910037450000bps
+            - generic [ref=e479]:
+              - generic [ref=e480]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.46000000 ask=2091.12000000 spread=3.1567015338699725940912290000bps
+            - generic [ref=e481]:
+              - generic [ref=e482]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.54000000 ask=2091.12000000 spread=2.7740179737233538833860240000bps
+            - generic [ref=e483]:
+              - generic [ref=e484]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68409.56000000 ask=68491.07000000 spread=11.907907217081469968399707000bps
+            - generic [ref=e485]:
+              - generic [ref=e486]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68409.56000000 ask=68490.75000000 spread=11.861185705130981807126660000bps
+            - generic [ref=e487]:
+              - generic [ref=e488]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68409.56000000 ask=85582.06000000 spread=2230.3161691525811599358458600bps
+            - generic [ref=e489]:
+              - generic [ref=e490]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.54000000 ask=2091.19000000 spread=3.1087612064863106895949760000bps
+            - generic [ref=e491]:
+              - generic [ref=e492]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68460.80000000 ask=68516.70000000 spread=8.161924403642934058513259000bps
+            - generic [ref=e493]:
+              - generic [ref=e494]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68470.29000000 ask=68499.20000000 spread=4.2213780601796794307987860000bps
+            - generic [ref=e495]:
+              - generic [ref=e496]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68448.07000000 ask=68511.39000000 spread=9.246531783930806970179351000bps
+            - generic [ref=e497]:
+              - generic [ref=e498]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68426.31000000 ask=68536.91000000 spread=16.150321232225702637540210000bps
+            - generic [ref=e499]:
+              - generic [ref=e500]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68470.29000000 ask=68499.21000000 spread=4.2228379310722460109732460000bps
+            - generic [ref=e501]:
+              - generic [ref=e502]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.38000000 ask=2091.18000000 spread=3.826323190388276145744650000bps
+            - generic [ref=e503]:
+              - generic [ref=e504]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68235.19000000 ask=68770.72000000 spread=78.176189625688410083915358000bps
+            - generic [ref=e505]:
+              - generic [ref=e506]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68414.72000000 ask=85584.11000000 spread=2229.8078498388591653585939580bps
+            - generic [ref=e507]:
+              - generic [ref=e508]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.25000000 ask=2091.01000000 spread=8.420528866625520900613837000bps
+            - generic [ref=e509]:
+              - generic [ref=e510]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2088.61000000 ask=2091.19000000 spread=12.345088281735968228144887000bps
+            - generic [ref=e511]:
+              - generic [ref=e512]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68163.51000000 ask=68770.72000000 spread=88.68637155224080932868282800bps
+            - generic [ref=e513]:
+              - generic [ref=e514]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.88000000 ask=2091.48000000 spread=2.8691934697156629271511780000bps
+            - generic [ref=e515]:
+              - generic [ref=e516]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.52000000 ask=2091.13000000 spread=2.9175086389343919266318320000bps
+            - generic [ref=e517]:
+              - generic [ref=e518]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68470.29000000 ask=68563.07000000 spread=13.541228208955833820319373000bps
+            - generic [ref=e519]:
+              - generic [ref=e520]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.13000000 ask=2091.29000000 spread=5.5483543867872636568438470000bps
+            - generic [ref=e521]:
+              - generic [ref=e522]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68453.96000000 ask=68499.21000000 spread=6.6080982280293329464370920000bps
+            - generic [ref=e523]:
+              - generic [ref=e524]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68477.61000000 ask=68505.77000000 spread=4.1114476807332393170616760000bps
+            - generic [ref=e525]:
+              - generic [ref=e526]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.13000000 ask=2091.17000000 spread=4.9745294525626001482792430000bps
+            - generic [ref=e527]:
+              - generic [ref=e528]: "[MarketDataTick]"
+              - text: Kraken ETH/USD bid=2090.01 ask=2092.82 spread=13.435879536103547120012049000bps
+            - generic [ref=e529]:
+              - generic [ref=e530]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68459.47000000 ask=68511.97000000 spread=7.6658316507441259287337560000bps
+            - generic [ref=e531]:
+              - generic [ref=e532]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.13000000 ask=2091.17000000 spread=4.9745294525626001482792430000bps
+            - generic [ref=e533]:
+              - generic [ref=e534]: "[MarketDataTick]"
+              - text: Kraken BTC/USD bid=68466.9 ask=68549.4 spread=12.042362842961019966237594000bps
+            - generic [ref=e535]:
+              - generic [ref=e536]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.59000000 ask=2091.31000000 spread=3.4434108897869389511944330000bps
+            - generic [ref=e537]:
+              - generic [ref=e538]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68453.95000000 ask=68518.51000000 spread=9.426712493883807007627665000bps
+            - generic [ref=e539]:
+              - generic [ref=e540]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68475.49000000 ask=68478.31000000 spread=0.4118177078693690865094650000bps
+            - generic [ref=e541]:
+              - generic [ref=e542]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.07000000 ask=2090.54000000 spread=2.2484757009144598515527640000bps
+            - generic [ref=e543]:
+              - generic [ref=e544]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.73000000 ask=2090.54000000 spread=3.8753477646180749090369760000bps
+            - generic [ref=e545]:
+              - generic [ref=e546]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2087.95000000 ask=2090.67000000 spread=13.018652090881678640316660000bps
+            - generic [ref=e547]:
+              - generic [ref=e548]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.72000000 ask=2090.68000000 spread=4.5928619270883169074729690000bps
+            - generic [ref=e549]:
+              - generic [ref=e550]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.35000000 ask=2090.68000000 spread=1.5785583935059064393223680000bps
+            - generic [ref=e551]:
+              - generic [ref=e552]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68454.63000000 ask=68500.08000000 spread=6.6372306582227073461000360000bps
+            - generic [ref=e553]:
+              - generic [ref=e554]: "[MarketDataTick]"
+              - text: Kraken BTC/USD bid=68446.2 ask=68519.8 spread=10.747192733963173342289327000bps
+            - generic [ref=e555]:
+              - generic [ref=e556]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68463.01000000 ask=68471.36000000 spread=1.219562334861583691515870000bps
+            - generic [ref=e557]:
+              - generic [ref=e558]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68389.59000000 ask=68536.80000000 spread=21.502063992193177662830372000bps
+            - generic [ref=e559]:
+              - generic [ref=e560]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.35000000 ask=2090.42000000 spread=0.3348665437228070427217950000bps
+            - generic [ref=e561]:
+              - generic [ref=e562]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68451.81000000 ask=68473.79000000 spread=3.2105026379289190626150260000bps
+            - generic [ref=e563]:
+              - generic [ref=e564]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68449.06000000 ask=85582.06000000 spread=2224.6153894096206013434168370bps
+            - generic [ref=e565]:
+              - generic [ref=e566]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68389.51000000 ask=68471.63000000 spread=12.000484578748942175989474000bps
+            - generic [ref=e567]:
+              - generic [ref=e568]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68451.81000000 ask=68468.23000000 spread=2.3984801640431890028661980000bps
+            - generic [ref=e569]:
+              - generic [ref=e570]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68446.35000000 ask=68448.54000000 spread=0.3199535059343705232532780000bps
+            - generic [ref=e571]:
+              - generic [ref=e572]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68414.07000000 ask=68482.70000000 spread=10.026533131497551037909806000bps
+            - generic [ref=e573]:
+              - generic [ref=e574]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.20000000 ask=2090.78000000 spread=2.7744691435979124511478170000bps
+            - generic [ref=e575]:
+              - generic [ref=e576]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68441.24000000 ask=68456.68000000 spread=2.2556953385413014310224730000bps
+            - generic [ref=e577]:
+              - generic [ref=e578]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.05000000 ask=2090.56000000 spread=2.4398353350348394133870420000bps
+            - generic [ref=e579]:
+              - generic [ref=e580]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.08000000 ask=2090.56000000 spread=2.2962991312334953499942590000bps
+            - generic [ref=e581]:
+              - generic [ref=e582]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2089.45000000 ask=2091.06000000 spread=7.70240951462859794618360000bps
+            - generic [ref=e583]:
+              - generic [ref=e584]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68433.83000000 ask=68475.20000000 spread=6.0434289834644215943973890000bps
+            - generic [ref=e585]:
+              - generic [ref=e586]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68433.60000000 ask=68456.67000000 spread=3.3705828763432200111812180000bps
+            - generic [ref=e587]:
+              - generic [ref=e588]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.04000000 ask=2090.74000000 spread=3.3486574275613641473600620000bps
+            - generic [ref=e589]:
+              - generic [ref=e590]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68431.90000000 ask=68448.98000000 spread=2.4956005542921699509821970000bps
+            - generic [ref=e591]:
+              - generic [ref=e592]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68441.76000000 ask=68458.06000000 spread=2.3813033501431922993032420000bps
+            - generic [ref=e593]:
+              - generic [ref=e594]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68447.26000000 ask=68466.55000000 spread=2.8178311596178646989664520000bps
+            - generic [ref=e595]:
+              - generic [ref=e596]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=64245.86000000 ask=85576.77000000 spread=2847.4883934422990705743184460bps
+            - generic [ref=e597]:
+              - generic [ref=e598]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68445.49000000 ask=68472.24000000 spread=3.9074559591369211277458370000bps
+            - generic [ref=e599]:
+              - generic [ref=e600]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.15000000 ask=2090.72000000 spread=2.7267052072893919208203080000bps
+            - generic [ref=e601]:
+              - generic [ref=e602]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68447.26000000 ask=68472.25000000 spread=3.650319811982967219207840000bps
+            - generic [ref=e603]:
+              - generic [ref=e604]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.31000000 ask=2090.87000000 spread=2.67866965784778459669280000bps
+            - generic [ref=e605]:
+              - generic [ref=e606]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68453.26000000 ask=68475.15000000 spread=3.1972911976411615383542390000bps
+            - generic [ref=e607]:
+              - generic [ref=e608]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68439.50000000 ask=68488.70000000 spread=7.1862479752162082025470280000bps
+            - generic [ref=e609]:
+              - generic [ref=e610]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68453.26000000 ask=68475.00000000 spread=3.1753854171520181443918150000bps
+            - generic [ref=e611]:
+              - generic [ref=e612]: "[MarketDataTick]"
+              - text: Kraken BTC/USD bid=68437.5 ask=68507.4 spread=10.208485310515397068455999000bps
+            - generic [ref=e613]:
+              - generic [ref=e614]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2088.34000000 ask=2090.72000000 spread=11.390121223433020822864472000bps
+            - generic [ref=e615]:
+              - generic [ref=e616]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2080.19000000 ask=2092.27000000 spread=57.903490986132880842476621000bps
+            - generic [ref=e617]:
+              - generic [ref=e618]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68447.40000000 ask=68472.12000000 spread=3.6108803185988382080217630000bps
+            - generic [ref=e619]:
+              - generic [ref=e620]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.31000000 ask=2090.47000000 spread=0.7654074120140260908251570000bps
+            - generic [ref=e621]:
+              - generic [ref=e622]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.46000000 ask=2090.46000000 spread=0bps
+            - generic [ref=e623]:
+              - generic [ref=e624]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68444.72000000 ask=68454.25000000 spread=1.3922675970462012972047930000bps
+            - generic [ref=e625]:
+              - generic [ref=e626]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.30000000 ask=2090.47000000 spread=0.8132473204696742466100740000bps
+            - generic [ref=e627]:
+              - generic [ref=e628]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68438.24000000 ask=68457.06000000 spread=2.7495465512694738241561250000bps
+            - generic [ref=e629]:
+              - generic [ref=e630]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.10000000 ask=2090.68000000 spread=2.7746018685508445792411940000bps
+            - generic [ref=e631]:
+              - generic [ref=e632]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68438.55000000 ask=68457.06000000 spread=2.7042503408253924285811650000bps
+            - generic [ref=e633]:
+              - generic [ref=e634]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.26000000 ask=2090.53000000 spread=1.29162191834557583614580000bps
+            - generic [ref=e635]:
+              - generic [ref=e636]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.26000000 ask=2090.84000000 spread=2.7743895147210064337136160000bps
+            - generic [ref=e637]:
+              - generic [ref=e638]: "[MarketDataTick]"
+              - text: Binance ETH/USDT bid=2090.10000000 ask=2090.82000000 spread=3.4442180190006027381533250000bps
+            - generic [ref=e639]:
+              - generic [ref=e640]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68434.59000000 ask=68465.23000000 spread=4.4762659293489209847025360000bps
+            - generic [ref=e641]:
+              - generic [ref=e642]: "[MarketDataTick]"
+              - text: Binance BTC/USDT bid=68389.47000000 ask=68463.45000000 spread=10.811607088836686860609185000bps
+      - generic [ref=e122]:
+        - generic [ref=e124]: New Strategy
+        - generic [ref=e126]:
+          - generic [ref=e127]:
+            - generic [ref=e129]: ✓
+            - generic [ref=e132]: ✓
+            - generic [ref=e135]: "3"
+          - generic [ref=e1039]:
+            - generic [ref=e1040]:
+              - generic [ref=e1041]: Presets
+              - generic [ref=e1042]:
+                - button "Conservative" [ref=e1043]
+                - button "Moderate" [ref=e1044]
+                - button "Aggressive" [ref=e1045]
+            - generic [ref=e1046]:
+              - generic [ref=e1047]:
+                - generic [ref=e1048]:
+                  - generic [ref=e1049]: Spread (bps)
+                  - generic "Distance from mid price in basis points" [ref=e1050]: "[?]"
+                - spinbutton [ref=e1051]: "10"
+              - generic [ref=e1052]:
+                - generic [ref=e1053]:
+                  - generic [ref=e1054]: Order Size
+                  - generic "Quantity per level" [ref=e1055]: "[?]"
+                - spinbutton [ref=e1056]: "0.01"
+              - generic [ref=e1057]:
+                - generic [ref=e1058]:
+                  - generic [ref=e1059]: Number of Levels
+                  - generic "Price levels on each side" [ref=e1060]: "[?]"
+                - spinbutton [ref=e1061]: "3"
+              - generic [ref=e1062]:
+                - generic [ref=e1063]:
+                  - generic [ref=e1064]: Refresh Interval (ms)
+                  - generic "Min time between order refreshes" [ref=e1065]: "[?]"
+                - spinbutton [ref=e1066]: "1000"
+              - generic [ref=e1067]:
+                - generic [ref=e1068]:
+                  - generic [ref=e1069]: Min Spread (bps)
+                  - generic "Floor spread in basis points" [ref=e1070]: "[?]"
+                - spinbutton [ref=e1071]: "5"
+              - generic [ref=e1072]:
+                - generic [ref=e1073]:
+                  - generic [ref=e1074]: Reprice Threshold (bps)
+                  - generic "Mid-price movement that triggers cancel-replace" [ref=e1075]: "[?]"
+                - spinbutton [ref=e1076]: "3"
+            - generic [ref=e1077]:
+              - generic [ref=e1078]: Summary
+              - generic [ref=e1079]:
+                - generic [ref=e1080]: "Type: Spread Market Making"
+                - generic [ref=e1081]: "Exchange: Coinbase"
+                - generic [ref=e1082]: "Symbol: BTC/USD"
+            - generic [ref=e1083]:
+              - button "Back" [ref=e1084]
+              - button "Create Strategy" [ref=e1085]
+      - generic [ref=e142]:
+        - generic [ref=e144]: AI Assistant
+        - generic [ref=e146]:
+          - generic [ref=e147]: "Context: positions, strategies, market data, risk state"
+          - paragraph [ref=e149]: Ask about strategies, parameters, or market conditions.
+          - generic [ref=e150]:
+            - textbox "Ask the AI assistant..." [ref=e151]
+            - button "Send" [disabled] [ref=e152]
+  - generic [ref=e647] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=e648]:
+      - img [ref=e649]
+    - generic [ref=e652]:
+      - button "Open issues overlay" [ref=e653]:
+        - generic [ref=e654]:
+          - generic [ref=e655]: "0"
+          - generic [ref=e656]: "1"
+        - generic [ref=e657]: Issue
+      - button "Collapse issues badge" [ref=e658]:
+        - img [ref=e659]
+  - alert [ref=e661]
