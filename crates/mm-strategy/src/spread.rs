@@ -11,7 +11,6 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -225,18 +224,6 @@ impl Strategy for SpreadStrategy {
 
         // Generate fresh quotes
         let quote_actions = self.generate_quotes(mid);
-
-        // Track the client_order_ids we are about to place.
-        // Since NewOrder doesn't carry an id yet (it gets one when submitted),
-        // we generate deterministic ids here for tracking. The execution layer
-        // will use the strategy_id to correlate fills back.
-        for action in &quote_actions {
-            if let OrderAction::Place(_) = action {
-                // We track by generating a UUID that we'll see in order updates
-                let tracking_id = Uuid::new_v4().to_string();
-                self.live_order_ids.insert(tracking_id);
-            }
-        }
 
         actions.extend(quote_actions);
 

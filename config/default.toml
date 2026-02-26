@@ -20,25 +20,25 @@
 [exchanges.binance]
 api_key = "your-api-key-here"
 secret_key = "your-secret-key-here"
-enabled = true
+enabled = false
 symbols = ["BTC/USDT", "ETH/USDT"]
 
 [exchanges.coinbase]
 api_key = "your-api-key-here"
 secret_key = "your-secret-key-here"
-enabled = true
+enabled = false
 symbols = ["BTC/USD", "ETH/USD"]
 
 [exchanges.kraken]
 api_key = "your-api-key-here"
 secret_key = "your-secret-key-here"
-enabled = true
+enabled = false
 symbols = ["BTC/USD", "ETH/USD"]
 
 [exchanges.alpaca]
 api_key = "your-alpaca-key-id"
 secret_key = "your-alpaca-secret-key"
-enabled = true
+enabled = false
 symbols = ["AAPL/USD", "MSFT/USD", "TSLA/USD"]
 
 [exchanges.interactive_brokers]

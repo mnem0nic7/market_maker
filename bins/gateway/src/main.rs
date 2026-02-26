@@ -22,6 +22,10 @@ struct AppConfig {
     /// Port to listen on.
     #[serde(default = "default_port")]
     port: u16,
+    /// Optional API bearer token for authentication.
+    /// Can also be set via GATEWAY_API_TOKEN environment variable.
+    #[serde(default)]
+    api_token: Option<String>,
 }
 
 fn default_host() -> String {
@@ -37,6 +41,7 @@ impl Default for AppConfig {
         Self {
             host: default_host(),
             port: default_port(),
+            api_token: None,
         }
     }
 }
@@ -67,6 +72,11 @@ async fn main() -> Result<()> {
     let gateway_config = GatewayConfig {
         host: cfg.host,
         port: cfg.port,
+        cors_origins: vec![
+            "http://127.0.0.1:3000".to_string(),
+            "http://localhost:3000".to_string(),
+        ],
+        api_token: cfg.api_token,
     };
 
     // Create the shared API state with defaults (empty collections).

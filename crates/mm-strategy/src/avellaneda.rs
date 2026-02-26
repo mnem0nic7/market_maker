@@ -146,7 +146,15 @@ impl AvellanedaStoikovStrategy {
         let gamma_f64 = gamma.to_f64().unwrap_or(1.0);
         let kappa_f64 = self.config.kappa.to_f64().unwrap_or(1.0);
 
+        if kappa_f64 <= 0.0 || gamma_f64 <= 0.0 {
+            warn!(strategy_id = %self.config.strategy_id, "gamma or kappa is zero/negative, using minimum spread");
+            return term1;
+        }
         let ln_arg = 1.0 + gamma_f64 / kappa_f64;
+        if ln_arg <= 0.0 {
+            warn!(strategy_id = %self.config.strategy_id, "ln_arg non-positive, using minimum spread");
+            return term1;
+        }
         let ln_value = ln_arg.ln();
         let term2_f64 = (2.0 / gamma_f64) * ln_value;
 

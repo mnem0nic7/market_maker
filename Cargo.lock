@@ -1817,6 +1817,7 @@ dependencies = [
  "futures",
  "mm-backtest",
  "mm-core",
+ "mm-risk",
  "mm-strategy",
  "prometheus",
  "prost",
@@ -3980,6 +3981,7 @@ name = "trading-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "config",
  "dotenvy",
@@ -3997,6 +3999,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

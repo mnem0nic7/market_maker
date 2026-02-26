@@ -357,6 +357,15 @@ pub struct GatewayInstanceConfig {
     /// Bind port.
     #[serde(default = "default_gateway_port")]
     pub port: u16,
+
+    /// Allowed CORS origins. If empty, falls back to wildcard.
+    #[serde(default = "default_cors_origins")]
+    pub cors_origins: Vec<String>,
+
+    /// Optional API bearer token. If set, all REST endpoints require
+    /// `Authorization: Bearer <token>` header. If empty/None, auth is disabled.
+    #[serde(default)]
+    pub api_token: Option<String>,
 }
 
 fn default_gateway_host() -> String {
@@ -367,12 +376,21 @@ fn default_gateway_port() -> u16 {
     8080
 }
 
+fn default_cors_origins() -> Vec<String> {
+    vec![
+        "http://127.0.0.1:3000".to_string(),
+        "http://localhost:3000".to_string(),
+    ]
+}
+
 impl Default for GatewayInstanceConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             host: default_gateway_host(),
             port: default_gateway_port(),
+            cors_origins: default_cors_origins(),
+            api_token: None,
         }
     }
 }
