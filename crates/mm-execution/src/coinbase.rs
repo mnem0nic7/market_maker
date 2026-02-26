@@ -31,12 +31,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use p256::SecretKey;
 use mm_core::{
     traits::{Balance, ExecutionConnector},
     CancelAllOrders, CancelOrder, Exchange, MmError, MmResult, NewOrder, OrderStatus, OrderUpdate,
     Side, Symbol,
 };
+use p256::SecretKey;
 use rand::Rng;
 use reqwest::Client;
 use rust_decimal::Decimal;
@@ -177,12 +177,11 @@ impl CoinbaseExecutionConnector {
         }
 
         // Use jsonwebtoken with a custom header.
-        let header_obj: Header = serde_json::from_value(header_value).map_err(|e| {
-            MmError::Exchange {
+        let header_obj: Header =
+            serde_json::from_value(header_value).map_err(|e| MmError::Exchange {
                 exchange: Exchange::Coinbase,
                 message: format!("failed to build JWT header: {}", e),
-            }
-        })?;
+            })?;
 
         let encoding_key =
             EncodingKey::from_ec_pem(pkcs8_pem.as_bytes()).map_err(|e| MmError::Exchange {
@@ -278,10 +277,7 @@ impl CoinbaseExecutionConnector {
                 "jwt": jwt,
             });
 
-            if let Err(e) = write
-                .send(WsMessage::Text(subscribe.to_string()))
-                .await
-            {
+            if let Err(e) = write.send(WsMessage::Text(subscribe.to_string())).await {
                 error!(error = %e, "Coinbase: failed to send subscribe");
                 connected.store(false, Ordering::SeqCst);
                 return;
@@ -322,15 +318,11 @@ impl CoinbaseExecutionConnector {
         })
     }
 
-    async fn handle_ws_message(
-        text: &str,
-        update_tx: &mpsc::Sender<OrderUpdate>,
-    ) -> MmResult<()> {
-        let msg: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| MmError::Exchange {
-                exchange: Exchange::Coinbase,
-                message: format!("JSON parse error: {}", e),
-            })?;
+    async fn handle_ws_message(text: &str, update_tx: &mpsc::Sender<OrderUpdate>) -> MmResult<()> {
+        let msg: serde_json::Value = serde_json::from_str(text).map_err(|e| MmError::Exchange {
+            exchange: Exchange::Coinbase,
+            message: format!("JSON parse error: {}", e),
+        })?;
 
         let channel = msg["channel"].as_str().unwrap_or("");
         if channel != "user" {
@@ -491,11 +483,9 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
                 })
             }
             mm_core::OrderType::Limit => {
-                let price = order
-                    .price
-                    .ok_or_else(|| MmError::OrderRejected {
-                        reason: "Limit order requires a price".into(),
-                    })?;
+                let price = order.price.ok_or_else(|| MmError::OrderRejected {
+                    reason: "Limit order requires a price".into(),
+                })?;
                 serde_json::json!({
                     "limit_limit_gtc": {
                         "base_size": order.quantity.to_string(),
@@ -505,11 +495,9 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
                 })
             }
             mm_core::OrderType::StopLimit => {
-                let price = order
-                    .price
-                    .ok_or_else(|| MmError::OrderRejected {
-                        reason: "Stop-limit order requires a price".into(),
-                    })?;
+                let price = order.price.ok_or_else(|| MmError::OrderRejected {
+                    reason: "Stop-limit order requires a price".into(),
+                })?;
                 serde_json::json!({
                     "stop_limit_stop_limit_gtc": {
                         "base_size": order.quantity.to_string(),
@@ -520,11 +508,9 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
                 })
             }
             mm_core::OrderType::StopMarket => {
-                let price = order
-                    .price
-                    .ok_or_else(|| MmError::OrderRejected {
-                        reason: "Stop-market order requires a stop price".into(),
-                    })?;
+                let price = order.price.ok_or_else(|| MmError::OrderRejected {
+                    reason: "Stop-market order requires a stop price".into(),
+                })?;
                 serde_json::json!({
                     "stop_limit_stop_limit_gtc": {
                         "base_size": order.quantity.to_string(),
@@ -767,11 +753,10 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
             message: format!("list orders HTTP error: {}", e),
         })?;
 
-        let resp_body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Coinbase,
-                message: format!("list orders parse error: {}", e),
-            })?;
+        let resp_body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Coinbase,
+            message: format!("list orders parse error: {}", e),
+        })?;
 
         let order_ids: Vec<String> = resp_body["orders"]
             .as_array()
@@ -825,11 +810,10 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
         })?;
 
         let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Coinbase,
-                message: format!("fetch_balances parse error: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Coinbase,
+            message: format!("fetch_balances parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             return Err(MmError::Exchange {
@@ -844,10 +828,8 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
                 arr.iter()
                     .filter_map(|acct| {
                         let currency = acct["currency"].as_str()?;
-                        let available: Decimal = acct["available_balance"]["value"]
-                            .as_str()?
-                            .parse()
-                            .ok()?;
+                        let available: Decimal =
+                            acct["available_balance"]["value"].as_str()?.parse().ok()?;
                         let hold: Decimal = acct["hold"]["value"]
                             .as_str()
                             .and_then(|s| s.parse().ok())

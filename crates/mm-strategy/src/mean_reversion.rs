@@ -104,10 +104,7 @@ impl MeanReversionStrategy {
     ///
     /// Panics if `window_periods` is less than 2.
     pub fn new(config: MeanReversionConfig) -> Self {
-        assert!(
-            config.window_periods >= 2,
-            "window_periods must be >= 2"
-        );
+        assert!(config.window_periods >= 2, "window_periods must be >= 2");
 
         info!(
             strategy_id = %config.strategy_id,
@@ -714,8 +711,7 @@ mod tests {
         // Mean = 20
         // Variance = ((10-20)^2 + (20-20)^2 + (30-20)^2) / 3 = (100+0+100)/3 = 200/3 = 66.666...
         // StdDev = sqrt(66.666...) ~= 8.165
-        let prices: VecDeque<Decimal> =
-            vec![dec!(10), dec!(20), dec!(30)].into_iter().collect();
+        let prices: VecDeque<Decimal> = vec![dec!(10), dec!(20), dec!(30)].into_iter().collect();
         let (mean, std_dev) = rolling_stats(&prices);
 
         assert_eq!(mean, dec!(20));

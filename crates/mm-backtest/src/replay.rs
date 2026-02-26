@@ -122,11 +122,7 @@ impl ReplayEngine {
     /// 4. Calls `strategy.on_tick()`
     /// 5. Processes returned `OrderAction`s through the `SimulatedExchange`
     /// 6. Checks for fills and notifies the strategy
-    pub fn run(
-        &self,
-        strategy: &mut dyn Strategy,
-        mut events: Vec<MarketEvent>,
-    ) -> BacktestResult {
+    pub fn run(&self, strategy: &mut dyn Strategy, mut events: Vec<MarketEvent>) -> BacktestResult {
         // Sort events by timestamp (stable sort preserves order of equal timestamps)
         events.sort_by_key(|e| e.timestamp());
 
@@ -589,8 +585,16 @@ mod tests {
 
         // Strategy bought at 50010 (best ask of first book) and sold at 50100 (best bid of second book)
         // Gross PnL = 50100 - 50010 = 90
-        assert!(result.num_fills >= 2, "Expected at least 2 fills, got {}", result.num_fills);
-        assert!(result.total_pnl > Decimal::ZERO, "Expected positive PnL, got {}", result.total_pnl);
+        assert!(
+            result.num_fills >= 2,
+            "Expected at least 2 fills, got {}",
+            result.num_fills
+        );
+        assert!(
+            result.total_pnl > Decimal::ZERO,
+            "Expected positive PnL, got {}",
+            result.total_pnl
+        );
         assert!(result.total_fees > Decimal::ZERO, "Expected non-zero fees");
     }
 
@@ -602,13 +606,23 @@ mod tests {
         /// A do-nothing strategy for testing.
         struct NoOpStrategy;
         impl Strategy for NoOpStrategy {
-            fn name(&self) -> &str { "noop" }
-            fn strategy_id(&self) -> &str { "noop" }
-            fn on_tick(&mut self, _: &MarketSnapshot) -> Vec<OrderAction> { vec![] }
+            fn name(&self) -> &str {
+                "noop"
+            }
+            fn strategy_id(&self) -> &str {
+                "noop"
+            }
+            fn on_tick(&mut self, _: &MarketSnapshot) -> Vec<OrderAction> {
+                vec![]
+            }
             fn on_fill(&mut self, _: &Fill) {}
             fn on_order_update(&mut self, _: &OrderUpdate) {}
-            fn is_active(&self) -> bool { true }
-            fn stop(&mut self) -> Vec<OrderAction> { vec![] }
+            fn is_active(&self) -> bool {
+                true
+            }
+            fn stop(&mut self) -> Vec<OrderAction> {
+                vec![]
+            }
         }
 
         let mut strategy = NoOpStrategy;

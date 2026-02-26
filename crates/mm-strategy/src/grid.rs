@@ -393,8 +393,7 @@ impl Strategy for GridStrategy {
                     }
                 }
                 if let Some(idx) = best_idx {
-                    self.levels[idx].active_order_id =
-                        Some(update.client_order_id.clone());
+                    self.levels[idx].active_order_id = Some(update.client_order_id.clone());
                     self.order_to_level
                         .insert(update.client_order_id.clone(), idx);
                 }

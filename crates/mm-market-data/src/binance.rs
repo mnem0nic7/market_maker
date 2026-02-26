@@ -206,10 +206,7 @@ impl MarketDataConnector for BinanceConnector {
             .iter()
             .flat_map(|sym| {
                 let raw = normalizer::to_exchange_symbol(Exchange::Binance, sym).to_lowercase();
-                vec![
-                    format!("{}@depth@100ms", raw),
-                    format!("{}@trade", raw),
-                ]
+                vec![format!("{}@depth@100ms", raw), format!("{}@trade", raw)]
             })
             .collect();
 
@@ -397,21 +394,19 @@ async fn handle_binance_message(
 
     match event_type {
         "depthUpdate" => {
-            let depth: BinanceDepthUpdate = serde_json::from_value(combined.data).map_err(|e| {
-                MmError::Exchange {
+            let depth: BinanceDepthUpdate =
+                serde_json::from_value(combined.data).map_err(|e| MmError::Exchange {
                     exchange: Exchange::Binance,
                     message: format!("failed to parse depthUpdate: {}", e),
-                }
-            })?;
+                })?;
             handle_depth_update(depth, book_tx, symbols).await?;
         }
         "trade" => {
-            let trade: BinanceTrade = serde_json::from_value(combined.data).map_err(|e| {
-                MmError::Exchange {
+            let trade: BinanceTrade =
+                serde_json::from_value(combined.data).map_err(|e| MmError::Exchange {
                     exchange: Exchange::Binance,
                     message: format!("failed to parse trade: {}", e),
-                }
-            })?;
+                })?;
             handle_trade(trade, trade_tx).await?;
         }
         other => {
@@ -443,18 +438,18 @@ async fn handle_depth_update(
         sequence: depth.last_update_id,
     };
 
-    book_tx.send(order_book).await.map_err(|e| MmError::Exchange {
-        exchange: Exchange::Binance,
-        message: format!("failed to send order book update: {}", e),
-    })?;
+    book_tx
+        .send(order_book)
+        .await
+        .map_err(|e| MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: format!("failed to send order book update: {}", e),
+        })?;
 
     Ok(())
 }
 
-async fn handle_trade(
-    trade: BinanceTrade,
-    trade_tx: &mpsc::Sender<Trade>,
-) -> Result<(), MmError> {
+async fn handle_trade(trade: BinanceTrade, trade_tx: &mpsc::Sender<Trade>) -> Result<(), MmError> {
     let symbol = normalizer::from_exchange_symbol(Exchange::Binance, &trade.symbol)
         .unwrap_or_else(|| Symbol::new(&trade.symbol, "UNKNOWN"));
 
@@ -488,10 +483,13 @@ async fn handle_trade(
         trade_id: trade.trade_id.to_string(),
     };
 
-    trade_tx.send(normalized).await.map_err(|e| MmError::Exchange {
-        exchange: Exchange::Binance,
-        message: format!("failed to send trade: {}", e),
-    })?;
+    trade_tx
+        .send(normalized)
+        .await
+        .map_err(|e| MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: format!("failed to send trade: {}", e),
+        })?;
 
     Ok(())
 }

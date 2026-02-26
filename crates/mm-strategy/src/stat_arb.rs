@@ -816,8 +816,7 @@ mod tests {
         // Mean = 20
         // Variance = ((10-20)^2 + (20-20)^2 + (30-20)^2) / 3 = 200/3 = 66.666...
         // StdDev = sqrt(66.666...) ~= 8.165
-        let spreads: VecDeque<Decimal> =
-            vec![dec!(10), dec!(20), dec!(30)].into_iter().collect();
+        let spreads: VecDeque<Decimal> = vec![dec!(10), dec!(20), dec!(30)].into_iter().collect();
         let (mean, std_dev) = rolling_stats(&spreads);
 
         assert_eq!(mean, dec!(20));

@@ -109,11 +109,7 @@ pub trait RiskCheck: Send + Sync {
     fn name(&self) -> &str;
 
     /// Evaluate whether an order should be allowed, rejected, or modified.
-    async fn check_order(
-        &self,
-        order: &NewOrder,
-        portfolio: &PortfolioRisk,
-    ) -> RiskAction;
+    async fn check_order(&self, order: &NewOrder, portfolio: &PortfolioRisk) -> RiskAction;
 
     /// Periodic portfolio-level risk evaluation.
     async fn check_portfolio(&self, portfolio: &PortfolioRisk) -> RiskAction;

@@ -117,10 +117,13 @@ impl LocalOrderBook {
 
     /// The highest bid (best bid).
     pub fn best_bid(&self) -> Option<PriceLevel> {
-        self.bids.iter().next().map(|(Reverse(price), qty)| PriceLevel {
-            price: *price,
-            quantity: *qty,
-        })
+        self.bids
+            .iter()
+            .next()
+            .map(|(Reverse(price), qty)| PriceLevel {
+                price: *price,
+                quantity: *qty,
+            })
     }
 
     /// The lowest ask (best ask).
@@ -252,10 +255,7 @@ mod tests {
             (dec!(99.0), dec!(2.0)),
             (dec!(98.0), dec!(3.0)),
         ];
-        let asks = vec![
-            (dec!(101.0), dec!(1.5)),
-            (dec!(102.0), dec!(2.5)),
-        ];
+        let asks = vec![(dec!(101.0), dec!(1.5)), (dec!(102.0), dec!(2.5))];
         book.apply_snapshot(&bids, &asks, Utc::now(), 1);
 
         assert_eq!(book.best_bid().unwrap().price, dec!(100.0));

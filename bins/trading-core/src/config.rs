@@ -50,7 +50,6 @@ pub struct TradingConfig {
     pub trading_loop: TradingLoopConfig,
 }
 
-
 impl TradingConfig {
     /// Validate the configuration, collecting **all** errors before returning.
     ///
@@ -71,28 +70,20 @@ impl TradingConfig {
         for (name, ec) in &self.exchanges {
             if ec.enabled {
                 if ec.api_key.trim().is_empty() {
-                    errors.push(format!(
-                        "exchanges.{name}: enabled but api_key is empty",
-                    ));
+                    errors.push(format!("exchanges.{name}: enabled but api_key is empty",));
                 }
                 if ec.secret_key.trim().is_empty() {
-                    errors.push(format!(
-                        "exchanges.{name}: enabled but secret_key is empty",
-                    ));
+                    errors.push(format!("exchanges.{name}: enabled but secret_key is empty",));
                 }
             }
         }
 
         // 3. Risk limits must be sensible
         if self.risk.pnl_limits.max_daily_loss <= Decimal::ZERO {
-            errors.push(
-                "risk.pnl_limits.max_daily_loss must be positive".to_string(),
-            );
+            errors.push("risk.pnl_limits.max_daily_loss must be positive".to_string());
         }
         if self.risk.rate_limits.max_orders_per_second == 0 {
-            errors.push(
-                "risk.rate_limits.max_orders_per_second must be > 0".to_string(),
-            );
+            errors.push("risk.rate_limits.max_orders_per_second must be > 0".to_string());
         }
 
         // 4. Gateway port must be in valid non-privileged range
@@ -208,7 +199,6 @@ pub struct RiskConfig {
     #[serde(default)]
     pub kill_switch: KillSwitchSettings,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionLimitSettings {

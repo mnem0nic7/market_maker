@@ -11,8 +11,8 @@ use rust_decimal_macros::dec;
 use mm_backtest::{FeeModel, SimulatedExchange, SlippageModel};
 use mm_core::{
     types::{
-        Exchange, NewOrder, OrderBook, OrderStatus, OrderType, Position,
-        PriceLevel, Side, Symbol, TimeInForce,
+        Exchange, NewOrder, OrderBook, OrderStatus, OrderType, Position, PriceLevel, Side, Symbol,
+        TimeInForce,
     },
     OrderUpdate, PortfolioRisk, RiskAction,
 };
@@ -33,12 +33,24 @@ fn make_order_book(best_bid: Decimal, best_ask: Decimal) -> OrderBook {
         exchange: Exchange::Simulated,
         symbol: make_symbol(),
         bids: vec![
-            PriceLevel { price: best_bid, quantity: dec!(2.0) },
-            PriceLevel { price: best_bid - dec!(10), quantity: dec!(5.0) },
+            PriceLevel {
+                price: best_bid,
+                quantity: dec!(2.0),
+            },
+            PriceLevel {
+                price: best_bid - dec!(10),
+                quantity: dec!(5.0),
+            },
         ],
         asks: vec![
-            PriceLevel { price: best_ask, quantity: dec!(2.0) },
-            PriceLevel { price: best_ask + dec!(10), quantity: dec!(5.0) },
+            PriceLevel {
+                price: best_ask,
+                quantity: dec!(2.0),
+            },
+            PriceLevel {
+                price: best_ask + dec!(10),
+                quantity: dec!(5.0),
+            },
         ],
         timestamp: Utc::now(),
         sequence: 1,
@@ -91,7 +103,7 @@ fn test_full_order_lifecycle() {
         side: Side::Buy,
         order_type: OrderType::Limit,
         time_in_force: TimeInForce::GTC,
-        price: Some(dec!(49990)),   // Below best ask — should rest on the book
+        price: Some(dec!(49990)), // Below best ask — should rest on the book
         quantity: dec!(1.0),
         strategy_id: "lifecycle-test".into(),
         reduce_only: false,
@@ -112,13 +124,24 @@ fn test_full_order_lifecycle() {
 
     // No fills yet with the current book (our order is at 49990, best ask is 50010).
     let fills = exchange.check_fills(&book);
-    assert!(fills.is_empty(), "order should not fill when price is below best ask");
+    assert!(
+        fills.is_empty(),
+        "order should not fill when price is below best ask"
+    );
 
     // 4. Move the market: ask drops to our limit price, triggering a fill.
     let new_book = make_order_book(dec!(49980), dec!(49990));
     let fills = exchange.check_fills(&new_book);
-    assert_eq!(fills.len(), 1, "resting buy limit should fill when ask drops to limit price");
-    assert_eq!(exchange.open_orders().len(), 0, "filled order should be removed from open orders");
+    assert_eq!(
+        fills.len(),
+        1,
+        "resting buy limit should fill when ask drops to limit price"
+    );
+    assert_eq!(
+        exchange.open_orders().len(),
+        0,
+        "filled order should be removed from open orders"
+    );
 
     let fill = &fills[0];
     assert_eq!(fill.side, Side::Buy);
@@ -232,7 +255,10 @@ fn test_round_trip_pnl() {
     position.update_on_fill(sell_fill);
 
     // Position should be flat.
-    assert!(position.is_flat(), "position should be flat after round trip");
+    assert!(
+        position.is_flat(),
+        "position should be flat after round trip"
+    );
     assert_eq!(position.quantity, Decimal::ZERO);
 
     // Realized PnL = (sell_price - buy_price) * quantity = (51000 - 50000) * 1.0 = 1000
@@ -260,7 +286,7 @@ fn test_cancel_order_lifecycle() {
         side: Side::Buy,
         order_type: OrderType::Limit,
         time_in_force: TimeInForce::GTC,
-        price: Some(dec!(48000)),   // Far below market — should rest.
+        price: Some(dec!(48000)), // Far below market — should rest.
         quantity: dec!(0.5),
         strategy_id: "cancel-test".into(),
         reduce_only: false,
@@ -276,16 +302,26 @@ fn test_cancel_order_lifecycle() {
 
     // Verify no fills are produced.
     let fills_before = exchange.check_fills(&book);
-    assert!(fills_before.is_empty(), "no fills should occur for a far-away limit order");
+    assert!(
+        fills_before.is_empty(),
+        "no fills should occur for a far-away limit order"
+    );
 
     // Cancel the order on the simulated exchange.
     let cancel_result = exchange.cancel_order(&sim_order.client_order_id);
     assert!(cancel_result.is_ok(), "cancel should succeed");
-    assert_eq!(exchange.open_orders().len(), 0, "no open orders after cancel");
+    assert_eq!(
+        exchange.open_orders().len(),
+        0,
+        "no open orders after cancel"
+    );
 
     // Verify no fills were produced during the entire lifecycle.
     let fills_after = exchange.check_fills(&book);
-    assert!(fills_after.is_empty(), "no fills should exist after cancellation");
+    assert!(
+        fills_after.is_empty(),
+        "no fills should exist after cancellation"
+    );
 
     // Update OMS to reflect the cancellation (Submitted -> Cancelled).
     let update = OrderUpdate {
@@ -310,7 +346,10 @@ fn test_cancel_order_lifecycle() {
 
     // Verify the OMS shows no open orders.
     let open_orders = oms.get_open_orders();
-    assert!(open_orders.is_empty(), "OMS should have no open orders after cancellation");
+    assert!(
+        open_orders.is_empty(),
+        "OMS should have no open orders after cancellation"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +384,10 @@ async fn test_order_rejection_invalid_size() {
 
     // The risk engine should request a size reduction (not a hard reject).
     match result {
-        RiskAction::ReduceSize { max_quantity, reason } => {
+        RiskAction::ReduceSize {
+            max_quantity,
+            reason,
+        } => {
             assert_eq!(
                 max_quantity,
                 dec!(1.0),

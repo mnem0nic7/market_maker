@@ -227,10 +227,7 @@ impl NatsEventSubscriber {
     }
 
     /// Internal helper: turn a pull consumer into a stream of [`Envelope`]s.
-    fn message_stream(
-        &self,
-        consumer: PullConsumer,
-    ) -> impl futures::Stream<Item = Envelope> + '_ {
+    fn message_stream(&self, consumer: PullConsumer) -> impl futures::Stream<Item = Envelope> + '_ {
         async_stream(consumer)
     }
 }
@@ -240,10 +237,7 @@ fn async_stream(consumer: PullConsumer) -> impl futures::Stream<Item = Envelope>
     futures::stream::unfold(consumer, |consumer| async move {
         // Batch of 1 with a generous idle timeout keeps latency low while
         // remaining efficient under load.
-        let mut messages = match consumer
-            .messages()
-            .await
-        {
+        let mut messages = match consumer.messages().await {
             Ok(m) => m,
             Err(e) => {
                 error!(error = %e, "failed to open message stream from consumer");

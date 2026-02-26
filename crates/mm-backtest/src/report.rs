@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 
@@ -325,7 +325,11 @@ impl PerformanceCalculator {
 
         let n = daily_returns.len() as f64;
         let mean = daily_returns.iter().sum::<f64>() / n;
-        let variance = daily_returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1.0);
+        let variance = daily_returns
+            .iter()
+            .map(|r| (r - mean).powi(2))
+            .sum::<f64>()
+            / (n - 1.0);
         let std_dev = variance.sqrt();
 
         if std_dev < 1e-12 {
@@ -377,7 +381,11 @@ pub fn print_report(result: &BacktestResult) {
     println!("                    BACKTEST REPORT                          ");
     println!("============================================================");
     println!();
-    println!("  Period:           {} to {}", result.start_time.format("%Y-%m-%d %H:%M"), result.end_time.format("%Y-%m-%d %H:%M"));
+    println!(
+        "  Period:           {} to {}",
+        result.start_time.format("%Y-%m-%d %H:%M"),
+        result.end_time.format("%Y-%m-%d %H:%M")
+    );
     println!("  Duration:         {} days", result.duration.num_days());
     println!();
     println!("  --- PnL ---");
@@ -388,18 +396,39 @@ pub fn print_report(result: &BacktestResult) {
     println!("  --- Trades ---");
     println!("  Num Fills:        {}", result.num_fills);
     println!("  Num Trades:       {}", result.num_trades);
-    println!("  Win Rate:         {}%", format_decimal(result.win_rate * dec!(100)));
-    println!("  Avg Trade PnL:    {}", format_decimal(result.avg_trade_pnl));
-    println!("  Profit Factor:    {}", format_decimal(result.profit_factor));
-    println!("  Total Volume:     {}", format_decimal(result.total_volume));
+    println!(
+        "  Win Rate:         {}%",
+        format_decimal(result.win_rate * dec!(100))
+    );
+    println!(
+        "  Avg Trade PnL:    {}",
+        format_decimal(result.avg_trade_pnl)
+    );
+    println!(
+        "  Profit Factor:    {}",
+        format_decimal(result.profit_factor)
+    );
+    println!(
+        "  Total Volume:     {}",
+        format_decimal(result.total_volume)
+    );
     println!();
     println!("  --- Risk ---");
-    println!("  Max Drawdown:     {}", format_decimal(result.max_drawdown));
-    println!("  Max Drawdown %:   {}%", format_decimal(result.max_drawdown_pct));
+    println!(
+        "  Max Drawdown:     {}",
+        format_decimal(result.max_drawdown)
+    );
+    println!(
+        "  Max Drawdown %:   {}%",
+        format_decimal(result.max_drawdown_pct)
+    );
     println!("  Sharpe Ratio:     {}", format_ratio(result.sharpe_ratio));
     println!("  Sortino Ratio:    {}", format_ratio(result.sortino_ratio));
     println!();
-    println!("  Equity Curve:     {} data points", result.equity_curve.len());
+    println!(
+        "  Equity Curve:     {} data points",
+        result.equity_curve.len()
+    );
     println!("============================================================");
     println!();
 }
@@ -461,7 +490,7 @@ mod tests {
 
         let result = calc.finalize();
         assert_eq!(result.total_pnl, dec!(1000)); // 51000 - 50000
-        assert_eq!(result.total_fees, dec!(10));   // 5 + 5
+        assert_eq!(result.total_fees, dec!(10)); // 5 + 5
         assert_eq!(result.net_pnl, dec!(990));
         assert_eq!(result.num_trades, 1);
         assert_eq!(result.num_fills, 2);

@@ -9,9 +9,7 @@
 
 use chrono::Utc;
 use dashmap::DashMap;
-use mm_core::{
-    CancelOrder, Exchange, NewOrder, Order, OrderStatus, OrderUpdate,
-};
+use mm_core::{CancelOrder, Exchange, NewOrder, Order, OrderStatus, OrderUpdate};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

@@ -49,7 +49,11 @@ fn generate_test_data(n: usize) -> Vec<MarketEvent> {
 
         if i % 3 == 0 && i > 0 {
             let side = if seed % 2 == 0 { Side::Buy } else { Side::Sell };
-            let price = if side == Side::Buy { best_ask } else { best_bid };
+            let price = if side == Side::Buy {
+                best_ask
+            } else {
+                best_bid
+            };
             let qty = 0.01 + (seed % 50) as f64 / 1000.0;
 
             events.push(MarketEvent::TradeEvent {
@@ -68,18 +72,22 @@ fn generate_test_data(n: usize) -> Vec<MarketEvent> {
         } else {
             let bids: Vec<PriceLevel> = (0..3)
                 .map(|j| PriceLevel {
-                    price: rust_decimal::Decimal::from_f64_retain(best_bid - (j as f64 * half_spread * 0.5))
-                        .unwrap_or(dec!(50000))
-                        .round_dp(2),
+                    price: rust_decimal::Decimal::from_f64_retain(
+                        best_bid - (j as f64 * half_spread * 0.5),
+                    )
+                    .unwrap_or(dec!(50000))
+                    .round_dp(2),
                     quantity: dec!(0.5),
                 })
                 .collect();
 
             let asks: Vec<PriceLevel> = (0..3)
                 .map(|j| PriceLevel {
-                    price: rust_decimal::Decimal::from_f64_retain(best_ask + (j as f64 * half_spread * 0.5))
-                        .unwrap_or(dec!(50000))
-                        .round_dp(2),
+                    price: rust_decimal::Decimal::from_f64_retain(
+                        best_ask + (j as f64 * half_spread * 0.5),
+                    )
+                    .unwrap_or(dec!(50000))
+                    .round_dp(2),
                     quantity: dec!(0.5),
                 })
                 .collect();

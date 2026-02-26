@@ -207,10 +207,7 @@ pub struct WsState {
 }
 
 /// Axum handler that upgrades an HTTP request to a WebSocket connection.
-async fn ws_upgrade(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<WsState>>,
-) -> impl IntoResponse {
+async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<Arc<WsState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
 }
 
@@ -316,10 +313,7 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<WsState>) {
 }
 
 /// Process a text message from the client.
-async fn handle_client_message(
-    text: &str,
-    subscriptions: &Arc<RwLock<HashSet<Channel>>>,
-) {
+async fn handle_client_message(text: &str, subscriptions: &Arc<RwLock<HashSet<Channel>>>) {
     let parsed: ClientMessage = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {

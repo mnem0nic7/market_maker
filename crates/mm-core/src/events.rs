@@ -18,7 +18,11 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    pub fn new(source: impl Into<String>, correlation_id: impl Into<String>, payload: Event) -> Self {
+    pub fn new(
+        source: impl Into<String>,
+        correlation_id: impl Into<String>,
+        payload: Event,
+    ) -> Self {
         Self {
             event_id: Uuid::new_v4().to_string(),
             correlation_id: correlation_id.into(),
@@ -36,23 +40,37 @@ impl Envelope {
 
     pub fn nats_subject(&self) -> String {
         match &self.payload {
-            Event::OrderSubmitted { exchange, symbol, .. } => {
+            Event::OrderSubmitted {
+                exchange, symbol, ..
+            } => {
                 format!("events.order.submitted.{}.{}", exchange, symbol)
             }
-            Event::OrderAcknowledged { exchange, symbol, .. } => {
+            Event::OrderAcknowledged {
+                exchange, symbol, ..
+            } => {
                 format!("events.order.ack.{}.{}", exchange, symbol)
             }
-            Event::OrderFilled { exchange, symbol, .. }
-            | Event::OrderPartiallyFilled { exchange, symbol, .. } => {
+            Event::OrderFilled {
+                exchange, symbol, ..
+            }
+            | Event::OrderPartiallyFilled {
+                exchange, symbol, ..
+            } => {
                 format!("events.order.fill.{}.{}", exchange, symbol)
             }
-            Event::OrderCancelled { exchange, symbol, .. } => {
+            Event::OrderCancelled {
+                exchange, symbol, ..
+            } => {
                 format!("events.order.cancelled.{}.{}", exchange, symbol)
             }
-            Event::OrderRejected { exchange, symbol, .. } => {
+            Event::OrderRejected {
+                exchange, symbol, ..
+            } => {
                 format!("events.order.rejected.{}.{}", exchange, symbol)
             }
-            Event::PositionUpdated { exchange, symbol, .. } => {
+            Event::PositionUpdated {
+                exchange, symbol, ..
+            } => {
                 format!("events.position.{}.{}", exchange, symbol)
             }
             Event::RiskLimitBreached { .. } => "events.risk.breach".to_string(),
@@ -61,7 +79,9 @@ impl Envelope {
             Event::StrategySignal { strategy_id, .. } => {
                 format!("events.strategy.signal.{}", strategy_id)
             }
-            Event::MarketDataUpdate { exchange, symbol, .. } => {
+            Event::MarketDataUpdate {
+                exchange, symbol, ..
+            } => {
                 format!("events.marketdata.{}.{}", exchange, symbol)
             }
             Event::SystemHealthCheck { .. } => "events.system.health".to_string(),

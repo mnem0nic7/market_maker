@@ -343,9 +343,7 @@ mod tests {
         assert!(engine.add_strategy(Box::new(s1)).is_ok());
         let result = engine.add_strategy(Box::new(s2));
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("already exists"));
+        assert!(result.unwrap_err().contains("already exists"));
         assert_eq!(engine.strategy_count(), 1);
     }
 

@@ -96,10 +96,7 @@ async fn main() -> Result<()> {
     // received (SIGINT / SIGTERM), at which point it performs a graceful
     // shutdown allowing in-flight requests to complete.
     let server = GatewayServer::new(gateway_config, state);
-    server
-        .start()
-        .await
-        .context("gateway server error")?;
+    server.start().await.context("gateway server error")?;
 
     info!("gateway service stopped");
     Ok(())
@@ -115,19 +112,10 @@ fn load_config() -> Result<AppConfig> {
         .set_default("host", "127.0.0.1")?
         .set_default("port", 8080_i64)?
         // Config files (optional)
-        .add_source(
-            config::File::with_name("config/gateway")
-                .required(false),
-        )
-        .add_source(
-            config::File::with_name("config/default")
-                .required(false),
-        )
+        .add_source(config::File::with_name("config/gateway").required(false))
+        .add_source(config::File::with_name("config/default").required(false))
         // Environment variables (prefixed with GATEWAY_)
-        .add_source(
-            config::Environment::with_prefix("GATEWAY")
-                .separator("_"),
-        )
+        .add_source(config::Environment::with_prefix("GATEWAY").separator("_"))
         .build()
         .context("failed to build config")?;
 

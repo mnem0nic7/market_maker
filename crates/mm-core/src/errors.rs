@@ -12,7 +12,10 @@ pub enum MmError {
     ConnectionLost { exchange: Exchange, message: String },
 
     #[error("rate limited by {exchange}, retry after {retry_after_ms}ms")]
-    RateLimited { exchange: Exchange, retry_after_ms: u64 },
+    RateLimited {
+        exchange: Exchange,
+        retry_after_ms: u64,
+    },
 
     #[error("authentication failed for {exchange}: {message}")]
     AuthenticationFailed { exchange: Exchange, message: String },
@@ -43,7 +46,10 @@ pub enum MmError {
 
     // Strategy errors
     #[error("strategy error ({strategy_id}): {message}")]
-    Strategy { strategy_id: String, message: String },
+    Strategy {
+        strategy_id: String,
+        message: String,
+    },
 
     // Data errors
     #[error("market data unavailable for {symbol} on {exchange}")]

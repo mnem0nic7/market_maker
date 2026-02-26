@@ -225,10 +225,7 @@ impl RaydiumExecutionConnector {
     }
 
     /// Fetch the latest blockhash via `getLatestBlockhash`.
-    async fn get_latest_blockhash(
-        http: &reqwest::Client,
-        rpc_url: &str,
-    ) -> MmResult<String> {
+    async fn get_latest_blockhash(http: &reqwest::Client, rpc_url: &str) -> MmResult<String> {
         let resp = Self::rpc_call(
             http,
             rpc_url,
@@ -303,9 +300,7 @@ impl RaydiumExecutionConnector {
         )
         .await?;
 
-        let lamports = resp["result"]["value"]
-            .as_u64()
-            .unwrap_or(0);
+        let lamports = resp["result"]["value"].as_u64().unwrap_or(0);
 
         // SOL has 9 decimal places.
         let sol_divisor = Decimal::from(1_000_000_000u64);
@@ -348,9 +343,7 @@ impl RaydiumExecutionConnector {
                 .as_str()
                 .unwrap_or("0");
             let amount: Decimal = amount_str.parse().unwrap_or(Decimal::ZERO);
-            let decimals = info["tokenAmount"]["decimals"]
-                .as_u64()
-                .unwrap_or(0) as u8;
+            let decimals = info["tokenAmount"]["decimals"].as_u64().unwrap_or(0) as u8;
 
             if amount > Decimal::ZERO {
                 result.push(TokenAccountInfo {
@@ -383,20 +376,17 @@ impl RaydiumExecutionConnector {
     /// - Account addresses array
     /// - Recent blockhash
     /// - Instructions array (program_id_index, account_indices, data)
-    async fn build_and_submit_swap(
-        &self,
-        order: &NewOrder,
-    ) -> MmResult<String> {
+    async fn build_and_submit_swap(&self, order: &NewOrder) -> MmResult<String> {
         let canonical = order.symbol.canonical();
 
-        let pool_address = self
-            .config
-            .pool_addresses
-            .get(&canonical)
-            .ok_or_else(|| MmError::Exchange {
-                exchange: Exchange::Raydium,
-                message: format!("no pool address configured for {}", canonical),
-            })?;
+        let pool_address =
+            self.config
+                .pool_addresses
+                .get(&canonical)
+                .ok_or_else(|| MmError::Exchange {
+                    exchange: Exchange::Raydium,
+                    message: format!("no pool address configured for {}", canonical),
+                })?;
 
         // Determine source/destination token based on swap direction.
         let (source_token, dest_token) = match order.side {
@@ -413,21 +403,21 @@ impl RaydiumExecutionConnector {
                 message: format!("no decimals configured for token {}", source_token),
             })?;
 
-        let _dest_decimals = *self
-            .config
-            .token_decimals
-            .get(dest_token)
-            .ok_or_else(|| MmError::Exchange {
-                exchange: Exchange::Raydium,
-                message: format!("no decimals configured for token {}", dest_token),
-            })?;
+        let _dest_decimals =
+            *self
+                .config
+                .token_decimals
+                .get(dest_token)
+                .ok_or_else(|| MmError::Exchange {
+                    exchange: Exchange::Raydium,
+                    message: format!("no decimals configured for token {}", dest_token),
+                })?;
 
         // Compute the raw amount_in (in smallest token units).
         let amount_in_raw = if order.side == Side::Buy {
             // For a buy: we're spending quote to get base. If the order has a
             // price, amount_in = quantity * price (in quote tokens).
-            let quote_amount = order.quantity
-                * order.price.unwrap_or(Decimal::ZERO);
+            let quote_amount = order.quantity * order.price.unwrap_or(Decimal::ZERO);
             (quote_amount * Decimal::from(10u64.pow(source_decimals as u32)))
                 .to_string()
                 .split('.')
@@ -446,8 +436,8 @@ impl RaydiumExecutionConnector {
 
         // Compute minimum_amount_out with slippage tolerance.
         // minimum_out = expected_out * (1 - slippage_bps / 10000)
-        let slippage_factor = Decimal::from(10_000 - self.config.slippage_bps)
-            / Decimal::from(10_000u64);
+        let slippage_factor =
+            Decimal::from(10_000 - self.config.slippage_bps) / Decimal::from(10_000u64);
 
         let expected_out = if order.side == Side::Buy {
             order.quantity
@@ -456,8 +446,7 @@ impl RaydiumExecutionConnector {
         };
 
         let minimum_out = expected_out * slippage_factor;
-        let minimum_out_raw = (minimum_out
-            * Decimal::from(10u64.pow(_dest_decimals as u32)))
+        let minimum_out_raw = (minimum_out * Decimal::from(10u64.pow(_dest_decimals as u32)))
             .to_string()
             .split('.')
             .next()

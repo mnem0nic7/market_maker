@@ -83,7 +83,10 @@ fn kill_switch_activates_on_position_limit() {
     };
 
     let result = kill_switch.check_triggers(&portfolio, &[]);
-    assert!(result.is_some(), "kill switch should trigger on oversized position");
+    assert!(
+        result.is_some(),
+        "kill switch should trigger on oversized position"
+    );
     assert!(kill_switch.is_active());
 }
 

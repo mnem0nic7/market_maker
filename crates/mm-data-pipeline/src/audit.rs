@@ -108,9 +108,10 @@ impl AuditLogger {
                 }
                 Err(e) => {
                     error!(error = %e, "audit file integrity check failed");
-                    return Err(crate::errors::PipelineError::Internal(
-                        format!("audit file integrity check failed: {}", e),
-                    ));
+                    return Err(crate::errors::PipelineError::Internal(format!(
+                        "audit file integrity check failed: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -328,11 +329,15 @@ pub async fn verify_audit_file(path: impl AsRef<Path>) -> Result<u64, String> {
             continue;
         }
 
-        let audit_line: AuditLine =
-            serde_json::from_str(line).map_err(|e| format!("line {}: parse error: {e}", line_no + 1))?;
+        let audit_line: AuditLine = serde_json::from_str(line)
+            .map_err(|e| format!("line {}: parse error: {e}", line_no + 1))?;
 
-        let envelope_bytes = serde_json::to_vec(&audit_line.envelope)
-            .map_err(|e| format!("line {}: envelope re-serialization failed: {e}", line_no + 1))?;
+        let envelope_bytes = serde_json::to_vec(&audit_line.envelope).map_err(|e| {
+            format!(
+                "line {}: envelope re-serialization failed: {e}",
+                line_no + 1
+            )
+        })?;
 
         let expected_hash = {
             let mut hasher = Sha256::new();

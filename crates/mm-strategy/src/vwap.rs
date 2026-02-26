@@ -261,9 +261,7 @@ impl Strategy for VwapStrategy {
         // Because every bucket uses IOC there are no resting orders to cancel.
         if let Some(start) = self.start_time {
             let elapsed = (now - start).num_seconds() as u64;
-            if elapsed >= self.config.duration_secs
-                && self.buckets_sent >= self.total_buckets()
-            {
+            if elapsed >= self.config.duration_secs && self.buckets_sent >= self.total_buckets() {
                 debug!(
                     strategy_id = %self.config.strategy_id,
                     elapsed_secs = elapsed,
@@ -464,11 +462,11 @@ mod tests {
         // Weights [0.1, 0.2, 0.3, 0.25, 0.15] already sum to 1.0
         // bucket_sizes = weight * target_quantity (100)
         assert_eq!(strategy.bucket_sizes.len(), 5);
-        assert_eq!(strategy.bucket_sizes[0], dec!(10));   // 0.1 * 100
-        assert_eq!(strategy.bucket_sizes[1], dec!(20));   // 0.2 * 100
-        assert_eq!(strategy.bucket_sizes[2], dec!(30));   // 0.3 * 100
-        assert_eq!(strategy.bucket_sizes[3], dec!(25));   // 0.25 * 100
-        assert_eq!(strategy.bucket_sizes[4], dec!(15));   // 0.15 * 100
+        assert_eq!(strategy.bucket_sizes[0], dec!(10)); // 0.1 * 100
+        assert_eq!(strategy.bucket_sizes[1], dec!(20)); // 0.2 * 100
+        assert_eq!(strategy.bucket_sizes[2], dec!(30)); // 0.3 * 100
+        assert_eq!(strategy.bucket_sizes[3], dec!(25)); // 0.25 * 100
+        assert_eq!(strategy.bucket_sizes[4], dec!(15)); // 0.15 * 100
 
         // bucket_interval_secs = 100 / 5 = 20
         assert_eq!(strategy.bucket_interval_secs, 20);
@@ -805,7 +803,10 @@ mod tests {
         };
         // The bucket 2 order should be larger than the original bucket_size (20)
         // because we are compensating for underfill in bucket 1
-        assert!(qty2 > dec!(20), "bucket 2 should compensate for underfilled bucket 1");
+        assert!(
+            qty2 > dec!(20),
+            "bucket 2 should compensate for underfilled bucket 1"
+        );
 
         // Full fill of bucket 2
         strategy.on_fill(&make_fill(qty2, dec!(50005)));

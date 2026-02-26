@@ -346,11 +346,10 @@ impl MarketDataConnector for CoinbaseConnector {
             });
         }
 
-        let body: CoinbaseOrderBookResponse =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Coinbase,
-                message: format!("failed to parse order book response: {}", e),
-            })?;
+        let body: CoinbaseOrderBookResponse = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Coinbase,
+            message: format!("failed to parse order book response: {}", e),
+        })?;
 
         let bids: Vec<PriceLevel> = body
             .pricebook
@@ -492,10 +491,13 @@ async fn handle_l2_event(
         sequence: 0,
     };
 
-    book_tx.send(order_book).await.map_err(|e| MmError::Exchange {
-        exchange: Exchange::Coinbase,
-        message: format!("failed to send order book update: {}", e),
-    })?;
+    book_tx
+        .send(order_book)
+        .await
+        .map_err(|e| MmError::Exchange {
+            exchange: Exchange::Coinbase,
+            message: format!("failed to send order book update: {}", e),
+        })?;
 
     Ok(())
 }
@@ -513,15 +515,21 @@ async fn handle_trade_event(
         let symbol = normalizer::from_exchange_symbol(Exchange::Coinbase, &entry.product_id)
             .unwrap_or_else(|| Symbol::new(&entry.product_id, "UNKNOWN"));
 
-        let price = entry.price.parse::<Decimal>().map_err(|e| MmError::Exchange {
-            exchange: Exchange::Coinbase,
-            message: format!("failed to parse trade price '{}': {}", entry.price, e),
-        })?;
+        let price = entry
+            .price
+            .parse::<Decimal>()
+            .map_err(|e| MmError::Exchange {
+                exchange: Exchange::Coinbase,
+                message: format!("failed to parse trade price '{}': {}", entry.price, e),
+            })?;
 
-        let quantity = entry.size.parse::<Decimal>().map_err(|e| MmError::Exchange {
-            exchange: Exchange::Coinbase,
-            message: format!("failed to parse trade size '{}': {}", entry.size, e),
-        })?;
+        let quantity = entry
+            .size
+            .parse::<Decimal>()
+            .map_err(|e| MmError::Exchange {
+                exchange: Exchange::Coinbase,
+                message: format!("failed to parse trade size '{}': {}", entry.size, e),
+            })?;
 
         let side = match entry.side.to_uppercase().as_str() {
             "BUY" => Side::Buy,
@@ -529,10 +537,7 @@ async fn handle_trade_event(
             _ => Side::Buy, // Default assumption.
         };
 
-        let timestamp: DateTime<Utc> = entry
-            .time
-            .parse()
-            .unwrap_or_else(|_| Utc::now());
+        let timestamp: DateTime<Utc> = entry.time.parse().unwrap_or_else(|_| Utc::now());
 
         let trade = Trade {
             exchange: Exchange::Coinbase,
@@ -568,10 +573,12 @@ where
         message: format!("failed to serialize subscribe message: {}", e),
     })?;
 
-    sink.send(Message::Text(json)).await.map_err(|e| MmError::Exchange {
-        exchange: Exchange::Coinbase,
-        message: format!("failed to send WebSocket message: {}", e),
-    })?;
+    sink.send(Message::Text(json))
+        .await
+        .map_err(|e| MmError::Exchange {
+            exchange: Exchange::Coinbase,
+            message: format!("failed to send WebSocket message: {}", e),
+        })?;
 
     Ok(())
 }

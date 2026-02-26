@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use axum::extract::Request;
+use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
-use axum::http::{HeaderValue, StatusCode};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -118,7 +118,9 @@ impl GatewayServer {
                 .allow_methods(Any)
                 .allow_headers(Any)
         } else {
-            let origins: Vec<HeaderValue> = self.config.cors_origins
+            let origins: Vec<HeaderValue> = self
+                .config
+                .cors_origins
                 .iter()
                 .filter_map(|o| o.parse().ok())
                 .collect();
@@ -171,9 +173,7 @@ impl GatewayServer {
                 .layer(cors)
                 .layer(trace_layer)
         } else {
-            rest.merge(ws)
-                .layer(cors)
-                .layer(trace_layer)
+            rest.merge(ws).layer(cors).layer(trace_layer)
         }
     }
 

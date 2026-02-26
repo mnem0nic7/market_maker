@@ -175,7 +175,10 @@ impl StrategyMetricsTracker {
         if !self.metrics.contains_key(strategy_id) {
             self.register_strategy(strategy_id);
         }
-        self.metrics.get_mut(strategy_id).unwrap().total_orders_placed += 1;
+        self.metrics
+            .get_mut(strategy_id)
+            .unwrap()
+            .total_orders_placed += 1;
     }
 
     /// Record that an order was cancelled for the given strategy.
@@ -183,7 +186,10 @@ impl StrategyMetricsTracker {
         if !self.metrics.contains_key(strategy_id) {
             self.register_strategy(strategy_id);
         }
-        self.metrics.get_mut(strategy_id).unwrap().total_orders_cancelled += 1;
+        self.metrics
+            .get_mut(strategy_id)
+            .unwrap()
+            .total_orders_cancelled += 1;
     }
 
     /// Record that an order was rejected for the given strategy.
@@ -191,7 +197,10 @@ impl StrategyMetricsTracker {
         if !self.metrics.contains_key(strategy_id) {
             self.register_strategy(strategy_id);
         }
-        self.metrics.get_mut(strategy_id).unwrap().total_orders_rejected += 1;
+        self.metrics
+            .get_mut(strategy_id)
+            .unwrap()
+            .total_orders_rejected += 1;
     }
 
     /// Set the current unrealized PnL for a strategy (computed externally

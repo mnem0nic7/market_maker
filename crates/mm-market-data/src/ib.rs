@@ -353,11 +353,10 @@ impl MarketDataConnector for IbConnector {
             });
         }
 
-        let entries: Vec<IbSnapshotEntry> =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::InteractiveBrokers,
-                message: format!("failed to parse IB snapshot response: {}", e),
-            })?;
+        let entries: Vec<IbSnapshotEntry> = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::InteractiveBrokers,
+            message: format!("failed to parse IB snapshot response: {}", e),
+        })?;
 
         let entry = entries.first().ok_or_else(|| MmError::Exchange {
             exchange: Exchange::InteractiveBrokers,
@@ -407,11 +406,10 @@ async fn handle_ib_ws_message(
     trade_tx: &mpsc::Sender<Trade>,
     conid_symbol_map: &HashMap<String, Symbol>,
 ) -> MmResult<()> {
-    let msg: serde_json::Value =
-        serde_json::from_str(text).map_err(|e| MmError::Exchange {
-            exchange: Exchange::InteractiveBrokers,
-            message: format!("failed to parse IB WS message: {}", e),
-        })?;
+    let msg: serde_json::Value = serde_json::from_str(text).map_err(|e| MmError::Exchange {
+        exchange: Exchange::InteractiveBrokers,
+        message: format!("failed to parse IB WS message: {}", e),
+    })?;
 
     // IB sends various message types. Market data updates contain a "conid" field.
     let conid = if let Some(c) = msg.get("conid") {
@@ -483,10 +481,13 @@ async fn handle_ib_ws_message(
             sequence: 0,
         };
 
-        book_tx.send(order_book).await.map_err(|e| MmError::Exchange {
-            exchange: Exchange::InteractiveBrokers,
-            message: format!("failed to send order book update: {}", e),
-        })?;
+        book_tx
+            .send(order_book)
+            .await
+            .map_err(|e| MmError::Exchange {
+                exchange: Exchange::InteractiveBrokers,
+                message: format!("failed to send order book update: {}", e),
+            })?;
     }
 
     // If we have a last price (field 31), emit a synthetic trade event.
@@ -549,9 +550,7 @@ fn parse_ib_decimal(s: &str) -> Option<Decimal> {
 /// Build a single-level price vector from optional price and size strings.
 fn parse_level(price_str: Option<&str>, size_str: Option<&str>) -> Vec<PriceLevel> {
     if let Some(price) = price_str.and_then(parse_ib_decimal) {
-        let quantity = size_str
-            .and_then(parse_ib_decimal)
-            .unwrap_or(Decimal::ZERO);
+        let quantity = size_str.and_then(parse_ib_decimal).unwrap_or(Decimal::ZERO);
         vec![PriceLevel { price, quantity }]
     } else {
         Vec::new()
@@ -579,10 +578,7 @@ mod tests {
 
     #[test]
     fn parse_ib_decimal_with_commas() {
-        assert_eq!(
-            parse_ib_decimal("1,234.56"),
-            Some(Decimal::new(123456, 2))
-        );
+        assert_eq!(parse_ib_decimal("1,234.56"), Some(Decimal::new(123456, 2)));
     }
 
     #[test]

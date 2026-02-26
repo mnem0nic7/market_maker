@@ -5,8 +5,8 @@
 //! using the [`ReplayEngine`], and returns the top-N results ranked by the
 //! chosen [`OptimizationMetric`].
 
-use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -178,10 +178,7 @@ impl ParameterOptimizer {
 
         results.truncate(config.top_n);
 
-        info!(
-            returned = results.len(),
-            "Optimisation complete"
-        );
+        info!(returned = results.len(), "Optimisation complete");
 
         results
     }
@@ -195,9 +192,7 @@ impl ParameterOptimizer {
 ///
 /// Each element of the returned vector is a single combination expressed as a
 /// `Vec<(name, value)>` list.
-pub fn cartesian_product(
-    ranges: &[ParameterRange],
-) -> Vec<Vec<(String, serde_json::Value)>> {
+pub fn cartesian_product(ranges: &[ParameterRange]) -> Vec<Vec<(String, serde_json::Value)>> {
     let mut result: Vec<Vec<(String, serde_json::Value)>> = vec![vec![]];
 
     for range in ranges {
@@ -244,24 +239,12 @@ pub fn merge_params(
 /// Extract a scalar f64 from a [`BacktestResult`] for the given metric.
 pub fn extract_metric(result: &BacktestResult, metric: &OptimizationMetric) -> f64 {
     match metric {
-        OptimizationMetric::Sharpe => {
-            result.sharpe_ratio.to_f64().unwrap_or(0.0)
-        }
-        OptimizationMetric::Sortino => {
-            result.sortino_ratio.to_f64().unwrap_or(0.0)
-        }
-        OptimizationMetric::TotalPnl => {
-            result.total_pnl.to_f64().unwrap_or(0.0)
-        }
-        OptimizationMetric::MaxDrawdown => {
-            result.max_drawdown.to_f64().unwrap_or(0.0)
-        }
-        OptimizationMetric::ProfitFactor => {
-            result.profit_factor.to_f64().unwrap_or(0.0)
-        }
-        OptimizationMetric::WinRate => {
-            result.win_rate.to_f64().unwrap_or(0.0)
-        }
+        OptimizationMetric::Sharpe => result.sharpe_ratio.to_f64().unwrap_or(0.0),
+        OptimizationMetric::Sortino => result.sortino_ratio.to_f64().unwrap_or(0.0),
+        OptimizationMetric::TotalPnl => result.total_pnl.to_f64().unwrap_or(0.0),
+        OptimizationMetric::MaxDrawdown => result.max_drawdown.to_f64().unwrap_or(0.0),
+        OptimizationMetric::ProfitFactor => result.profit_factor.to_f64().unwrap_or(0.0),
+        OptimizationMetric::WinRate => result.win_rate.to_f64().unwrap_or(0.0),
     }
 }
 
@@ -284,10 +267,7 @@ impl StrategyBox {
 /// Create a strategy from a type name and a JSON parameter object.
 ///
 /// Returns `None` if the strategy type is unknown or deserialization fails.
-pub fn create_strategy(
-    strategy_type: &str,
-    params: &serde_json::Value,
-) -> Option<StrategyBox> {
+pub fn create_strategy(strategy_type: &str, params: &serde_json::Value) -> Option<StrategyBox> {
     let exchange = params
         .get("exchange")
         .and_then(|v| serde_json::from_value::<Exchange>(v.clone()).ok())
@@ -324,9 +304,9 @@ pub fn create_strategy(
         params
             .get(key)
             .and_then(|v| {
-                v.as_u64().map(|n| n as usize).or_else(|| {
-                    v.as_str().and_then(|s| s.parse().ok())
-                })
+                v.as_u64()
+                    .map(|n| n as usize)
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
             })
             .unwrap_or(default)
     };
@@ -335,7 +315,8 @@ pub fn create_strategy(
         params
             .get(key)
             .and_then(|v| {
-                v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
             })
             .unwrap_or(default)
     };
@@ -344,7 +325,8 @@ pub fn create_strategy(
         params
             .get(key)
             .and_then(|v| {
-                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
             })
             .unwrap_or(default)
     };
@@ -399,7 +381,9 @@ pub fn create_strategy(
                 ),
                 session_duration_secs: i64_param("session_duration_secs", 3600),
             };
-            Some(StrategyBox(Box::new(AvellanedaStoikovStrategy::new(config))))
+            Some(StrategyBox(Box::new(AvellanedaStoikovStrategy::new(
+                config,
+            ))))
         }
         "twap" => {
             let order_size = dec_param("order_size", Decimal::new(1, 2));
@@ -452,7 +436,10 @@ pub fn create_strategy(
                 exchange,
                 symbol,
                 lookback_periods: usize_param("lookback_periods", num_levels.max(2)),
-                entry_threshold_bps: dec_param("entry_threshold_bps", spread_bps * Decimal::new(5, 0)),
+                entry_threshold_bps: dec_param(
+                    "entry_threshold_bps",
+                    spread_bps * Decimal::new(5, 0),
+                ),
                 exit_threshold_bps: dec_param("exit_threshold_bps", spread_bps),
                 order_size,
                 trailing_stop_bps: dec_param("trailing_stop_bps", spread_bps * Decimal::new(3, 0)),
@@ -524,10 +511,7 @@ mod tests {
         let ranges = vec![
             ParameterRange {
                 name: "spread_bps".to_string(),
-                values: vec![
-                    serde_json::json!(5),
-                    serde_json::json!(10),
-                ],
+                values: vec![serde_json::json!(5), serde_json::json!(10)],
             },
             ParameterRange {
                 name: "num_levels".to_string(),
@@ -551,13 +535,11 @@ mod tests {
         }
 
         // Verify all combinations are present
-        let spread_values: Vec<&serde_json::Value> =
-            combos.iter().map(|c| &c[0].1).collect();
+        let spread_values: Vec<&serde_json::Value> = combos.iter().map(|c| &c[0].1).collect();
         assert!(spread_values.contains(&&serde_json::json!(5)));
         assert!(spread_values.contains(&&serde_json::json!(10)));
 
-        let level_values: Vec<&serde_json::Value> =
-            combos.iter().map(|c| &c[1].1).collect();
+        let level_values: Vec<&serde_json::Value> = combos.iter().map(|c| &c[1].1).collect();
         assert!(level_values.contains(&&serde_json::json!(2)));
         assert!(level_values.contains(&&serde_json::json!(3)));
         assert!(level_values.contains(&&serde_json::json!(5)));
@@ -744,10 +726,7 @@ mod tests {
                 },
                 ParameterRange {
                     name: "num_levels".to_string(),
-                    values: vec![
-                        serde_json::json!(2),
-                        serde_json::json!(3),
-                    ],
+                    values: vec![serde_json::json!(2), serde_json::json!(3)],
                 },
             ],
             backtest_config: BacktestConfig::default(),
@@ -819,10 +798,7 @@ mod tests {
             }),
             param_ranges: vec![ParameterRange {
                 name: "num_levels".to_string(),
-                values: vec![
-                    serde_json::json!(2),
-                    serde_json::json!(3),
-                ],
+                values: vec![serde_json::json!(2), serde_json::json!(3)],
             }],
             backtest_config: BacktestConfig::default(),
             metric: OptimizationMetric::Sharpe,

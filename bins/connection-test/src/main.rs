@@ -131,11 +131,18 @@ async fn main() -> anyhow::Result<()> {
 
         match outcome {
             Ok(count) => {
-                println!("  ✓  {:<12} OK  ({} assets, {:.0?})", display_name, count, elapsed);
+                println!(
+                    "  ✓  {:<12} OK  ({} assets, {:.0?})",
+                    display_name, count, elapsed
+                );
                 passed += 1;
             }
             Err(e) => {
-                let short = if e.len() > 120 { format!("{}...", &e[..120]) } else { e };
+                let short = if e.len() > 120 {
+                    format!("{}...", &e[..120])
+                } else {
+                    e
+                };
                 println!("  ✗  {:<12} FAIL", display_name);
                 println!("     {}", short);
                 failed += 1;
