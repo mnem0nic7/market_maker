@@ -42,7 +42,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
 // Constants

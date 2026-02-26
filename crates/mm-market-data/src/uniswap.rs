@@ -397,7 +397,7 @@ impl MarketDataConnector for UniswapConnector {
 /// Build an `eth_subscribe` JSON-RPC request for Swap event logs on the given
 /// pool addresses.
 fn build_eth_subscribe_logs(pool_addresses: &[String]) -> String {
-    let addresses_json: Vec<String> = pool_addresses
+    let _addresses_json: Vec<String> = pool_addresses
         .iter()
         .map(|a| format!("\"{}\"", a))
         .collect();
@@ -743,7 +743,7 @@ async fn handle_ws_message(
 
     // Parse amount1 (word 1: bytes 64..128) — int256, signed.
     let amount1_hex = &hex_data[64..128];
-    let amount1 = parse_signed_hex_to_f64(amount1_hex);
+    let _amount1 = parse_signed_hex_to_f64(amount1_hex);
 
     // Parse sqrtPriceX96 (word 2: bytes 128..192) — uint160.
     let sqrt_price_hex = &hex_data[128..192];

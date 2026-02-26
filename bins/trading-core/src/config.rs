@@ -63,6 +63,75 @@ impl Default for TradingConfig {
     }
 }
 
+impl TradingConfig {
+    /// Validate the configuration, collecting **all** errors before returning.
+    ///
+    /// Returns `Ok(())` when the config is valid. Non-fatal warnings (e.g. no
+    /// exchange enabled) are emitted via `tracing::warn` but do not cause a
+    /// failure.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let mut errors: Vec<String> = Vec::new();
+
+        // 1. tick_interval_ms must be > 0 (prevents busy-loop)
+        if self.trading_loop.tick_interval_ms == 0 {
+            errors.push(
+                "trading_loop.tick_interval_ms must be > 0 (zero causes a busy-loop)".to_string(),
+            );
+        }
+
+        // 2. Enabled exchanges must have non-empty api_key and secret_key
+        for (name, ec) in &self.exchanges {
+            if ec.enabled {
+                if ec.api_key.trim().is_empty() {
+                    errors.push(format!(
+                        "exchanges.{name}: enabled but api_key is empty",
+                    ));
+                }
+                if ec.secret_key.trim().is_empty() {
+                    errors.push(format!(
+                        "exchanges.{name}: enabled but secret_key is empty",
+                    ));
+                }
+            }
+        }
+
+        // 3. Risk limits must be sensible
+        if self.risk.pnl_limits.max_daily_loss <= Decimal::ZERO {
+            errors.push(
+                "risk.pnl_limits.max_daily_loss must be positive".to_string(),
+            );
+        }
+        if self.risk.rate_limits.max_orders_per_second == 0 {
+            errors.push(
+                "risk.rate_limits.max_orders_per_second must be > 0".to_string(),
+            );
+        }
+
+        // 4. Gateway port must be in valid non-privileged range
+        if self.gateway.enabled && !(1024..=65535).contains(&self.gateway.port) {
+            errors.push(format!(
+                "gateway.port must be in range 1024..=65535, got {}",
+                self.gateway.port,
+            ));
+        }
+
+        // 5. At least one exchange should be enabled (warn, not error)
+        let any_enabled = self.exchanges.values().any(|ec| ec.enabled);
+        if !any_enabled {
+            tracing::warn!("no exchanges are enabled — the bot will not trade");
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!(
+                "configuration validation failed:\n  - {}",
+                errors.join("\n  - ")
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Exchange
 // ---------------------------------------------------------------------------
