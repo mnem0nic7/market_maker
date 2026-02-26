@@ -99,9 +99,7 @@ impl KrakenExecutionConnector {
             http,
             connected: Arc::new(AtomicBool::new(false)),
             ws_handle: None,
-            nonce: Arc::new(parking_lot::Mutex::new(
-                Utc::now().timestamp_millis() as u64,
-            )),
+            nonce: Arc::new(parking_lot::Mutex::new(Utc::now().timestamp_millis() as u64)),
         }
     }
 
@@ -247,11 +245,10 @@ impl KrakenExecutionConnector {
                 return Err(last_error.unwrap());
             }
 
-            let body: serde_json::Value =
-                resp.json().await.map_err(|e| MmError::Exchange {
-                    exchange: Exchange::Kraken,
-                    message: format!("parse error: {}", e),
-                })?;
+            let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+                exchange: Exchange::Kraken,
+                message: format!("parse error: {}", e),
+            })?;
 
             if !status.is_success() {
                 return Err(MmError::Exchange {
@@ -289,7 +286,9 @@ impl KrakenExecutionConnector {
     // -----------------------------------------------------------------------
 
     async fn get_ws_token(&self) -> MmResult<String> {
-        let result = self.private_post("/0/private/GetWebSocketsToken", &[]).await?;
+        let result = self
+            .private_post("/0/private/GetWebSocketsToken", &[])
+            .await?;
         result["token"]
             .as_str()
             .map(|s| s.to_string())
@@ -315,10 +314,7 @@ impl KrakenExecutionConnector {
     /// Best-effort conversion from a Kraken pair back to our `Symbol`.
     fn from_kraken_pair(pair: &str) -> Symbol {
         // Strip the leading X/Z prefixes Kraken sometimes uses.
-        let cleaned = pair
-            .strip_prefix('X')
-            .or(Some(pair))
-            .unwrap_or(pair);
+        let cleaned = pair.strip_prefix('X').or(Some(pair)).unwrap_or(pair);
 
         for quote in &["USDT", "ZUSD", "USD", "EUR", "XBT", "ETH"] {
             if let Some(base) = cleaned.strip_suffix(quote) {
@@ -374,10 +370,7 @@ impl KrakenExecutionConnector {
                 }
             });
 
-            if let Err(e) = write
-                .send(WsMessage::Text(subscribe.to_string()))
-                .await
-            {
+            if let Err(e) = write.send(WsMessage::Text(subscribe.to_string())).await {
                 error!(error = %e, "Kraken: failed to send subscribe");
                 connected.store(false, Ordering::SeqCst);
                 return;
@@ -418,15 +411,11 @@ impl KrakenExecutionConnector {
         })
     }
 
-    async fn handle_ws_message(
-        text: &str,
-        update_tx: &mpsc::Sender<OrderUpdate>,
-    ) -> MmResult<()> {
-        let msg: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| MmError::Exchange {
-                exchange: Exchange::Kraken,
-                message: format!("JSON parse error: {}", e),
-            })?;
+    async fn handle_ws_message(text: &str, update_tx: &mpsc::Sender<OrderUpdate>) -> MmResult<()> {
+        let msg: serde_json::Value = serde_json::from_str(text).map_err(|e| MmError::Exchange {
+            exchange: Exchange::Kraken,
+            message: format!("JSON parse error: {}", e),
+        })?;
 
         let channel = msg["channel"].as_str().unwrap_or("");
         if channel != "executions" {

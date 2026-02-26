@@ -461,23 +461,17 @@ fn load_config() -> Result<PipelineConfig> {
     let settings = config::Config::builder()
         // Start with defaults
         .set_default("nats_url", "nats://127.0.0.1:4222")?
-        .set_default("database_url", "postgresql://postgres:postgres@localhost:5432/market_maker")?
+        .set_default(
+            "database_url",
+            "postgresql://postgres:postgres@localhost:5432/market_maker",
+        )?
         .set_default("audit_file_path", "data/audit.jsonl")?
         .set_default("stream_name", "EVENTS")?
         // Layer on config file if present
-        .add_source(
-            config::File::with_name("config/data-pipeline")
-                .required(false),
-        )
-        .add_source(
-            config::File::with_name("config/default")
-                .required(false),
-        )
+        .add_source(config::File::with_name("config/data-pipeline").required(false))
+        .add_source(config::File::with_name("config/default").required(false))
         // Override with environment variables (prefixed with PIPELINE_)
-        .add_source(
-            config::Environment::with_prefix("PIPELINE")
-                .separator("_"),
-        )
+        .add_source(config::Environment::with_prefix("PIPELINE").separator("_"))
         .build()
         .context("failed to build config")?;
 

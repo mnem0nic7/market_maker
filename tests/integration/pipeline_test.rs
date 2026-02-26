@@ -10,8 +10,8 @@ use rust_decimal_macros::dec;
 use mm_core::{
     traits::Strategy,
     types::{
-        Exchange, MarketSnapshot, NewOrder, OrderAction, OrderBook,
-        Position, PriceLevel, Side, Symbol, Trade,
+        Exchange, MarketSnapshot, NewOrder, OrderAction, OrderBook, Position, PriceLevel, Side,
+        Symbol, Trade,
     },
     PortfolioRisk, RiskAction,
 };
@@ -31,12 +31,24 @@ fn make_order_book(mid: Decimal) -> OrderBook {
         exchange: Exchange::Simulated,
         symbol: make_symbol(),
         bids: vec![
-            PriceLevel { price: mid - spread, quantity: dec!(1.0) },
-            PriceLevel { price: mid - spread * dec!(2), quantity: dec!(2.0) },
+            PriceLevel {
+                price: mid - spread,
+                quantity: dec!(1.0),
+            },
+            PriceLevel {
+                price: mid - spread * dec!(2),
+                quantity: dec!(2.0),
+            },
         ],
         asks: vec![
-            PriceLevel { price: mid + spread, quantity: dec!(1.0) },
-            PriceLevel { price: mid + spread * dec!(2), quantity: dec!(2.0) },
+            PriceLevel {
+                price: mid + spread,
+                quantity: dec!(1.0),
+            },
+            PriceLevel {
+                price: mid + spread * dec!(2),
+                quantity: dec!(2.0),
+            },
         ],
         timestamp: Utc::now(),
         sequence: 1,
@@ -156,7 +168,10 @@ async fn risk_engine_rejects_oversized_order() {
 
     let result = risk_engine.evaluate_order(&order, &portfolio).await;
     assert!(
-        matches!(result, RiskAction::Reject { .. } | RiskAction::ReduceSize { .. }),
+        matches!(
+            result,
+            RiskAction::Reject { .. } | RiskAction::ReduceSize { .. }
+        ),
         "risk should reject oversized order: {result:?}"
     );
 }

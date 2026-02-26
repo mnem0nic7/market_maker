@@ -250,10 +250,7 @@ impl IbExecutionConnector {
     /// Handle IB's confirmation prompt workflow. When an order submission
     /// returns a reply prompt instead of a direct order ID, we must confirm it.
     async fn confirm_reply(&self, reply_id: &str) -> MmResult<String> {
-        let url = format!(
-            "{}/iserver/reply/{}",
-            self.config.base_url, reply_id
-        );
+        let url = format!("{}/iserver/reply/{}", self.config.base_url, reply_id);
 
         let body = IbReplyConfirmation { confirmed: true };
 
@@ -270,19 +267,15 @@ impl IbExecutionConnector {
             })?;
 
         let status = resp.status();
-        let resp_body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::InteractiveBrokers,
-                message: format!("reply confirmation parse error: {}", e),
-            })?;
+        let resp_body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::InteractiveBrokers,
+            message: format!("reply confirmation parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             return Err(MmError::Exchange {
                 exchange: Exchange::InteractiveBrokers,
-                message: format!(
-                    "reply confirmation failed ({}): {}",
-                    status, resp_body
-                ),
+                message: format!("reply confirmation failed ({}): {}", status, resp_body),
             });
         }
 
@@ -324,11 +317,10 @@ impl IbExecutionConnector {
             })?;
 
         let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::InteractiveBrokers,
-                message: format!("fetch open orders parse error: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::InteractiveBrokers,
+            message: format!("fetch open orders parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             return Err(MmError::Exchange {
@@ -363,8 +355,7 @@ impl IbExecutionConnector {
         connected: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(Duration::from_secs(ORDER_POLL_INTERVAL_SECS));
+            let mut interval = tokio::time::interval(Duration::from_secs(ORDER_POLL_INTERVAL_SECS));
             // Track previously seen order states to only emit changes.
             let mut known_states: HashMap<String, String> = HashMap::new();
 
@@ -416,10 +407,7 @@ impl IbExecutionConnector {
                 };
 
                 for order in &orders {
-                    let order_id_str = order
-                        .order_id
-                        .map(|id| id.to_string())
-                        .unwrap_or_default();
+                    let order_id_str = order.order_id.map(|id| id.to_string()).unwrap_or_default();
 
                     if order_id_str.is_empty() {
                         continue;
@@ -590,11 +578,10 @@ impl ExecutionConnector for IbExecutionConnector {
             })?;
 
         let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::InteractiveBrokers,
-                message: format!("submit_order parse error: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::InteractiveBrokers,
+            message: format!("submit_order parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             let msg = body
@@ -611,12 +598,14 @@ impl ExecutionConnector for IbExecutionConnector {
         let responses: Vec<IbOrderResponse> = if body.is_array() {
             serde_json::from_value(body.clone()).unwrap_or_default()
         } else {
-            vec![serde_json::from_value(body.clone()).unwrap_or(IbOrderResponse {
-                order_id: None,
-                id: None,
-                message: None,
-                order_status: None,
-            })]
+            vec![
+                serde_json::from_value(body.clone()).unwrap_or(IbOrderResponse {
+                    order_id: None,
+                    id: None,
+                    message: None,
+                    order_status: None,
+                }),
+            ]
         };
 
         let first = responses.first().ok_or_else(|| MmError::Exchange {
@@ -678,8 +667,7 @@ impl ExecutionConnector for IbExecutionConnector {
 
         let status = resp.status();
         if !status.is_success() {
-            let body: serde_json::Value =
-                resp.json().await.unwrap_or(serde_json::Value::Null);
+            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
             let msg = body
                 .get("error")
                 .and_then(|v| v.as_str())
@@ -771,11 +759,10 @@ impl ExecutionConnector for IbExecutionConnector {
             })?;
 
         let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::InteractiveBrokers,
-                message: format!("fetch_balances parse error: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::InteractiveBrokers,
+            message: format!("fetch_balances parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             return Err(MmError::Exchange {

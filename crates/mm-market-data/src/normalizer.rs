@@ -49,7 +49,11 @@ pub fn from_exchange_symbol(exchange: Exchange, raw: &str) -> Option<Symbol> {
         Exchange::Raydium => raydium_from_exchange(raw),
         Exchange::Simulated => {
             let parts: Vec<&str> = raw.splitn(2, '/').collect();
-            if parts.len() == 2 { Some(Symbol::new(parts[0], parts[1])) } else { None }
+            if parts.len() == 2 {
+                Some(Symbol::new(parts[0], parts[1]))
+            } else {
+                None
+            }
         }
     }
 }
@@ -60,10 +64,9 @@ pub fn from_exchange_symbol(exchange: Exchange, raw: &str) -> Option<Symbol> {
 
 /// Well-known quote assets on Binance (checked in order — longest first).
 const BINANCE_QUOTES: &[&str] = &[
-    "BUSD", "USDT", "USDC", "TUSD", "FDUSD", "BKRW", "IDRT", "BIDR",
-    "BVND", "DOGE", "SHIB", "EUR", "GBP", "AUD", "BRL", "TRY", "PLN",
-    "RON", "ARS", "UAH", "NGN", "BTC", "ETH", "BNB", "XRP", "SOL",
-    "DAI", "USD", "VAI", "UST",
+    "BUSD", "USDT", "USDC", "TUSD", "FDUSD", "BKRW", "IDRT", "BIDR", "BVND", "DOGE", "SHIB", "EUR",
+    "GBP", "AUD", "BRL", "TRY", "PLN", "RON", "ARS", "UAH", "NGN", "BTC", "ETH", "BNB", "XRP",
+    "SOL", "DAI", "USD", "VAI", "UST",
 ];
 
 fn binance_to_exchange(symbol: &Symbol) -> String {
@@ -195,7 +198,8 @@ fn kraken_from_exchange(raw: &str) -> Option<Symbol> {
     let upper = raw.to_uppercase();
     for (k_quote, canonical_quote) in KRAKEN_TO_CANONICAL.iter() {
         // Only try assets that look like quote currencies (start with Z or are fiat-like).
-        let is_quote = k_quote.starts_with('Z') || ["USD", "EUR", "GBP", "CAD", "JPY", "AUD", "CHF"].contains(canonical_quote);
+        let is_quote = k_quote.starts_with('Z')
+            || ["USD", "EUR", "GBP", "CAD", "JPY", "AUD", "CHF"].contains(canonical_quote);
         if is_quote && upper.ends_with(k_quote) {
             let base_part = &upper[..upper.len() - k_quote.len()];
             if !base_part.is_empty() {
@@ -268,13 +272,20 @@ fn ib_from_exchange(raw: &str) -> Option<Symbol> {
 // ---------------------------------------------------------------------------
 
 fn uniswap_to_exchange(symbol: &Symbol) -> String {
-    format!("{}/{}", symbol.base.to_uppercase(), symbol.quote.to_uppercase())
+    format!(
+        "{}/{}",
+        symbol.base.to_uppercase(),
+        symbol.quote.to_uppercase()
+    )
 }
 
 fn uniswap_from_exchange(raw: &str) -> Option<Symbol> {
     let parts: Vec<&str> = raw.splitn(2, '/').collect();
     if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
-        Some(Symbol::new(parts[0].trim().to_uppercase(), parts[1].trim().to_uppercase()))
+        Some(Symbol::new(
+            parts[0].trim().to_uppercase(),
+            parts[1].trim().to_uppercase(),
+        ))
     } else {
         None
     }
@@ -285,13 +296,20 @@ fn uniswap_from_exchange(raw: &str) -> Option<Symbol> {
 // ---------------------------------------------------------------------------
 
 fn raydium_to_exchange(symbol: &Symbol) -> String {
-    format!("{}/{}", symbol.base.to_uppercase(), symbol.quote.to_uppercase())
+    format!(
+        "{}/{}",
+        symbol.base.to_uppercase(),
+        symbol.quote.to_uppercase()
+    )
 }
 
 fn raydium_from_exchange(raw: &str) -> Option<Symbol> {
     let parts: Vec<&str> = raw.splitn(2, '/').collect();
     if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
-        Some(Symbol::new(parts[0].trim().to_uppercase(), parts[1].trim().to_uppercase()))
+        Some(Symbol::new(
+            parts[0].trim().to_uppercase(),
+            parts[1].trim().to_uppercase(),
+        ))
     } else {
         None
     }

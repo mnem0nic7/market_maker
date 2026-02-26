@@ -193,10 +193,7 @@ impl AlpacaExecutionConnector {
                 }
             });
 
-            if let Err(e) = write
-                .send(WsMessage::Text(auth_msg.to_string()))
-                .await
-            {
+            if let Err(e) = write.send(WsMessage::Text(auth_msg.to_string())).await {
                 error!(error = %e, "Alpaca: failed to send auth message");
                 connected.store(false, Ordering::SeqCst);
                 return;
@@ -241,10 +238,7 @@ impl AlpacaExecutionConnector {
                 }
             });
 
-            if let Err(e) = write
-                .send(WsMessage::Text(listen_msg.to_string()))
-                .await
-            {
+            if let Err(e) = write.send(WsMessage::Text(listen_msg.to_string())).await {
                 error!(error = %e, "Alpaca: failed to send listen message");
                 connected.store(false, Ordering::SeqCst);
                 return;
@@ -264,9 +258,7 @@ impl AlpacaExecutionConnector {
 
                 match msg {
                     WsMessage::Text(text) => {
-                        if let Err(e) =
-                            Self::handle_ws_message(&text, &update_tx).await
-                        {
+                        if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
                             warn!(error = %e, "Alpaca: failed to process WS message");
                         }
                     }
@@ -288,15 +280,11 @@ impl AlpacaExecutionConnector {
         })
     }
 
-    async fn handle_ws_message(
-        text: &str,
-        update_tx: &mpsc::Sender<OrderUpdate>,
-    ) -> MmResult<()> {
-        let msg: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| MmError::Exchange {
-                exchange: Exchange::Alpaca,
-                message: format!("JSON parse error: {}", e),
-            })?;
+    async fn handle_ws_message(text: &str, update_tx: &mpsc::Sender<OrderUpdate>) -> MmResult<()> {
+        let msg: serde_json::Value = serde_json::from_str(text).map_err(|e| MmError::Exchange {
+            exchange: Exchange::Alpaca,
+            message: format!("JSON parse error: {}", e),
+        })?;
 
         let stream = msg["stream"].as_str().unwrap_or("");
 
@@ -313,10 +301,13 @@ impl AlpacaExecutionConnector {
             "Alpaca: trade update received"
         );
 
-        update_tx.send(update).await.map_err(|e| MmError::Exchange {
-            exchange: Exchange::Alpaca,
-            message: format!("channel send error: {}", e),
-        })?;
+        update_tx
+            .send(update)
+            .await
+            .map_err(|e| MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("channel send error: {}", e),
+            })?;
 
         Ok(())
     }
@@ -394,9 +385,7 @@ impl AlpacaExecutionConnector {
                     .as_str()
                     .and_then(|s| s.parse::<Decimal>().ok())
             });
-        let last_fill_quantity = data["qty"]
-            .as_str()
-            .and_then(|s| s.parse::<Decimal>().ok());
+        let last_fill_quantity = data["qty"].as_str().and_then(|s| s.parse::<Decimal>().ok());
 
         let timestamp = order["updated_at"]
             .as_str()
@@ -509,11 +498,10 @@ impl ExecutionConnector for AlpacaExecutionConnector {
             })?;
 
         let status = resp.status();
-        let resp_body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Alpaca,
-                message: format!("submit_order parse error: {}", e),
-            })?;
+        let resp_body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Alpaca,
+            message: format!("submit_order parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             let error_msg = resp_body["message"]
@@ -563,11 +551,8 @@ impl ExecutionConnector for AlpacaExecutionConnector {
 
         let status = resp.status();
         if !status.is_success() {
-            let body: serde_json::Value =
-                resp.json().await.unwrap_or(serde_json::Value::Null);
-            let msg = body["message"]
-                .as_str()
-                .unwrap_or("unknown error");
+            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+            let msg = body["message"].as_str().unwrap_or("unknown error");
             return Err(MmError::Exchange {
                 exchange: Exchange::Alpaca,
                 message: format!("cancel_order failed ({}): {}", status, msg),
@@ -601,22 +586,18 @@ impl ExecutionConnector for AlpacaExecutionConnector {
         let status = resp.status();
         // Alpaca returns 207 Multi-Status with an array of cancelled orders.
         if !status.is_success() && status.as_u16() != 207 {
-            let body: serde_json::Value =
-                resp.json().await.unwrap_or(serde_json::Value::Null);
-            let msg = body["message"]
-                .as_str()
-                .unwrap_or("unknown");
+            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+            let msg = body["message"].as_str().unwrap_or("unknown");
             return Err(MmError::Exchange {
                 exchange: Exchange::Alpaca,
                 message: format!("cancel_all failed ({}): {}", status, msg),
             });
         }
 
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Alpaca,
-                message: format!("cancel_all parse error: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Alpaca,
+            message: format!("cancel_all parse error: {}", e),
+        })?;
 
         let count = body.as_array().map(|a| a.len() as u32).unwrap_or(0);
         info!(count, "Alpaca: cancel_all completed");
@@ -639,11 +620,10 @@ impl ExecutionConnector for AlpacaExecutionConnector {
             })?;
 
         let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Alpaca,
-                message: format!("fetch_balances parse error: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Alpaca,
+            message: format!("fetch_balances parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             return Err(MmError::Exchange {

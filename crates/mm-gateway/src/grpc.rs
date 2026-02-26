@@ -59,7 +59,11 @@ impl pb::market_data::market_data_service_server::MarketDataService for MarketDa
             .ok_or_else(|| Status::invalid_argument("symbol is required"))?;
 
         let exchange_enum = map_exchange(req.exchange)?;
-        let canonical = format!("{}/{}", symbol.base.to_uppercase(), symbol.quote.to_uppercase());
+        let canonical = format!(
+            "{}/{}",
+            symbol.base.to_uppercase(),
+            symbol.quote.to_uppercase()
+        );
 
         let books = self.state.order_books.read().await;
         let book = books
@@ -102,10 +106,8 @@ impl pb::market_data::market_data_service_server::MarketDataService for MarketDa
         }))
     }
 
-    type StreamOrderBookStream = futures::stream::BoxStream<
-        'static,
-        Result<pb::common::OrderBook, Status>,
-    >;
+    type StreamOrderBookStream =
+        futures::stream::BoxStream<'static, Result<pb::common::OrderBook, Status>>;
 
     async fn stream_order_book(
         &self,
@@ -117,10 +119,8 @@ impl pb::market_data::market_data_service_server::MarketDataService for MarketDa
         Ok(Response::new(Box::pin(stream)))
     }
 
-    type StreamTradesStream = futures::stream::BoxStream<
-        'static,
-        Result<pb::common::Trade, Status>,
-    >;
+    type StreamTradesStream =
+        futures::stream::BoxStream<'static, Result<pb::common::Trade, Status>>;
 
     async fn stream_trades(
         &self,
@@ -212,10 +212,8 @@ impl pb::execution::execution_service_server::ExecutionService for ExecutionServ
         }))
     }
 
-    type StreamOrderUpdatesStream = futures::stream::BoxStream<
-        'static,
-        Result<pb::execution::OrderUpdate, Status>,
-    >;
+    type StreamOrderUpdatesStream =
+        futures::stream::BoxStream<'static, Result<pb::execution::OrderUpdate, Status>>;
 
     async fn stream_order_updates(
         &self,
@@ -392,9 +390,7 @@ impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceI
         let id = request.into_inner().strategy_id;
         let mut strategies = self.state.strategies.write().await;
 
-        let strategy = strategies
-            .iter_mut()
-            .find(|s| s.config.strategy_id == id);
+        let strategy = strategies.iter_mut().find(|s| s.config.strategy_id == id);
 
         match strategy {
             Some(s) => {
@@ -424,9 +420,7 @@ impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceI
         let id = request.into_inner().strategy_id;
         let mut strategies = self.state.strategies.write().await;
 
-        let strategy = strategies
-            .iter_mut()
-            .find(|s| s.config.strategy_id == id);
+        let strategy = strategies.iter_mut().find(|s| s.config.strategy_id == id);
 
         match strategy {
             Some(s) => {
@@ -455,9 +449,7 @@ impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceI
         let id = request.into_inner().strategy_id;
         let strategies = self.state.strategies.read().await;
 
-        let strategy = strategies
-            .iter()
-            .find(|s| s.config.strategy_id == id);
+        let strategy = strategies.iter().find(|s| s.config.strategy_id == id);
 
         match strategy {
             Some(s) => Ok(Response::new(pb::strategy::StrategyDetail {

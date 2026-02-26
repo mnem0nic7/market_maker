@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -34,8 +34,8 @@ use mm_execution::{
     IbExecutionConfig, IbExecutionConnector, KrakenExecutionConfig, KrakenExecutionConnector,
     OrderManager, OrderRouter,
 };
-use mm_gateway::{ApiState, DashboardBroadcaster, GatewayConfig, GatewayServer};
 use mm_gateway::ws::ServerMessage;
+use mm_gateway::{ApiState, DashboardBroadcaster, GatewayConfig, GatewayServer};
 use mm_market_data::{
     AlpacaConfig, AlpacaConnector, BinanceConnector, BinanceMarketDataConfig, CoinbaseConnector,
     IbConfig, IbConnector, KrakenConnector, MarketDataManager,
@@ -174,12 +174,14 @@ async fn main() -> Result<()> {
 
     // ----- (g) Initialize exchange connectors (market data + execution) -----
     let mut md_manager = MarketDataManager::new(book_tx, trade_tx);
-    let mut order_router = OrderRouter::new(Arc::clone(&order_manager), ORDER_UPDATE_CHANNEL_CAPACITY);
+    let mut order_router =
+        OrderRouter::new(Arc::clone(&order_manager), ORDER_UPDATE_CHANNEL_CAPACITY);
 
     // We also need a separate order-update channel for the main loop to
     // process order updates (the router has its own internal one for the OMS,
     // but we need to observe updates too).
-    let (order_update_tx, mut order_update_rx) = mpsc::channel::<OrderUpdate>(ORDER_UPDATE_CHANNEL_CAPACITY);
+    let (order_update_tx, mut order_update_rx) =
+        mpsc::channel::<OrderUpdate>(ORDER_UPDATE_CHANNEL_CAPACITY);
 
     // Track which (exchange, symbols) pairs we're subscribed to.
     let mut subscribed_pairs: Vec<(Exchange, Vec<Symbol>)> = Vec::new();
@@ -308,77 +310,77 @@ async fn main() -> Result<()> {
     let strategy_engine_shared = Arc::new(tokio::sync::Mutex::new(StrategyEngine::new()));
 
     {
-    let mut strategy_engine = strategy_engine_shared.lock().await;
-    for strat_cfg in &cfg.strategies {
-        if !strat_cfg.enabled {
-            debug!(strategy_id = %strat_cfg.strategy_id, "strategy disabled, skipping");
-            continue;
-        }
-
-        let exchange = match parse_exchange(&strat_cfg.exchange) {
-            Some(e) => e,
-            None => {
-                warn!(
-                    strategy_id = %strat_cfg.strategy_id,
-                    exchange = %strat_cfg.exchange,
-                    "unknown exchange for strategy, skipping"
-                );
+        let mut strategy_engine = strategy_engine_shared.lock().await;
+        for strat_cfg in &cfg.strategies {
+            if !strat_cfg.enabled {
+                debug!(strategy_id = %strat_cfg.strategy_id, "strategy disabled, skipping");
                 continue;
             }
-        };
 
-        let symbol = match parse_symbol(&strat_cfg.symbol) {
-            Some(s) => s,
-            None => {
-                warn!(
+            let exchange = match parse_exchange(&strat_cfg.exchange) {
+                Some(e) => e,
+                None => {
+                    warn!(
+                        strategy_id = %strat_cfg.strategy_id,
+                        exchange = %strat_cfg.exchange,
+                        "unknown exchange for strategy, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let symbol = match parse_symbol(&strat_cfg.symbol) {
+                Some(s) => s,
+                None => {
+                    warn!(
+                        strategy_id = %strat_cfg.strategy_id,
+                        symbol = %strat_cfg.symbol,
+                        "invalid symbol for strategy, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let strategy_config = StrategyConfig {
+                strategy_id: strat_cfg.strategy_id.clone(),
+                exchange,
+                symbol: symbol.clone(),
+                strategy_type: strat_cfg.strategy_type.clone(),
+                enabled: strat_cfg.enabled,
+                params: strat_cfg.params.clone(),
+            };
+
+            let strategy = match build_strategy_from_config(&strategy_config) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(
+                        strategy_id = %strat_cfg.strategy_id,
+                        error = %e,
+                        "failed to build strategy, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            match strategy_engine.add_strategy(strategy) {
+                Ok(()) => info!(
                     strategy_id = %strat_cfg.strategy_id,
-                    symbol = %strat_cfg.symbol,
-                    "invalid symbol for strategy, skipping"
-                );
-                continue;
-            }
-        };
-
-        let strategy_config = StrategyConfig {
-            strategy_id: strat_cfg.strategy_id.clone(),
-            exchange,
-            symbol: symbol.clone(),
-            strategy_type: strat_cfg.strategy_type.clone(),
-            enabled: strat_cfg.enabled,
-            params: strat_cfg.params.clone(),
-        };
-
-        let strategy = match build_strategy_from_config(&strategy_config) {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(
+                    strategy_type = %strat_cfg.strategy_type,
+                    "strategy registered"
+                ),
+                Err(e) => error!(
                     strategy_id = %strat_cfg.strategy_id,
                     error = %e,
-                    "failed to build strategy, skipping"
-                );
-                continue;
+                    "failed to register strategy"
+                ),
             }
-        };
-
-        match strategy_engine.add_strategy(strategy) {
-            Ok(()) => info!(
-                strategy_id = %strat_cfg.strategy_id,
-                strategy_type = %strat_cfg.strategy_type,
-                "strategy registered"
-            ),
-            Err(e) => error!(
-                strategy_id = %strat_cfg.strategy_id,
-                error = %e,
-                "failed to register strategy"
-            ),
         }
-    }
 
-    info!(
-        strategy_count = strategy_engine.strategy_count(),
-        active_count = strategy_engine.active_count(),
-        "strategy engine initialized"
-    );
+        info!(
+            strategy_count = strategy_engine.strategy_count(),
+            active_count = strategy_engine.active_count(),
+            "strategy engine initialized"
+        );
     } // drop lock on strategy_engine_shared
 
     // ----- (h2) Initialize strategy metrics tracker -----
@@ -417,11 +419,18 @@ async fn main() -> Result<()> {
         max_orders_per_minute: cfg.risk.rate_limits.max_orders_per_minute,
     })));
 
-    info!(check_count = risk_engine.check_count(), "risk engine initialized");
+    info!(
+        check_count = risk_engine.check_count(),
+        "risk engine initialized"
+    );
 
     // ----- (j) Initialize gateway (REST API + WebSocket) -----
     let metrics = Arc::new(MetricsRegistry::new());
-    let api_state = ApiState::with_engine_and_kill_switch(Arc::clone(&metrics), Arc::clone(&strategy_engine_shared), Arc::clone(&kill_switch));
+    let api_state = ApiState::with_engine_and_kill_switch(
+        Arc::clone(&metrics),
+        Arc::clone(&strategy_engine_shared),
+        Arc::clone(&kill_switch),
+    );
 
     // Create the broadcaster externally so the main loop can publish events.
     let broadcaster = DashboardBroadcaster::new(4096, 1024);
@@ -467,7 +476,10 @@ async fn main() -> Result<()> {
         let _ = shutdown_tx.send(()).await;
     });
 
-    info!("entering main trading loop (tick interval: {}ms)", cfg.trading_loop.tick_interval_ms);
+    info!(
+        "entering main trading loop (tick interval: {}ms)",
+        cfg.trading_loop.tick_interval_ms
+    );
 
     loop {
         tokio::select! {
@@ -975,7 +987,10 @@ async fn handle_order_update(
 
     if let Some(ref order) = updated_order {
         // Route order update to the owning strategy.
-        strategy_engine.lock().await.route_order_update(&order.strategy_id, update);
+        strategy_engine
+            .lock()
+            .await
+            .route_order_update(&order.strategy_id, update);
 
         // Handle fills: update positions.
         if matches!(
@@ -988,10 +1003,7 @@ async fn handle_order_update(
                 let fill = Fill {
                     fill_id: Uuid::new_v4().to_string(),
                     client_order_id: update.client_order_id.clone(),
-                    exchange_order_id: update
-                        .exchange_order_id
-                        .clone()
-                        .unwrap_or_default(),
+                    exchange_order_id: update.exchange_order_id.clone().unwrap_or_default(),
                     exchange: update.exchange,
                     symbol: update.symbol.clone(),
                     side: order.side,
@@ -1006,7 +1018,8 @@ async fn handle_order_update(
                 {
                     let exchange_label = update.exchange.to_string();
                     let side_label = order.side.to_string().to_lowercase();
-                    metrics.fills_total
+                    metrics
+                        .fills_total
                         .with_label_values(&[&exchange_label, &side_label])
                         .inc();
                 }
@@ -1024,13 +1037,16 @@ async fn handle_order_update(
                     {
                         let exchange_label = update.exchange.to_string();
                         let symbol_label = update.symbol.canonical();
-                        metrics.position_quantity
+                        metrics
+                            .position_quantity
                             .with_label_values(&[&exchange_label, &symbol_label])
                             .set(pos.quantity.to_f64().unwrap_or(0.0));
-                        metrics.pnl_realized
+                        metrics
+                            .pnl_realized
                             .with_label_values(&[&exchange_label, &symbol_label])
                             .set(pos.realized_pnl.to_f64().unwrap_or(0.0));
-                        metrics.pnl_unrealized
+                        metrics
+                            .pnl_unrealized
                             .with_label_values(&[&exchange_label, &symbol_label])
                             .set(pos.unrealized_pnl.to_f64().unwrap_or(0.0));
                     }
@@ -1050,7 +1066,10 @@ async fn handle_order_update(
                 }
 
                 // Route fill to strategy.
-                strategy_engine.lock().await.route_fill(&order.strategy_id, &fill);
+                strategy_engine
+                    .lock()
+                    .await
+                    .route_fill(&order.strategy_id, &fill);
 
                 // Track fill in strategy metrics.
                 strategy_metrics_tracker.on_fill(&order.strategy_id, &fill);
@@ -1095,11 +1114,8 @@ async fn handle_order_update(
                         }
                     };
 
-                    let envelope = Envelope::new(
-                        "trading-core",
-                        update.client_order_id.clone(),
-                        event,
-                    );
+                    let envelope =
+                        Envelope::new("trading-core", update.client_order_id.clone(), event);
                     if let Err(e) = publisher.publish(envelope).await {
                         error!(error = %e, "failed to publish fill event");
                     }

@@ -13,7 +13,10 @@ use futures::StreamExt;
 use mm_backtest::{
     OptimizationConfig, OptimizationProgress, OptimizationResult, ParameterOptimizer,
 };
-use mm_core::{Exchange, MetricsRegistry, Order, OrderBook, PortfolioRisk, Position, StrategyConfig, StrategyMetrics};
+use mm_core::{
+    Exchange, MetricsRegistry, Order, OrderBook, PortfolioRisk, Position, StrategyConfig,
+    StrategyMetrics,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
@@ -21,7 +24,7 @@ use tracing::{info, warn};
 use mm_core::traits::Strategy;
 use mm_strategy::{build_strategy_from_config, StrategyEngine};
 
-use crate::assistant::{AssistantConfig, ChatRequest, ClaudeClient, build_system_context};
+use crate::assistant::{build_system_context, AssistantConfig, ChatRequest, ClaudeClient};
 
 // ---------------------------------------------------------------------------
 // API Response wrapper
@@ -286,8 +289,14 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         // Portfolio risk
         .route("/api/v1/portfolio/risk", get(get_portfolio_risk))
         // Strategies
-        .route("/api/v1/strategies", get(list_strategies).post(create_strategy))
-        .route("/api/v1/strategies/{id}", put(update_strategy).delete(delete_strategy))
+        .route(
+            "/api/v1/strategies",
+            get(list_strategies).post(create_strategy),
+        )
+        .route(
+            "/api/v1/strategies/{id}",
+            put(update_strategy).delete(delete_strategy),
+        )
         .route("/api/v1/strategies/{id}/start", post(start_strategy))
         .route("/api/v1/strategies/{id}/stop", post(stop_strategy))
         .route("/api/v1/strategies/{id}/metrics", get(get_strategy_metrics))
@@ -301,7 +310,10 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         )
         // Backtest optimisation
         .route("/api/v1/backtest/optimize", post(start_optimization))
-        .route("/api/v1/backtest/optimize/{job_id}", get(get_optimization_job))
+        .route(
+            "/api/v1/backtest/optimize/{job_id}",
+            get(get_optimization_job),
+        )
         // AI assistant
         .route("/api/v1/assistant/chat", post(assistant_chat))
         .with_state(state)
@@ -342,9 +354,7 @@ async fn health_check() -> impl IntoResponse {
 // Prometheus metrics
 // ---------------------------------------------------------------------------
 
-async fn prometheus_metrics(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn prometheus_metrics(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     match &state.metrics {
         Some(metrics) => {
             let body = metrics.encode();
@@ -355,11 +365,7 @@ async fn prometheus_metrics(
             )
                 .into_response()
         }
-        None => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "metrics not configured",
-        )
-            .into_response()
+        None => (StatusCode::SERVICE_UNAVAILABLE, "metrics not configured").into_response(),
     }
 }
 
@@ -367,9 +373,7 @@ async fn prometheus_metrics(
 // Positions
 // ---------------------------------------------------------------------------
 
-async fn list_positions(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn list_positions(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let positions = state.positions.read().await;
     ApiResponse::ok(positions.clone())
 }
@@ -418,8 +422,7 @@ async fn get_order(
     let orders = state.orders.read().await;
 
     let found = orders.iter().find(|o| {
-        o.client_order_id == order_id
-            || o.exchange_order_id.as_deref() == Some(order_id.as_str())
+        o.client_order_id == order_id || o.exchange_order_id.as_deref() == Some(order_id.as_str())
     });
 
     match found {
@@ -463,9 +466,7 @@ const VALID_STRATEGY_TYPES: &[&str] = &[
     "stat_arb",
 ];
 
-async fn list_strategies(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn list_strategies(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let strategies = state.strategies.read().await;
     ApiResponse::ok(strategies.clone())
 }
@@ -505,7 +506,10 @@ async fn create_strategy(
     });
 
     info!(strategy_id = %strategy_id, "strategy created via API");
-    Ok((StatusCode::CREATED, ApiResponse::ok_message(format!("strategy {strategy_id} created"))))
+    Ok((
+        StatusCode::CREATED,
+        ApiResponse::ok_message(format!("strategy {strategy_id} created")),
+    ))
 }
 
 async fn update_strategy(
@@ -515,9 +519,7 @@ async fn update_strategy(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
     let mut strategies = state.strategies.write().await;
 
-    let strategy = strategies
-        .iter_mut()
-        .find(|s| s.config.strategy_id == id);
+    let strategy = strategies.iter_mut().find(|s| s.config.strategy_id == id);
 
     match strategy {
         Some(s) => {
@@ -533,9 +535,7 @@ async fn update_strategy(
             info!(strategy_id = %id, "strategy updated via API");
             Ok(ApiResponse::ok_message(format!("strategy {id} updated")))
         }
-        None => Err(ApiResponse::not_found(format!(
-            "strategy not found: {id}"
-        ))),
+        None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
     }
 }
 
@@ -545,9 +545,7 @@ async fn delete_strategy(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
     let mut strategies = state.strategies.write().await;
 
-    let pos = strategies
-        .iter()
-        .position(|s| s.config.strategy_id == id);
+    let pos = strategies.iter().position(|s| s.config.strategy_id == id);
 
     match pos {
         Some(idx) => {
@@ -560,9 +558,7 @@ async fn delete_strategy(
             info!(strategy_id = %id, "strategy deleted via API");
             Ok(ApiResponse::ok_message(format!("strategy {id} deleted")))
         }
-        None => Err(ApiResponse::not_found(format!(
-            "strategy not found: {id}"
-        ))),
+        None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
     }
 }
 
@@ -576,9 +572,7 @@ async fn start_strategy(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
     let mut strategies = state.strategies.write().await;
 
-    let strategy = strategies
-        .iter_mut()
-        .find(|s| s.config.strategy_id == id);
+    let strategy = strategies.iter_mut().find(|s| s.config.strategy_id == id);
 
     match strategy {
         Some(s) => {
@@ -590,26 +584,24 @@ async fn start_strategy(
             } else {
                 // Build and register the strategy with the engine.
                 if let Some(ref engine) = state.strategy_engine {
-                    let strategy_instance = build_strategy(&s.config)
-                        .map_err(|e| ApiResponse::error(format!("failed to build strategy: {e}")))?;
+                    let strategy_instance = build_strategy(&s.config).map_err(|e| {
+                        ApiResponse::error(format!("failed to build strategy: {e}"))
+                    })?;
 
                     let mut engine_guard = engine.lock().await;
-                    engine_guard.add_strategy(strategy_instance)
-                        .map_err(|e| ApiResponse::error(format!("failed to register strategy: {e}")))?;
+                    engine_guard.add_strategy(strategy_instance).map_err(|e| {
+                        ApiResponse::error(format!("failed to register strategy: {e}"))
+                    })?;
                 }
 
                 s.running = true;
                 s.started_at = Some(Utc::now());
                 s.stopped_at = None;
                 info!(strategy_id = %id, "strategy started via API");
-                Ok(ApiResponse::ok_message(format!(
-                    "strategy {id} started"
-                )))
+                Ok(ApiResponse::ok_message(format!("strategy {id} started")))
             }
         }
-        None => Err(ApiResponse::not_found(format!(
-            "strategy not found: {id}"
-        ))),
+        None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
     }
 }
 
@@ -619,9 +611,7 @@ async fn stop_strategy(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
     let mut strategies = state.strategies.write().await;
 
-    let strategy = strategies
-        .iter_mut()
-        .find(|s| s.config.strategy_id == id);
+    let strategy = strategies.iter_mut().find(|s| s.config.strategy_id == id);
 
     match strategy {
         Some(s) => {
@@ -646,14 +636,10 @@ async fn stop_strategy(
                 s.running = false;
                 s.stopped_at = Some(Utc::now());
                 info!(strategy_id = %id, "strategy stopped via API");
-                Ok(ApiResponse::ok_message(format!(
-                    "strategy {id} stopped"
-                )))
+                Ok(ApiResponse::ok_message(format!("strategy {id} stopped")))
             }
         }
-        None => Err(ApiResponse::not_found(format!(
-            "strategy not found: {id}"
-        ))),
+        None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
     }
 }
 
@@ -685,9 +671,7 @@ struct KillSwitchResponse {
     timestamp: String,
 }
 
-async fn activate_kill_switch(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn activate_kill_switch(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let mut ks = state.kill_switch_active.lock().await;
     *ks = true;
     if let Some(ref ks_real) = state.kill_switch {
@@ -713,9 +697,7 @@ async fn activate_kill_switch(
     })
 }
 
-async fn reset_kill_switch(
-    State(state): State<Arc<ApiState>>,
-) -> impl IntoResponse {
+async fn reset_kill_switch(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
     let mut ks = state.kill_switch_active.lock().await;
     *ks = false;
     if let Some(ref ks_real) = state.kill_switch {
@@ -961,7 +943,9 @@ async fn assistant_chat(
                 Json(ApiResponse {
                     status: "error",
                     data: None,
-                    error: Some("AI assistant not configured. Set MM_ASSISTANT__ANTHROPIC_API_KEY.".into()),
+                    error: Some(
+                        "AI assistant not configured. Set MM_ASSISTANT__ANTHROPIC_API_KEY.".into(),
+                    ),
                 }),
             ));
         }
@@ -973,21 +957,18 @@ async fn assistant_chat(
     let stream = client
         .stream_chat(&system_ctx, &req.messages)
         .await
-        .map_err(|e| {
-            ApiResponse::error(format!("assistant error: {e}"))
-        })?;
+        .map_err(|e| ApiResponse::error(format!("assistant error: {e}")))?;
 
     // Convert text chunks into SSE-formatted events.
-    let sse_stream = stream.map(|chunk| {
-        match chunk {
-            Ok(text) => Ok::<_, std::convert::Infallible>(
-                format!("data: {}\n\n", serde_json::json!({"text": text})),
-            ),
-            Err(e) => Ok(format!(
-                "data: {}\n\n",
-                serde_json::json!({"error": e.to_string()})
-            )),
-        }
+    let sse_stream = stream.map(|chunk| match chunk {
+        Ok(text) => Ok::<_, std::convert::Infallible>(format!(
+            "data: {}\n\n",
+            serde_json::json!({"text": text})
+        )),
+        Err(e) => Ok(format!(
+            "data: {}\n\n",
+            serde_json::json!({"error": e.to_string()})
+        )),
     });
 
     Ok((
@@ -1003,9 +984,9 @@ async fn assistant_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assistant::ChatMessage;
     use axum::body::Body;
     use axum::http::Request;
-    use crate::assistant::ChatMessage;
     use mm_core::types::Symbol;
     use tower::ServiceExt;
 

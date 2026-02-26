@@ -271,11 +271,7 @@ impl SimulatedExchange {
     // Market Order Matching
     // -----------------------------------------------------------------------
 
-    fn try_fill_market_order(
-        &mut self,
-        order: &mut Order,
-        book: &OrderBook,
-    ) -> MmResult<()> {
+    fn try_fill_market_order(&mut self, order: &mut Order, book: &OrderBook) -> MmResult<()> {
         let fill_price = match order.side {
             Side::Buy => book.best_ask().map(|l| l.price),
             Side::Sell => book.best_bid().map(|l| l.price),
@@ -315,10 +311,7 @@ impl SimulatedExchange {
                 let fill = Fill {
                     fill_id: Uuid::new_v4().to_string(),
                     client_order_id: order.client_order_id.clone(),
-                    exchange_order_id: order
-                        .exchange_order_id
-                        .clone()
-                        .unwrap_or_default(),
+                    exchange_order_id: order.exchange_order_id.clone().unwrap_or_default(),
                     exchange: Exchange::Simulated,
                     symbol: order.symbol.clone(),
                     side: order.side,
@@ -358,11 +351,7 @@ impl SimulatedExchange {
 
     /// Attempt to immediately fill a limit order that crosses the spread.
     /// Returns true if the order was fully filled.
-    fn try_fill_limit_order_immediately(
-        &mut self,
-        order: &mut Order,
-        book: &OrderBook,
-    ) -> bool {
+    fn try_fill_limit_order_immediately(&mut self, order: &mut Order, book: &OrderBook) -> bool {
         let can_fill = match order.side {
             Side::Buy => {
                 if let (Some(order_price), Some(best_ask)) = (order.price, book.best_ask()) {
@@ -519,10 +508,7 @@ impl SimulatedExchange {
                     let fill = Fill {
                         fill_id: Uuid::new_v4().to_string(),
                         client_order_id: order.client_order_id.clone(),
-                        exchange_order_id: order
-                            .exchange_order_id
-                            .clone()
-                            .unwrap_or_default(),
+                        exchange_order_id: order.exchange_order_id.clone().unwrap_or_default(),
                         exchange: Exchange::Simulated,
                         symbol: order.symbol.clone(),
                         side: order.side,

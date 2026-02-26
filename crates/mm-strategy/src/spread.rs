@@ -290,8 +290,7 @@ mod tests {
     use super::*;
     use chrono::{Duration, Utc};
     use mm_core::types::{
-        Exchange, Fill, MarketSnapshot, OrderBook, OrderStatus, Position, PriceLevel, Side,
-        Symbol,
+        Exchange, Fill, MarketSnapshot, OrderBook, OrderStatus, Position, PriceLevel, Side, Symbol,
     };
     use rust_decimal_macros::dec;
 
@@ -429,7 +428,9 @@ mod tests {
 
     /// Check whether an action list contains a CancelAll.
     fn has_cancel_all(actions: &[OrderAction]) -> bool {
-        actions.iter().any(|a| matches!(a, OrderAction::CancelAll(_)))
+        actions
+            .iter()
+            .any(|a| matches!(a, OrderAction::CancelAll(_)))
     }
 
     // -----------------------------------------------------------------------
@@ -532,7 +533,10 @@ mod tests {
         // price hasn't moved significantly => should return empty
         let snapshot2 = make_snapshot_at(dec!(50000), now + Duration::milliseconds(100));
         let actions2 = strategy.on_tick(&snapshot2);
-        assert!(actions2.is_empty(), "Expected no actions before refresh interval");
+        assert!(
+            actions2.is_empty(),
+            "Expected no actions before refresh interval"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -573,8 +577,8 @@ mod tests {
     #[test]
     fn test_min_spread_bps_enforced() {
         let mut config = make_config();
-        config.spread_bps = dec!(5);       // 5 bps configured
-        config.min_spread_bps = dec!(10);  // but minimum is 10 bps
+        config.spread_bps = dec!(5); // 5 bps configured
+        config.min_spread_bps = dec!(10); // but minimum is 10 bps
         config.num_levels = 1;
 
         let mut strategy = SpreadStrategy::new(config);
@@ -628,7 +632,10 @@ mod tests {
         // on_tick should return empty when inactive
         let snapshot = make_snapshot(dec!(50000));
         let actions = strategy.on_tick(&snapshot);
-        assert!(actions.is_empty(), "Inactive strategy should return empty on_tick");
+        assert!(
+            actions.is_empty(),
+            "Inactive strategy should return empty on_tick"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -747,7 +754,10 @@ mod tests {
         let actions = strategy.on_tick(&snapshot2);
 
         // Should have CancelAll first, then new place orders
-        assert!(has_cancel_all(&actions), "Should cancel existing orders before re-placing");
+        assert!(
+            has_cancel_all(&actions),
+            "Should cancel existing orders before re-placing"
+        );
         let places = extract_places(&actions);
         assert!(!places.is_empty(), "Should place new orders after cancel");
     }
@@ -762,8 +772,10 @@ mod tests {
         let _ = strategy.on_tick(&snapshot1);
 
         // After refresh interval elapses, same price should still trigger refresh
-        let snapshot2 =
-            make_snapshot_at(dec!(50000), now + Duration::milliseconds(config.refresh_interval_ms + 1));
+        let snapshot2 = make_snapshot_at(
+            dec!(50000),
+            now + Duration::milliseconds(config.refresh_interval_ms + 1),
+        );
         let actions2 = strategy.on_tick(&snapshot2);
 
         assert!(

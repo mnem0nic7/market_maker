@@ -18,7 +18,7 @@ pub struct ChatRequest {
 /// A single message in the conversation history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    pub role: String,   // "user" or "assistant"
+    pub role: String, // "user" or "assistant"
     pub content: String,
 }
 
@@ -204,7 +204,9 @@ pub async fn build_system_context(state: &Arc<ApiState>) -> String {
     ctx.push_str("- Suggest parameter values based on market conditions and user goals\n");
     ctx.push_str("- Help interpret metrics and performance data\n");
     ctx.push_str("- Warn about risk considerations\n");
-    ctx.push_str("- When suggesting config changes, format as JSON with strategy_type and params\n");
+    ctx.push_str(
+        "- When suggesting config changes, format as JSON with strategy_type and params\n",
+    );
 
     ctx
 }

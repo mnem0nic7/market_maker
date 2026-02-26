@@ -298,11 +298,12 @@ impl OrderRouter {
     ) -> MmResult<()> {
         // Amend is typically cancel-and-replace. Look up the order, cancel it,
         // and place a new one with the updated parameters.
-        let order = self.oms.get_order(client_order_id).ok_or_else(|| {
-            MmError::OrderNotFound {
+        let order = self
+            .oms
+            .get_order(client_order_id)
+            .ok_or_else(|| MmError::OrderNotFound {
                 order_id: client_order_id.to_string(),
-            }
-        })?;
+            })?;
 
         info!(
             %client_order_id,

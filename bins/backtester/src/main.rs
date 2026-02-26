@@ -15,8 +15,8 @@ use serde::Deserialize;
 use tracing::info;
 
 use mm_backtest::{
-    BacktestConfig, MarketEvent, OptimizationConfig, OptimizationMetric, ParameterOptimizer,
-    ParameterRange, ReplayEngine, print_report,
+    print_report, BacktestConfig, MarketEvent, OptimizationConfig, OptimizationMetric,
+    ParameterOptimizer, ParameterRange, ReplayEngine,
 };
 use mm_core::traits::Strategy;
 use mm_core::{Exchange, PriceLevel, Side, Symbol};
@@ -75,7 +75,6 @@ struct CliConfig {
     num_events: usize,
 
     // -- Strategy-specific parameters --
-
     /// Spread in basis points (for spread strategy).
     #[serde(default = "default_spread_bps")]
     spread_bps: Decimal,
@@ -101,7 +100,6 @@ struct CliConfig {
     sigma: Decimal,
 
     // -- Optimizer parameters --
-
     /// Enable parameter optimisation mode (grid search).
     #[serde(default)]
     optimize: bool,
@@ -419,7 +417,10 @@ fn run_optimization(cfg: &CliConfig, events: Vec<MarketEvent>) -> Result<()> {
     // Print results table
     println!();
     println!("============================================================");
-    println!("              OPTIMISATION RESULTS ({:?})               ", metric);
+    println!(
+        "              OPTIMISATION RESULTS ({:?})               ",
+        metric
+    );
     println!("============================================================");
     println!();
     println!(
@@ -708,7 +709,11 @@ fn generate_sample_data(num_events: usize) -> Vec<MarketEvent> {
         // Alternate between order book snapshots and trade events
         if i % 3 == 0 && i > 0 {
             // Trade event
-            let trade_side = if seed.is_multiple_of(2) { Side::Buy } else { Side::Sell };
+            let trade_side = if seed.is_multiple_of(2) {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
             let trade_price = if trade_side == Side::Buy {
                 best_ask
             } else {
@@ -772,19 +777,10 @@ fn load_config() -> Result<CliConfig> {
         .set_default("metric", "sharpe")?
         .set_default("top_n", 10_i64)?
         // Config files (optional)
-        .add_source(
-            config::File::with_name("config/backtester")
-                .required(false),
-        )
-        .add_source(
-            config::File::with_name("config/default")
-                .required(false),
-        )
+        .add_source(config::File::with_name("config/backtester").required(false))
+        .add_source(config::File::with_name("config/default").required(false))
         // Environment variables (prefixed with BACKTEST_)
-        .add_source(
-            config::Environment::with_prefix("BACKTEST")
-                .separator("_"),
-        )
+        .add_source(config::Environment::with_prefix("BACKTEST").separator("_"))
         .build()
         .context("failed to build config")?;
 

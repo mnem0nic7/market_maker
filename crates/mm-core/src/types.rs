@@ -116,7 +116,10 @@ impl OrderStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Rejected | OrderStatus::Expired
+            OrderStatus::Filled
+                | OrderStatus::Cancelled
+                | OrderStatus::Rejected
+                | OrderStatus::Expired
         )
     }
 
@@ -478,9 +481,16 @@ pub struct PortfolioRisk {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RiskAction {
     Allow,
-    Reject { reason: String },
-    ReduceSize { max_quantity: Decimal, reason: String },
-    KillSwitch { reason: String },
+    Reject {
+        reason: String,
+    },
+    ReduceSize {
+        max_quantity: Decimal,
+        reason: String,
+    },
+    KillSwitch {
+        reason: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

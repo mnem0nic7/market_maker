@@ -3,7 +3,7 @@ use rust_decimal::Decimal;
 use tracing::{debug, info, warn};
 
 use mm_core::{
-    traits::RiskCheck, CancelAllOrders, Exchange, NewOrder, Position, PortfolioRisk, RiskAction,
+    traits::RiskCheck, CancelAllOrders, Exchange, NewOrder, PortfolioRisk, Position, RiskAction,
 };
 
 /// Central risk engine that evaluates orders and portfolio state against a
@@ -36,11 +36,7 @@ impl RiskEngine {
     /// - If one or more checks return `ReduceSize`, the most restrictive
     ///   (smallest `max_quantity`) is returned.
     /// - If every check returns `Allow`, the order is allowed.
-    pub async fn evaluate_order(
-        &self,
-        order: &NewOrder,
-        portfolio: &PortfolioRisk,
-    ) -> RiskAction {
+    pub async fn evaluate_order(&self, order: &NewOrder, portfolio: &PortfolioRisk) -> RiskAction {
         let mut most_restrictive_reduce: Option<(Decimal, String)> = None;
 
         for check in &self.checks {
@@ -79,12 +75,10 @@ impl RiskEngine {
                     );
                     match &most_restrictive_reduce {
                         Some((current_max, _)) if max_quantity < current_max => {
-                            most_restrictive_reduce =
-                                Some((*max_quantity, reason.clone()));
+                            most_restrictive_reduce = Some((*max_quantity, reason.clone()));
                         }
                         None => {
-                            most_restrictive_reduce =
-                                Some((*max_quantity, reason.clone()));
+                            most_restrictive_reduce = Some((*max_quantity, reason.clone()));
                         }
                         _ => {}
                     }
@@ -134,19 +128,15 @@ impl RiskEngine {
                 RiskAction::ReduceSize {
                     max_quantity,
                     reason,
-                } => {
-                    match &most_restrictive_reduce {
-                        Some((current_max, _)) if max_quantity < current_max => {
-                            most_restrictive_reduce =
-                                Some((*max_quantity, reason.clone()));
-                        }
-                        None => {
-                            most_restrictive_reduce =
-                                Some((*max_quantity, reason.clone()));
-                        }
-                        _ => {}
+                } => match &most_restrictive_reduce {
+                    Some((current_max, _)) if max_quantity < current_max => {
+                        most_restrictive_reduce = Some((*max_quantity, reason.clone()));
                     }
-                }
+                    None => {
+                        most_restrictive_reduce = Some((*max_quantity, reason.clone()));
+                    }
+                    _ => {}
+                },
             }
         }
 
@@ -310,7 +300,9 @@ mod tests {
         engine.add_check(Box::new(AlwaysAllow));
         engine.add_check(Box::new(AlwaysAllow));
 
-        let result = engine.evaluate_order(&sample_order(), &empty_portfolio()).await;
+        let result = engine
+            .evaluate_order(&sample_order(), &empty_portfolio())
+            .await;
         assert!(matches!(result, RiskAction::Allow));
     }
 
@@ -321,7 +313,9 @@ mod tests {
         engine.add_check(Box::new(AlwaysReject));
         engine.add_check(Box::new(AlwaysAllow));
 
-        let result = engine.evaluate_order(&sample_order(), &empty_portfolio()).await;
+        let result = engine
+            .evaluate_order(&sample_order(), &empty_portfolio())
+            .await;
         assert!(matches!(result, RiskAction::Reject { .. }));
     }
 
@@ -332,7 +326,9 @@ mod tests {
         engine.add_check(Box::new(ReduceTo(dec!(2))));
         engine.add_check(Box::new(ReduceTo(dec!(10))));
 
-        let result = engine.evaluate_order(&sample_order(), &empty_portfolio()).await;
+        let result = engine
+            .evaluate_order(&sample_order(), &empty_portfolio())
+            .await;
         match result {
             RiskAction::ReduceSize { max_quantity, .. } => {
                 assert_eq!(max_quantity, dec!(2));
@@ -344,7 +340,9 @@ mod tests {
     #[tokio::test]
     async fn empty_engine_allows_everything() {
         let engine = RiskEngine::new();
-        let result = engine.evaluate_order(&sample_order(), &empty_portfolio()).await;
+        let result = engine
+            .evaluate_order(&sample_order(), &empty_portfolio())
+            .await;
         assert!(matches!(result, RiskAction::Allow));
     }
 }

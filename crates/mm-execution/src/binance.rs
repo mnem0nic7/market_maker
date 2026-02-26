@@ -116,10 +116,7 @@ impl BinanceExecutionConnector {
     /// Build a query string with a timestamp and sign it.
     fn sign_params(&self, params: &[(&str, &str)]) -> String {
         let ts = Utc::now().timestamp_millis().to_string();
-        let mut parts: Vec<String> = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect();
+        let mut parts: Vec<String> = params.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         parts.push(format!("timestamp={}", ts));
         let query = parts.join("&");
         self.sign_query(&query)
@@ -144,11 +141,10 @@ impl BinanceExecutionConnector {
             })?;
 
         let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("listen key parse failed: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: format!("listen key parse failed: {}", e),
+        })?;
 
         if !status.is_success() {
             return Err(MmError::Exchange {
@@ -255,9 +251,7 @@ impl BinanceExecutionConnector {
 
                 match msg {
                     WsMessage::Text(text) => {
-                        if let Err(e) =
-                            Self::handle_ws_message(&text, &update_tx).await
-                        {
+                        if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
                             warn!(error = %e, "Binance: failed to process WS message");
                         }
                     }
@@ -279,15 +273,11 @@ impl BinanceExecutionConnector {
         })
     }
 
-    async fn handle_ws_message(
-        text: &str,
-        update_tx: &mpsc::Sender<OrderUpdate>,
-    ) -> MmResult<()> {
-        let msg: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("JSON parse error: {}", e),
-            })?;
+    async fn handle_ws_message(text: &str, update_tx: &mpsc::Sender<OrderUpdate>) -> MmResult<()> {
+        let msg: serde_json::Value = serde_json::from_str(text).map_err(|e| MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: format!("JSON parse error: {}", e),
+        })?;
 
         let event_type = msg["e"].as_str().unwrap_or("");
 
@@ -298,23 +288,21 @@ impl BinanceExecutionConnector {
                 status = %update.status,
                 "Binance: execution report received"
             );
-            update_tx.send(update).await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("channel send error: {}", e),
-            })?;
+            update_tx
+                .send(update)
+                .await
+                .map_err(|e| MmError::Exchange {
+                    exchange: Exchange::Binance,
+                    message: format!("channel send error: {}", e),
+                })?;
         }
 
         Ok(())
     }
 
     fn parse_execution_report(msg: &serde_json::Value) -> MmResult<OrderUpdate> {
-        let client_order_id = msg["c"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let exchange_order_id = msg["i"]
-            .as_u64()
-            .map(|id| id.to_string());
+        let client_order_id = msg["c"].as_str().unwrap_or_default().to_string();
+        let exchange_order_id = msg["i"].as_u64().map(|id| id.to_string());
         let symbol_str = msg["s"].as_str().unwrap_or("");
         let symbol = Self::from_binance_symbol(symbol_str);
 
@@ -354,20 +342,16 @@ impl BinanceExecutionConnector {
             Decimal::ZERO
         };
 
-        let last_fill_price = msg["L"]
-            .as_str()
-            .and_then(|s| s.parse::<Decimal>().ok());
-        let last_fill_quantity = msg["l"]
-            .as_str()
-            .and_then(|s| s.parse::<Decimal>().ok());
-        let fee = msg["n"]
-            .as_str()
-            .and_then(|s| s.parse::<Decimal>().ok());
+        let last_fill_price = msg["L"].as_str().and_then(|s| s.parse::<Decimal>().ok());
+        let last_fill_quantity = msg["l"].as_str().and_then(|s| s.parse::<Decimal>().ok());
+        let fee = msg["n"].as_str().and_then(|s| s.parse::<Decimal>().ok());
         let fee_currency = msg["N"].as_str().map(|s| s.to_string());
 
-        let timestamp_ms = msg["T"].as_i64().unwrap_or_else(|| Utc::now().timestamp_millis());
-        let timestamp = chrono::DateTime::from_timestamp_millis(timestamp_ms)
-            .unwrap_or_else(Utc::now);
+        let timestamp_ms = msg["T"]
+            .as_i64()
+            .unwrap_or_else(|| Utc::now().timestamp_millis());
+        let timestamp =
+            chrono::DateTime::from_timestamp_millis(timestamp_ms).unwrap_or_else(Utc::now);
 
         Ok(OrderUpdate {
             client_order_id,
@@ -405,12 +389,7 @@ impl BinanceExecutionConnector {
                     "{}/api/v3/userDataStream?listenKey={}",
                     base_url, listen_key
                 );
-                match http
-                    .put(&url)
-                    .header("X-MBX-APIKEY", &api_key)
-                    .send()
-                    .await
-                {
+                match http.put(&url).header("X-MBX-APIKEY", &api_key).send().await {
                     Ok(resp) if resp.status().is_success() => {
                         debug!("Binance: listen key keepalive sent");
                     }
@@ -596,11 +575,10 @@ impl ExecutionConnector for BinanceExecutionConnector {
                 return Err(last_error.unwrap());
             }
 
-            let body: serde_json::Value =
-                resp.json().await.map_err(|e| MmError::Exchange {
-                    exchange: Exchange::Binance,
-                    message: format!("submit_order parse error: {}", e),
-                })?;
+            let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+                exchange: Exchange::Binance,
+                message: format!("submit_order parse error: {}", e),
+            })?;
 
             if !status.is_success() {
                 let code = body["code"].as_i64().unwrap_or(0);
@@ -703,8 +681,7 @@ impl ExecutionConnector for BinanceExecutionConnector {
             }
 
             if !status.is_success() {
-                let body: serde_json::Value =
-                    resp.json().await.unwrap_or(serde_json::Value::Null);
+                let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
                 let msg = body["msg"].as_str().unwrap_or("unknown error");
                 return Err(MmError::Exchange {
                     exchange: Exchange::Binance,
@@ -757,11 +734,10 @@ impl ExecutionConnector for BinanceExecutionConnector {
             })?;
 
         let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("cancel_all parse error: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: format!("cancel_all parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             let msg = body["msg"].as_str().unwrap_or("unknown");
@@ -778,10 +754,7 @@ impl ExecutionConnector for BinanceExecutionConnector {
 
     async fn fetch_balances(&self) -> MmResult<Vec<Balance>> {
         let signed_query = self.sign_params(&[]);
-        let url = format!(
-            "{}/api/v3/account?{}",
-            self.config.base_url, signed_query
-        );
+        let url = format!("{}/api/v3/account?{}", self.config.base_url, signed_query);
 
         let resp = self
             .http
@@ -795,11 +768,10 @@ impl ExecutionConnector for BinanceExecutionConnector {
             })?;
 
         let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("fetch_balances parse error: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: format!("fetch_balances parse error: {}", e),
+        })?;
 
         if !status.is_success() {
             return Err(MmError::Exchange {

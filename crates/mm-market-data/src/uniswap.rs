@@ -44,8 +44,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::StreamExt;
 use futures::SinkExt;
-use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -60,8 +60,7 @@ use mm_core::types::{Exchange, OrderBook, PriceLevel, Side, Symbol, Trade};
 // ---------------------------------------------------------------------------
 
 /// Swap event topic hash (keccak256 of the Swap event signature).
-const SWAP_EVENT_TOPIC: &str =
-    "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
+const SWAP_EVENT_TOPIC: &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
 
 /// Function selector for `slot0()` on Uniswap V3 Pool contracts.
 const SLOT0_SELECTOR: &str = "0x3850c7bd";
@@ -202,7 +201,10 @@ impl MarketDataConnector for UniswapConnector {
                             continue;
                         }
 
-                        info!("Uniswap: subscribed to Swap events for {} pools", pool_addresses.len());
+                        info!(
+                            "Uniswap: subscribed to Swap events for {} pools",
+                            pool_addresses.len()
+                        );
 
                         loop {
                             match read.next().await {
@@ -291,14 +293,10 @@ impl MarketDataConnector for UniswapConnector {
                 for (symbol, pool_addr) in &pool_map {
                     match fetch_slot0(&poll_http, &rpc_http_url, pool_addr).await {
                         Ok((sqrt_price_x96, _tick, liquidity)) => {
-                            let base_decimals = poll_decimals
-                                .get(&symbol.base)
-                                .copied()
-                                .unwrap_or(18);
-                            let quote_decimals = poll_decimals
-                                .get(&symbol.quote)
-                                .copied()
-                                .unwrap_or(6);
+                            let base_decimals =
+                                poll_decimals.get(&symbol.base).copied().unwrap_or(18);
+                            let quote_decimals =
+                                poll_decimals.get(&symbol.quote).copied().unwrap_or(6);
 
                             let price = sqrt_price_x96_to_price(
                                 &sqrt_price_x96,
@@ -308,9 +306,8 @@ impl MarketDataConnector for UniswapConnector {
 
                             if let Some(price) = price {
                                 let depth = 20;
-                                let book = build_virtual_order_book(
-                                    symbol, price, liquidity, depth,
-                                );
+                                let book =
+                                    build_virtual_order_book(symbol, price, liquidity, depth);
 
                                 if let Err(e) = book_tx.send(book).await {
                                     warn!(
@@ -352,12 +349,14 @@ impl MarketDataConnector for UniswapConnector {
 
     async fn fetch_order_book(&self, symbol: &Symbol, depth: usize) -> MmResult<OrderBook> {
         let key = symbol.canonical();
-        let pool_addr = self.config.pool_addresses.get(&key).ok_or_else(|| {
-            MmError::Exchange {
+        let pool_addr = self
+            .config
+            .pool_addresses
+            .get(&key)
+            .ok_or_else(|| MmError::Exchange {
                 exchange: Exchange::Uniswap,
                 message: format!("no pool address configured for {}", key),
-            }
-        })?;
+            })?;
 
         let (sqrt_price_x96, _tick, liquidity) =
             fetch_slot0(&self.http, &self.config.rpc_http_url, pool_addr).await?;
@@ -375,12 +374,11 @@ impl MarketDataConnector for UniswapConnector {
             .copied()
             .unwrap_or(6);
 
-        let price =
-            sqrt_price_x96_to_price(&sqrt_price_x96, base_decimals, quote_decimals)
-                .ok_or_else(|| MmError::Exchange {
-                    exchange: Exchange::Uniswap,
-                    message: "failed to compute price from sqrtPriceX96".into(),
-                })?;
+        let price = sqrt_price_x96_to_price(&sqrt_price_x96, base_decimals, quote_decimals)
+            .ok_or_else(|| MmError::Exchange {
+                exchange: Exchange::Uniswap,
+                message: "failed to compute price from sqrtPriceX96".into(),
+            })?;
 
         Ok(build_virtual_order_book(symbol, price, liquidity, depth))
     }
@@ -466,12 +464,10 @@ async fn fetch_slot0(
         });
     }
 
-    let result = body["result"]
-        .as_str()
-        .ok_or_else(|| MmError::Exchange {
-            exchange: Exchange::Uniswap,
-            message: "slot0 result is not a string".into(),
-        })?;
+    let result = body["result"].as_str().ok_or_else(|| MmError::Exchange {
+        exchange: Exchange::Uniswap,
+        message: "slot0 result is not a string".into(),
+    })?;
 
     // slot0 returns 7 ABI-encoded words (7 * 32 bytes = 448 hex chars after 0x).
     // Word 0: sqrtPriceX96 (uint160, packed in 32 bytes)
@@ -699,10 +695,7 @@ async fn handle_ws_message(
     }
 
     // Extract the pool address from the log to identify the symbol.
-    let log_address = log["address"]
-        .as_str()
-        .unwrap_or("")
-        .to_lowercase();
+    let log_address = log["address"].as_str().unwrap_or("").to_lowercase();
 
     let symbol = pool_map
         .iter()
@@ -770,10 +763,7 @@ async fn handle_ws_message(
         .as_str()
         .unwrap_or("unknown")
         .to_string();
-    let log_index = log["logIndex"]
-        .as_str()
-        .unwrap_or("0")
-        .to_string();
+    let log_index = log["logIndex"].as_str().unwrap_or("0").to_string();
     let trade_id = format!("{}-{}", tx_hash, log_index);
 
     let trade = Trade {
@@ -901,13 +891,23 @@ mod tests {
 
         // Bids should be below the price.
         for level in &book.bids {
-            assert!(level.price < price, "bid {} >= price {}", level.price, price);
+            assert!(
+                level.price < price,
+                "bid {} >= price {}",
+                level.price,
+                price
+            );
             assert!(level.quantity > Decimal::ZERO);
         }
 
         // Asks should be above the price.
         for level in &book.asks {
-            assert!(level.price > price, "ask {} <= price {}", level.price, price);
+            assert!(
+                level.price > price,
+                "ask {} <= price {}",
+                level.price,
+                price
+            );
             assert!(level.quantity > Decimal::ZERO);
         }
 

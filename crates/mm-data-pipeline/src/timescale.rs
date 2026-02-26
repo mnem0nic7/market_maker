@@ -194,19 +194,15 @@ impl TimescaleStore {
         Self::create_hypertable(&self.pool, "events", "time").await?;
 
         // -- useful indices --
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_orders_strategy ON orders (strategy_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| PipelineError::Database(format!("orders index: {e}")))?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_orders_strategy ON orders (strategy_id)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| PipelineError::Database(format!("orders index: {e}")))?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type, time DESC)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| PipelineError::Database(format!("events index: {e}")))?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type, time DESC)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| PipelineError::Database(format!("events index: {e}")))?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_fills_order ON fills (client_order_id, time DESC)",
@@ -225,9 +221,8 @@ impl TimescaleStore {
         table: &str,
         time_column: &str,
     ) -> Result<(), PipelineError> {
-        let sql = format!(
-            "SELECT create_hypertable('{table}', '{time_column}', if_not_exists => TRUE)"
-        );
+        let sql =
+            format!("SELECT create_hypertable('{table}', '{time_column}', if_not_exists => TRUE)");
         sqlx::query(&sql)
             .execute(pool)
             .await

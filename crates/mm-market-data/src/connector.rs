@@ -48,10 +48,7 @@ impl MarketDataManager {
     /// * `book_tx` / `trade_tx` - channels that receive normalized updates
     ///   from all exchanges. The caller is responsible for reading from the
     ///   corresponding receivers.
-    pub fn new(
-        book_tx: mpsc::Sender<OrderBook>,
-        trade_tx: mpsc::Sender<Trade>,
-    ) -> Self {
+    pub fn new(book_tx: mpsc::Sender<OrderBook>, trade_tx: mpsc::Sender<Trade>) -> Self {
         Self {
             connectors: HashMap::new(),
             books: DashMap::new(),
@@ -71,23 +68,21 @@ impl MarketDataManager {
     ///
     /// This connects to the exchange (if not already connected) and begins
     /// streaming order book and trade data.
-    pub async fn subscribe(
-        &mut self,
-        exchange: Exchange,
-        symbols: &[Symbol],
-    ) -> MmResult<()> {
-        let connector = self.connectors.get_mut(&exchange).ok_or_else(|| {
-            MmError::Exchange {
+    pub async fn subscribe(&mut self, exchange: Exchange, symbols: &[Symbol]) -> MmResult<()> {
+        let connector = self
+            .connectors
+            .get_mut(&exchange)
+            .ok_or_else(|| MmError::Exchange {
                 exchange,
                 message: "no connector registered for this exchange".to_string(),
-            }
-        })?;
+            })?;
 
         // Initialize local books for each symbol.
         for symbol in symbols {
             let key = (exchange, symbol.canonical());
             if !self.books.contains_key(&key) {
-                self.books.insert(key, LocalOrderBook::new(exchange, symbol.clone()));
+                self.books
+                    .insert(key, LocalOrderBook::new(exchange, symbol.clone()));
             }
         }
 
@@ -102,12 +97,13 @@ impl MarketDataManager {
 
     /// Disconnect from the specified exchange.
     pub async fn unsubscribe(&mut self, exchange: Exchange) -> MmResult<()> {
-        let connector = self.connectors.get_mut(&exchange).ok_or_else(|| {
-            MmError::Exchange {
+        let connector = self
+            .connectors
+            .get_mut(&exchange)
+            .ok_or_else(|| MmError::Exchange {
                 exchange,
                 message: "no connector registered for this exchange".to_string(),
-            }
-        })?;
+            })?;
 
         info!(%exchange, "unsubscribing / disconnecting market data connector");
 

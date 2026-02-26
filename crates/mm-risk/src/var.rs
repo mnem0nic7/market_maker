@@ -245,11 +245,7 @@ impl RollingVolatility {
 
         let n = log_returns.len() as f64;
         let mean = log_returns.iter().sum::<f64>() / n;
-        let variance = log_returns
-            .iter()
-            .map(|r| (r - mean).powi(2))
-            .sum::<f64>()
-            / (n - 1.0);
+        let variance = log_returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1.0);
         let daily_vol = variance.sqrt();
         let annualized_vol = daily_vol * self.annualization_factor.sqrt();
 

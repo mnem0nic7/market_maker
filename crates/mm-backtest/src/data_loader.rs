@@ -70,27 +70,34 @@ pub fn load_csv(
         }
 
         let row = OhlcvRow {
-            timestamp: fields[0].trim().parse().map_err(|e| {
-                anyhow::anyhow!("line {}: invalid timestamp: {e}", line_no + 1)
-            })?,
-            open: fields[1].trim().parse().map_err(|e| {
-                anyhow::anyhow!("line {}: invalid open: {e}", line_no + 1)
-            })?,
-            high: fields[2].trim().parse().map_err(|e| {
-                anyhow::anyhow!("line {}: invalid high: {e}", line_no + 1)
-            })?,
-            low: fields[3].trim().parse().map_err(|e| {
-                anyhow::anyhow!("line {}: invalid low: {e}", line_no + 1)
-            })?,
-            close: fields[4].trim().parse().map_err(|e| {
-                anyhow::anyhow!("line {}: invalid close: {e}", line_no + 1)
-            })?,
-            volume: fields[5].trim().parse().map_err(|e| {
-                anyhow::anyhow!("line {}: invalid volume: {e}", line_no + 1)
-            })?,
+            timestamp: fields[0]
+                .trim()
+                .parse()
+                .map_err(|e| anyhow::anyhow!("line {}: invalid timestamp: {e}", line_no + 1))?,
+            open: fields[1]
+                .trim()
+                .parse()
+                .map_err(|e| anyhow::anyhow!("line {}: invalid open: {e}", line_no + 1))?,
+            high: fields[2]
+                .trim()
+                .parse()
+                .map_err(|e| anyhow::anyhow!("line {}: invalid high: {e}", line_no + 1))?,
+            low: fields[3]
+                .trim()
+                .parse()
+                .map_err(|e| anyhow::anyhow!("line {}: invalid low: {e}", line_no + 1))?,
+            close: fields[4]
+                .trim()
+                .parse()
+                .map_err(|e| anyhow::anyhow!("line {}: invalid close: {e}", line_no + 1))?,
+            volume: fields[5]
+                .trim()
+                .parse()
+                .map_err(|e| anyhow::anyhow!("line {}: invalid volume: {e}", line_no + 1))?,
         };
 
-        let event = ohlcv_to_market_event(&row, exchange, symbol.clone(), spread_bps, line_no as u64);
+        let event =
+            ohlcv_to_market_event(&row, exchange, symbol.clone(), spread_bps, line_no as u64);
         events.push(event);
     }
 
@@ -129,15 +136,33 @@ fn ohlcv_to_market_event(
     let level_step = half_spread;
 
     let bids = vec![
-        PriceLevel { price: best_bid.round_dp(8), quantity: row.volume / dec!(6) },
-        PriceLevel { price: (best_bid - level_step).round_dp(8), quantity: row.volume / dec!(4) },
-        PriceLevel { price: (best_bid - level_step * dec!(2)).round_dp(8), quantity: row.volume / dec!(3) },
+        PriceLevel {
+            price: best_bid.round_dp(8),
+            quantity: row.volume / dec!(6),
+        },
+        PriceLevel {
+            price: (best_bid - level_step).round_dp(8),
+            quantity: row.volume / dec!(4),
+        },
+        PriceLevel {
+            price: (best_bid - level_step * dec!(2)).round_dp(8),
+            quantity: row.volume / dec!(3),
+        },
     ];
 
     let asks = vec![
-        PriceLevel { price: best_ask.round_dp(8), quantity: row.volume / dec!(6) },
-        PriceLevel { price: (best_ask + level_step).round_dp(8), quantity: row.volume / dec!(4) },
-        PriceLevel { price: (best_ask + level_step * dec!(2)).round_dp(8), quantity: row.volume / dec!(3) },
+        PriceLevel {
+            price: best_ask.round_dp(8),
+            quantity: row.volume / dec!(6),
+        },
+        PriceLevel {
+            price: (best_ask + level_step).round_dp(8),
+            quantity: row.volume / dec!(4),
+        },
+        PriceLevel {
+            price: (best_ask + level_step * dec!(2)).round_dp(8),
+            quantity: row.volume / dec!(3),
+        },
     ];
 
     MarketEvent::OrderBookSnapshot {
@@ -289,10 +314,7 @@ pub async fn download_binance_trades(
     let mut all_trades: Vec<BinanceAggTrade> = Vec::new();
     let mut current_start = start_time;
 
-    info!(
-        symbol = symbol_str,
-        "downloading Binance aggregated trades"
-    );
+    info!(symbol = symbol_str, "downloading Binance aggregated trades");
 
     loop {
         let url = format!(
@@ -350,7 +372,13 @@ fn klines_to_events(
                 close: k.close.parse().unwrap_or(dec!(0)),
                 volume: k.volume.parse().unwrap_or(dec!(0)),
             };
-            ohlcv_to_market_event(&row, Exchange::Binance, symbol.clone(), spread_bps, i as u64)
+            ohlcv_to_market_event(
+                &row,
+                Exchange::Binance,
+                symbol.clone(),
+                spread_bps,
+                i as u64,
+            )
         })
         .collect()
 }
@@ -472,17 +500,15 @@ mod tests {
 
     #[test]
     fn test_klines_to_events() {
-        let klines = vec![
-            BinanceKline {
-                open_time: 1700000000000,
-                open: "50000".into(),
-                high: "50100".into(),
-                low: "49900".into(),
-                close: "50050".into(),
-                volume: "100".into(),
-                close_time: 1700000059999,
-            },
-        ];
+        let klines = vec![BinanceKline {
+            open_time: 1700000000000,
+            open: "50000".into(),
+            high: "50100".into(),
+            low: "49900".into(),
+            close: "50050".into(),
+            volume: "100".into(),
+            close_time: 1700000059999,
+        }];
 
         let events = klines_to_events(&klines, Symbol::new("BTC", "USDT"), dec!(10));
         assert_eq!(events.len(), 1);
@@ -490,15 +516,13 @@ mod tests {
 
     #[test]
     fn test_agg_trades_to_events() {
-        let trades = vec![
-            BinanceAggTrade {
-                agg_trade_id: 12345,
-                price: "50000.50".into(),
-                quantity: "0.1".into(),
-                timestamp: 1700000000000,
-                is_buyer_maker: false,
-            },
-        ];
+        let trades = vec![BinanceAggTrade {
+            agg_trade_id: 12345,
+            price: "50000.50".into(),
+            quantity: "0.1".into(),
+            timestamp: 1700000000000,
+            is_buyer_maker: false,
+        }];
 
         let events = agg_trades_to_events(&trades, Symbol::new("BTC", "USDT"));
         assert_eq!(events.len(), 1);

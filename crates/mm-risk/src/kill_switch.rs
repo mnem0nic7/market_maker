@@ -318,8 +318,7 @@ impl KillSwitch {
         }
 
         // --- Heartbeat failure ---
-        let heartbeat_timeout =
-            Duration::seconds(self.config.heartbeat_timeout_secs as i64);
+        let heartbeat_timeout = Duration::seconds(self.config.heartbeat_timeout_secs as i64);
         {
             let inner = self.inner.lock();
             if let Some(last_hb) = inner.last_heartbeat {
@@ -519,7 +518,10 @@ mod tests {
             .iter()
             .map(|c| c.exchange)
             .collect();
-        assert_eq!(exchanges, vec![Some(Exchange::Binance), Some(Exchange::Coinbase)]);
+        assert_eq!(
+            exchanges,
+            vec![Some(Exchange::Binance), Some(Exchange::Coinbase)]
+        );
     }
 
     #[test]

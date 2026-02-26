@@ -74,8 +74,7 @@ const EXACT_INPUT_SINGLE_SELECTOR: &str = "414bf389";
 const BALANCE_OF_SELECTOR: &str = "70a08231";
 
 /// Uniswap V3 Swap event topic for parsing fill data from receipts.
-const SWAP_EVENT_TOPIC: &str =
-    "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
+const SWAP_EVENT_TOPIC: &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
 
 /// Default pool fee tier (0.3% = 3000 bps) used when no explicit fee is given.
 const DEFAULT_FEE_TIER: u32 = 3000;
@@ -182,7 +181,11 @@ impl UniswapExecutionConnector {
     // -----------------------------------------------------------------------
 
     /// Send a JSON-RPC request and return the parsed response.
-    async fn rpc_call(&self, method: &str, params: serde_json::Value) -> MmResult<serde_json::Value> {
+    async fn rpc_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> MmResult<serde_json::Value> {
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -259,14 +262,9 @@ impl UniswapExecutionConnector {
             )
             .await?;
 
-        let nonce_hex = body["result"]
-            .as_str()
-            .unwrap_or("0x0");
-        let nonce = u64::from_str_radix(
-            nonce_hex.strip_prefix("0x").unwrap_or(nonce_hex),
-            16,
-        )
-        .unwrap_or(0);
+        let nonce_hex = body["result"].as_str().unwrap_or("0x0");
+        let nonce =
+            u64::from_str_radix(nonce_hex.strip_prefix("0x").unwrap_or(nonce_hex), 16).unwrap_or(0);
 
         let mut local_nonce = self.nonce.lock().await;
         if nonce > *local_nonce {
@@ -290,10 +288,7 @@ impl UniswapExecutionConnector {
 
     /// Encode an address (20 bytes) as a 32-byte ABI word.
     fn encode_address(addr: &str) -> String {
-        let clean = addr
-            .strip_prefix("0x")
-            .unwrap_or(addr)
-            .to_lowercase();
+        let clean = addr.strip_prefix("0x").unwrap_or(addr).to_lowercase();
         format!("{:0>64}", clean)
     }
 
@@ -427,20 +422,15 @@ impl UniswapExecutionConnector {
     async fn fetch_gas_price(&self) -> MmResult<(u128, u128)> {
         // Get base fee from latest block.
         let block_body = self
-            .rpc_call(
-                "eth_getBlockByNumber",
-                serde_json::json!(["latest", false]),
-            )
+            .rpc_call("eth_getBlockByNumber", serde_json::json!(["latest", false]))
             .await?;
 
         let base_fee_hex = block_body["result"]["baseFeePerGas"]
             .as_str()
             .unwrap_or("0x0");
-        let base_fee = u128::from_str_radix(
-            base_fee_hex.strip_prefix("0x").unwrap_or(base_fee_hex),
-            16,
-        )
-        .unwrap_or(30_000_000_000); // 30 gwei fallback
+        let base_fee =
+            u128::from_str_radix(base_fee_hex.strip_prefix("0x").unwrap_or(base_fee_hex), 16)
+                .unwrap_or(30_000_000_000); // 30 gwei fallback
 
         // Priority fee: use a reasonable default.
         let priority_fee: u128 = 2_000_000_000; // 2 gwei
@@ -641,12 +631,9 @@ impl ExecutionConnector for UniswapExecutionConnector {
                             };
 
                             // Adjust fill quantity for token decimals.
-                            let base_decimals = token_decimals
-                                .get(&swap.symbol.base)
-                                .copied()
-                                .unwrap_or(18);
-                            let adjusted_qty =
-                                fill_quantity / 10.0_f64.powi(base_decimals as i32);
+                            let base_decimals =
+                                token_decimals.get(&swap.symbol.base).copied().unwrap_or(18);
+                            let adjusted_qty = fill_quantity / 10.0_f64.powi(base_decimals as i32);
 
                             let update = OrderUpdate {
                                 client_order_id: swap.client_order_id.clone(),
@@ -853,20 +840,14 @@ impl ExecutionConnector for UniswapExecutionConnector {
 
         // Send the raw transaction via eth_sendRawTransaction.
         let body = self
-            .rpc_call(
-                "eth_sendRawTransaction",
-                serde_json::json!([raw_tx]),
-            )
+            .rpc_call("eth_sendRawTransaction", serde_json::json!([raw_tx]))
             .await?;
 
         let tx_hash = body["result"]
             .as_str()
             .ok_or_else(|| MmError::Exchange {
                 exchange: Exchange::Uniswap,
-                message: format!(
-                    "eth_sendRawTransaction did not return a tx hash: {}",
-                    body
-                ),
+                message: format!("eth_sendRawTransaction did not return a tx hash: {}", body),
             })?
             .to_string();
 
@@ -952,20 +933,13 @@ impl ExecutionConnector for UniswapExecutionConnector {
 
         // 1. Fetch native ETH balance.
         let eth_body = self
-            .rpc_call(
-                "eth_getBalance",
-                serde_json::json!([&address, "latest"]),
-            )
+            .rpc_call("eth_getBalance", serde_json::json!([&address, "latest"]))
             .await?;
 
         let eth_hex = eth_body["result"].as_str().unwrap_or("0x0");
-        let eth_raw = u128::from_str_radix(
-            eth_hex.strip_prefix("0x").unwrap_or(eth_hex),
-            16,
-        )
-        .unwrap_or(0);
-        let eth_balance =
-            Decimal::from_f64(eth_raw as f64 / 1e18).unwrap_or(Decimal::ZERO);
+        let eth_raw =
+            u128::from_str_radix(eth_hex.strip_prefix("0x").unwrap_or(eth_hex), 16).unwrap_or(0);
+        let eth_balance = Decimal::from_f64(eth_raw as f64 / 1e18).unwrap_or(Decimal::ZERO);
 
         if eth_balance > Decimal::ZERO {
             balances.push(Balance {
@@ -1027,11 +1001,7 @@ impl UniswapExecutionConnector {
         decimals: u8,
     ) -> MmResult<Decimal> {
         // Encode the balanceOf calldata: selector + address padded to 32 bytes.
-        let calldata = format!(
-            "0x{}{}",
-            BALANCE_OF_SELECTOR,
-            Self::encode_address(owner)
-        );
+        let calldata = format!("0x{}{}", BALANCE_OF_SELECTOR, Self::encode_address(owner));
 
         let body = self
             .rpc_call(
@@ -1178,17 +1148,19 @@ mod tests {
         let config = UniswapExecutionConfig {
             rpc_http_url: "https://eth-mainnet.g.alchemy.com/v2/test".into(),
             chain_id: 1,
-            private_key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                .into(),
+            private_key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
             router_address: default_router_address(),
             token_addresses: HashMap::from([
-                ("WETH".to_string(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string()),
-                ("USDC".to_string(), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string()),
+                (
+                    "WETH".to_string(),
+                    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(),
+                ),
+                (
+                    "USDC".to_string(),
+                    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(),
+                ),
             ]),
-            token_decimals: HashMap::from([
-                ("WETH".to_string(), 18),
-                ("USDC".to_string(), 6),
-            ]),
+            token_decimals: HashMap::from([("WETH".to_string(), 18), ("USDC".to_string(), 6)]),
             fee_tiers: HashMap::new(),
             max_slippage: default_slippage(),
         };

@@ -5,8 +5,7 @@
 //! is created in the `trading-core` binary and shared via `Arc<MetricsRegistry>`.
 
 use prometheus::{
-    opts, Gauge, GaugeVec, HistogramOpts, HistogramVec, Registry,
-    TextEncoder, Encoder,
+    opts, Encoder, Gauge, GaugeVec, HistogramOpts, HistogramVec, Registry, TextEncoder,
 };
 
 // ---------------------------------------------------------------------------
@@ -23,7 +22,6 @@ pub struct MetricsRegistry {
     pub registry: Registry,
 
     // -- Counters --
-
     /// Total orders submitted (labels: exchange, side, status).
     pub orders_total: GaugeVec,
 
@@ -34,7 +32,6 @@ pub struct MetricsRegistry {
     pub risk_checks_total: GaugeVec,
 
     // -- Gauges --
-
     /// Current position quantity (labels: exchange, symbol).
     pub position_quantity: GaugeVec,
 
@@ -54,7 +51,6 @@ pub struct MetricsRegistry {
     pub websocket_connected: GaugeVec,
 
     // -- Histograms --
-
     /// Strategy tick duration in seconds (labels: strategy_id).
     pub strategy_tick_duration: HistogramVec,
 
@@ -108,7 +104,10 @@ impl MetricsRegistry {
         .expect("metric: pnl_unrealized");
 
         let order_book_spread_bps = GaugeVec::new(
-            opts!("mm_order_book_spread_bps", "Order book spread in basis points"),
+            opts!(
+                "mm_order_book_spread_bps",
+                "Order book spread in basis points"
+            ),
             &["exchange", "symbol"],
         )
         .expect("metric: order_book_spread_bps");
@@ -154,14 +153,26 @@ impl MetricsRegistry {
         // Register everything.
         registry.register(Box::new(orders_total.clone())).unwrap();
         registry.register(Box::new(fills_total.clone())).unwrap();
-        registry.register(Box::new(risk_checks_total.clone())).unwrap();
-        registry.register(Box::new(position_quantity.clone())).unwrap();
+        registry
+            .register(Box::new(risk_checks_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(position_quantity.clone()))
+            .unwrap();
         registry.register(Box::new(pnl_realized.clone())).unwrap();
         registry.register(Box::new(pnl_unrealized.clone())).unwrap();
-        registry.register(Box::new(order_book_spread_bps.clone())).unwrap();
-        registry.register(Box::new(kill_switch_active.clone())).unwrap();
-        registry.register(Box::new(websocket_connected.clone())).unwrap();
-        registry.register(Box::new(strategy_tick_duration.clone())).unwrap();
+        registry
+            .register(Box::new(order_book_spread_bps.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(kill_switch_active.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(websocket_connected.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(strategy_tick_duration.clone()))
+            .unwrap();
         registry.register(Box::new(order_latency.clone())).unwrap();
 
         Self {
@@ -225,16 +236,46 @@ mod tests {
 
         // GaugeVec / HistogramVec families only appear in the text output
         // once at least one label set has been initialised.
-        registry.orders_total.with_label_values(&["test", "buy", "submitted"]).inc();
-        registry.fills_total.with_label_values(&["test", "buy"]).inc();
-        registry.risk_checks_total.with_label_values(&["test", "pass"]).inc();
-        registry.position_quantity.with_label_values(&["test", "BTC/USD"]).set(0.0);
-        registry.pnl_realized.with_label_values(&["test", "BTC/USD"]).set(0.0);
-        registry.pnl_unrealized.with_label_values(&["test", "BTC/USD"]).set(0.0);
-        registry.order_book_spread_bps.with_label_values(&["test", "BTC/USD"]).set(0.0);
-        registry.websocket_connected.with_label_values(&["test"]).set(0.0);
-        registry.strategy_tick_duration.with_label_values(&["test"]).observe(0.001);
-        registry.order_latency.with_label_values(&["test"]).observe(0.01);
+        registry
+            .orders_total
+            .with_label_values(&["test", "buy", "submitted"])
+            .inc();
+        registry
+            .fills_total
+            .with_label_values(&["test", "buy"])
+            .inc();
+        registry
+            .risk_checks_total
+            .with_label_values(&["test", "pass"])
+            .inc();
+        registry
+            .position_quantity
+            .with_label_values(&["test", "BTC/USD"])
+            .set(0.0);
+        registry
+            .pnl_realized
+            .with_label_values(&["test", "BTC/USD"])
+            .set(0.0);
+        registry
+            .pnl_unrealized
+            .with_label_values(&["test", "BTC/USD"])
+            .set(0.0);
+        registry
+            .order_book_spread_bps
+            .with_label_values(&["test", "BTC/USD"])
+            .set(0.0);
+        registry
+            .websocket_connected
+            .with_label_values(&["test"])
+            .set(0.0);
+        registry
+            .strategy_tick_duration
+            .with_label_values(&["test"])
+            .observe(0.001);
+        registry
+            .order_latency
+            .with_label_values(&["test"])
+            .observe(0.01);
 
         let output = registry.encode();
 

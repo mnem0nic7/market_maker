@@ -52,18 +52,18 @@ pub fn build_strategy_from_config(
             Ok(Box::new(AvellanedaStoikovStrategy::new(cfg)))
         }
         "grid" => {
-            let cfg: GridConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid grid params: {e}"))?;
+            let cfg: GridConfig =
+                serde_json::from_value(params).map_err(|e| format!("invalid grid params: {e}"))?;
             Ok(Box::new(GridStrategy::new(cfg)))
         }
         "twap" => {
-            let cfg: TwapConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid twap params: {e}"))?;
+            let cfg: TwapConfig =
+                serde_json::from_value(params).map_err(|e| format!("invalid twap params: {e}"))?;
             Ok(Box::new(TwapStrategy::new(cfg)))
         }
         "vwap" => {
-            let cfg: VwapConfig = serde_json::from_value(params)
-                .map_err(|e| format!("invalid vwap params: {e}"))?;
+            let cfg: VwapConfig =
+                serde_json::from_value(params).map_err(|e| format!("invalid vwap params: {e}"))?;
             Ok(Box::new(VwapStrategy::new(cfg)))
         }
         "momentum" => {

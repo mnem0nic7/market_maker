@@ -250,10 +250,7 @@ impl MarketDataConnector for AlpacaConnector {
                             "secret": config.secret_key,
                         });
 
-                        if let Err(e) = write
-                            .send(Message::Text(auth_msg.to_string()))
-                            .await
-                        {
+                        if let Err(e) = write.send(Message::Text(auth_msg.to_string())).await {
                             error!(error = %e, "Alpaca: failed to send auth message");
                             continue;
                         }
@@ -270,9 +267,8 @@ impl MarketDataConnector for AlpacaConnector {
                                             && m["msg"].as_str() == Some("authenticated")
                                     });
                                     if !is_auth_success {
-                                        let is_error = msgs.iter().any(|m| {
-                                            m["T"].as_str() == Some("error")
-                                        });
+                                        let is_error =
+                                            msgs.iter().any(|m| m["T"].as_str() == Some("error"));
                                         if is_error {
                                             error!(
                                                 response = %text,
@@ -300,10 +296,7 @@ impl MarketDataConnector for AlpacaConnector {
                             "trades": tickers,
                         });
 
-                        if let Err(e) = write
-                            .send(Message::Text(subscribe_msg.to_string()))
-                            .await
-                        {
+                        if let Err(e) = write.send(Message::Text(subscribe_msg.to_string())).await {
                             error!(error = %e, "Alpaca: failed to send subscribe message");
                             continue;
                         }
@@ -316,12 +309,8 @@ impl MarketDataConnector for AlpacaConnector {
                         loop {
                             match read.next().await {
                                 Some(Ok(Message::Text(text))) => {
-                                    if let Err(e) = handle_alpaca_message(
-                                        &text,
-                                        &book_tx,
-                                        &trade_tx,
-                                    )
-                                    .await
+                                    if let Err(e) =
+                                        handle_alpaca_message(&text, &book_tx, &trade_tx).await
                                     {
                                         warn!(error = %e, "failed to handle Alpaca message");
                                     }
@@ -394,10 +383,7 @@ impl MarketDataConnector for AlpacaConnector {
         // Alpaca does not provide a REST order book endpoint. We return the
         // latest quote as a single-level book via the snapshot endpoint.
         let ticker = to_alpaca_symbol(symbol);
-        let url = format!(
-            "https://data.alpaca.markets/v2/stocks/{}/snapshot",
-            ticker
-        );
+        let url = format!("https://data.alpaca.markets/v2/stocks/{}/snapshot", ticker);
 
         let resp = self
             .http
@@ -418,11 +404,10 @@ impl MarketDataConnector for AlpacaConnector {
             });
         }
 
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Alpaca,
-                message: format!("failed to parse snapshot response: {}", e),
-            })?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
+            exchange: Exchange::Alpaca,
+            message: format!("failed to parse snapshot response: {}", e),
+        })?;
 
         // Parse the latest quote from the snapshot.
         let quote = &body["latestQuote"];
@@ -517,10 +502,7 @@ async fn handle_quote(
 ) -> Result<(), MmError> {
     let symbol = from_alpaca_symbol(&quote.symbol);
 
-    let timestamp: DateTime<Utc> = quote
-        .timestamp
-        .parse()
-        .unwrap_or_else(|_| Utc::now());
+    let timestamp: DateTime<Utc> = quote.timestamp.parse().unwrap_or_else(|_| Utc::now());
 
     // Alpaca quotes represent a single level (NBBO). We model this as a
     // single-level order book snapshot.
@@ -539,10 +521,13 @@ async fn handle_quote(
         sequence: 0,
     };
 
-    book_tx.send(order_book).await.map_err(|e| MmError::Exchange {
-        exchange: Exchange::Alpaca,
-        message: format!("failed to send order book update: {}", e),
-    })?;
+    book_tx
+        .send(order_book)
+        .await
+        .map_err(|e| MmError::Exchange {
+            exchange: Exchange::Alpaca,
+            message: format!("failed to send order book update: {}", e),
+        })?;
 
     Ok(())
 }
@@ -553,10 +538,7 @@ async fn handle_trade(
 ) -> Result<(), MmError> {
     let symbol = from_alpaca_symbol(&trade.symbol);
 
-    let timestamp: DateTime<Utc> = trade
-        .timestamp
-        .parse()
-        .unwrap_or_else(|_| Utc::now());
+    let timestamp: DateTime<Utc> = trade.timestamp.parse().unwrap_or_else(|_| Utc::now());
 
     // Alpaca trade messages do not include a taker side. Default to Buy as
     // the side is not determinable from the consolidated feed.
@@ -570,10 +552,13 @@ async fn handle_trade(
         trade_id: trade.trade_id.to_string(),
     };
 
-    trade_tx.send(normalized).await.map_err(|e| MmError::Exchange {
-        exchange: Exchange::Alpaca,
-        message: format!("failed to send trade: {}", e),
-    })?;
+    trade_tx
+        .send(normalized)
+        .await
+        .map_err(|e| MmError::Exchange {
+            exchange: Exchange::Alpaca,
+            message: format!("failed to send trade: {}", e),
+        })?;
 
     Ok(())
 }

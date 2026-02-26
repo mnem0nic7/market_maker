@@ -578,7 +578,12 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(places.len(), 2, "Expected 2 Place actions, got {}", places.len());
+        assert_eq!(
+            places.len(),
+            2,
+            "Expected 2 Place actions, got {}",
+            places.len()
+        );
 
         let bid_order = places.iter().find(|o| o.side == Side::Buy).unwrap();
         let ask_order = places.iter().find(|o| o.side == Side::Sell).unwrap();
@@ -625,8 +630,17 @@ mod tests {
             .collect();
 
         // Should only have the ask (sell side)
-        assert_eq!(places.len(), 1, "Expected 1 Place action (ask only), got {}", places.len());
-        assert_eq!(places[0].side, Side::Sell, "The only order should be a sell");
+        assert_eq!(
+            places.len(),
+            1,
+            "Expected 1 Place action (ask only), got {}",
+            places.len()
+        );
+        assert_eq!(
+            places[0].side,
+            Side::Sell,
+            "The only order should be a sell"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -652,7 +666,12 @@ mod tests {
             .collect();
 
         // Should only have the bid (buy side)
-        assert_eq!(places.len(), 1, "Expected 1 Place action (bid only), got {}", places.len());
+        assert_eq!(
+            places.len(),
+            1,
+            "Expected 1 Place action (bid only), got {}",
+            places.len()
+        );
         assert_eq!(places[0].side, Side::Buy, "The only order should be a buy");
     }
 
@@ -671,7 +690,11 @@ mod tests {
         let actions = strategy.on_tick(&snapshot);
 
         // Should return a single CancelAll action
-        assert_eq!(actions.len(), 1, "Expected exactly 1 action on session expiry");
+        assert_eq!(
+            actions.len(),
+            1,
+            "Expected exactly 1 action on session expiry"
+        );
         assert!(
             matches!(&actions[0], OrderAction::CancelAll(_)),
             "Action should be CancelAll, got {:?}",
@@ -741,7 +764,10 @@ mod tests {
         let actions = strategy.stop();
 
         // Should be inactive
-        assert!(!strategy.is_active(), "Strategy should be inactive after stop");
+        assert!(
+            !strategy.is_active(),
+            "Strategy should be inactive after stop"
+        );
 
         // Should return a single CancelAll
         assert_eq!(actions.len(), 1, "stop() should return exactly 1 action");

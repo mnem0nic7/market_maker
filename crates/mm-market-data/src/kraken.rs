@@ -345,8 +345,7 @@ impl MarketDataConnector for KrakenConnector {
     async fn fetch_order_book(&self, symbol: &Symbol, depth: usize) -> MmResult<OrderBook> {
         // Kraken REST uses the legacy pair format for the Depth endpoint.
         // We'll use the pair without slash, e.g. "XBTUSD".
-        let kraken_pair = normalizer::to_exchange_symbol(Exchange::Kraken, symbol)
-            .replace('/', "");
+        let kraken_pair = normalizer::to_exchange_symbol(Exchange::Kraken, symbol).replace('/', "");
         let url = format!(
             "{}/0/public/Depth?pair={}&count={}",
             KRAKEN_REST_URL, kraken_pair, depth
@@ -504,7 +503,7 @@ async fn handle_book_data(
     let sequence = data.checksum;
 
     let _ = msg_type; // Both snapshot and update are forwarded; the local
-                       // book manager distinguishes them based on context.
+                      // book manager distinguishes them based on context.
 
     let order_book = OrderBook {
         exchange: Exchange::Kraken,
@@ -515,10 +514,13 @@ async fn handle_book_data(
         sequence,
     };
 
-    book_tx.send(order_book).await.map_err(|e| MmError::Exchange {
-        exchange: Exchange::Kraken,
-        message: format!("failed to send order book update: {}", e),
-    })?;
+    book_tx
+        .send(order_book)
+        .await
+        .map_err(|e| MmError::Exchange {
+            exchange: Exchange::Kraken,
+            message: format!("failed to send order book update: {}", e),
+        })?;
 
     Ok(())
 }
@@ -575,10 +577,12 @@ where
         message: format!("failed to serialize message: {}", e),
     })?;
 
-    sink.send(Message::Text(json)).await.map_err(|e| MmError::Exchange {
-        exchange: Exchange::Kraken,
-        message: format!("failed to send WebSocket message: {}", e),
-    })?;
+    sink.send(Message::Text(json))
+        .await
+        .map_err(|e| MmError::Exchange {
+            exchange: Exchange::Kraken,
+            message: format!("failed to send WebSocket message: {}", e),
+        })?;
 
     Ok(())
 }
@@ -598,12 +602,8 @@ fn parse_kraken_rest_levels(val: Option<&serde_json::Value>) -> Vec<PriceLevel> 
             if items.len() < 2 {
                 return None;
             }
-            let price = items[0]
-                .as_str()
-                .and_then(|s| s.parse::<Decimal>().ok())?;
-            let quantity = items[1]
-                .as_str()
-                .and_then(|s| s.parse::<Decimal>().ok())?;
+            let price = items[0].as_str().and_then(|s| s.parse::<Decimal>().ok())?;
+            let quantity = items[1].as_str().and_then(|s| s.parse::<Decimal>().ok())?;
             Some(PriceLevel { price, quantity })
         })
         .collect()

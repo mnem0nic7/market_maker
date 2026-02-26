@@ -191,14 +191,15 @@ impl MarketDataConnector for RaydiumConnector {
                     message: format!("no decimals configured for token {}", symbol.base),
                 })?;
 
-            let quote_decimals = *self
-                .config
-                .token_decimals
-                .get(&symbol.quote)
-                .ok_or_else(|| MmError::Exchange {
-                    exchange: Exchange::Raydium,
-                    message: format!("no decimals configured for token {}", symbol.quote),
-                })?;
+            let quote_decimals =
+                *self
+                    .config
+                    .token_decimals
+                    .get(&symbol.quote)
+                    .ok_or_else(|| MmError::Exchange {
+                        exchange: Exchange::Raydium,
+                        message: format!("no decimals configured for token {}", symbol.quote),
+                    })?;
 
             pool_states.push(PoolState {
                 symbol: symbol.clone(),
@@ -343,14 +344,14 @@ impl MarketDataConnector for RaydiumConnector {
 
     async fn fetch_order_book(&self, symbol: &Symbol, depth: usize) -> MmResult<OrderBook> {
         let canonical = symbol.canonical();
-        let pool_address = self
-            .config
-            .pool_addresses
-            .get(&canonical)
-            .ok_or_else(|| MmError::Exchange {
-                exchange: Exchange::Raydium,
-                message: format!("no pool address configured for {}", canonical),
-            })?;
+        let pool_address =
+            self.config
+                .pool_addresses
+                .get(&canonical)
+                .ok_or_else(|| MmError::Exchange {
+                    exchange: Exchange::Raydium,
+                    message: format!("no pool address configured for {}", canonical),
+                })?;
 
         let base_decimals = *self
             .config
@@ -371,14 +372,12 @@ impl MarketDataConnector for RaydiumConnector {
             })?;
 
         // Fetch the pool account data via getAccountInfo RPC.
-        let account_data = fetch_account_data(&self.http, &self.config.rpc_http_url, pool_address).await?;
+        let account_data =
+            fetch_account_data(&self.http, &self.config.rpc_http_url, pool_address).await?;
         let reserves = parse_pool_reserves(&account_data, base_decimals, quote_decimals)?;
 
         let book = build_virtual_order_book(
-            symbol,
-            &reserves,
-            depth,
-            0, // sequence
+            symbol, &reserves, depth, 0, // sequence
         );
 
         Ok(book)
@@ -497,22 +496,20 @@ async fn handle_solana_ws_message(
                 let pool = &mut pool_states[pool_idx];
 
                 // Decode base64 account data.
-                let data_b64 = params
-                    .result
-                    .value
-                    .data
-                    .first()
-                    .ok_or_else(|| MmError::Exchange {
-                        exchange: Exchange::Raydium,
-                        message: "empty account data in notification".into(),
-                    })?;
+                let data_b64 =
+                    params
+                        .result
+                        .value
+                        .data
+                        .first()
+                        .ok_or_else(|| MmError::Exchange {
+                            exchange: Exchange::Raydium,
+                            message: "empty account data in notification".into(),
+                        })?;
 
                 let account_data = decode_base64(data_b64)?;
-                let reserves = parse_pool_reserves(
-                    &account_data,
-                    pool.base_decimals,
-                    pool.quote_decimals,
-                )?;
+                let reserves =
+                    parse_pool_reserves(&account_data, pool.base_decimals, pool.quote_decimals)?;
 
                 // Emit a synthetic trade if we had previous reserves (price changed).
                 if let Some(prev) = &pool.reserves {
@@ -728,20 +725,22 @@ async fn fetch_account_data(
         });
     }
 
-    let data_array = body["result"]["value"]["data"]
-        .as_array()
-        .ok_or_else(|| MmError::Exchange {
-            exchange: Exchange::Raydium,
-            message: "getAccountInfo: missing data array in response".into(),
-        })?;
+    let data_array =
+        body["result"]["value"]["data"]
+            .as_array()
+            .ok_or_else(|| MmError::Exchange {
+                exchange: Exchange::Raydium,
+                message: "getAccountInfo: missing data array in response".into(),
+            })?;
 
-    let data_b64 = data_array
-        .first()
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| MmError::Exchange {
-            exchange: Exchange::Raydium,
-            message: "getAccountInfo: missing base64 data".into(),
-        })?;
+    let data_b64 =
+        data_array
+            .first()
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| MmError::Exchange {
+                exchange: Exchange::Raydium,
+                message: "getAccountInfo: missing base64 data".into(),
+            })?;
 
     decode_base64(data_b64)
 }
@@ -902,8 +901,7 @@ mod tests {
 
         // Place base reserve = 1_000_000_000 (1 SOL in lamports) at offset 64.
         let base_val: u64 = 1_000_000_000;
-        data[RESERVE_BASE_OFFSET..RESERVE_BASE_OFFSET + 8]
-            .copy_from_slice(&base_val.to_le_bytes());
+        data[RESERVE_BASE_OFFSET..RESERVE_BASE_OFFSET + 8].copy_from_slice(&base_val.to_le_bytes());
 
         // Place quote reserve = 150_000_000 (150 USDC in smallest units, 6 decimals) at offset 72.
         let quote_val: u64 = 150_000_000;

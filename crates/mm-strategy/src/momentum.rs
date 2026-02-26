@@ -400,7 +400,10 @@ impl Strategy for MomentumStrategy {
             OrderStatus::Pending | OrderStatus::Submitted | OrderStatus::New => {
                 self.live_order_ids.insert(update.client_order_id.clone());
             }
-            OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Rejected | OrderStatus::Expired => {
+            OrderStatus::Filled
+            | OrderStatus::Cancelled
+            | OrderStatus::Rejected
+            | OrderStatus::Expired => {
                 self.live_order_ids.remove(&update.client_order_id);
             }
             OrderStatus::PartiallyFilled | OrderStatus::PendingCancel => {
@@ -441,10 +444,10 @@ mod tests {
             exchange: Exchange::Simulated,
             symbol: Symbol::new("BTC", "USDT"),
             lookback_periods: 5,
-            entry_threshold_bps: dec!(50),  // 50 bps = 0.5%
-            exit_threshold_bps: dec!(10),   // 10 bps for mean-reversion exit
+            entry_threshold_bps: dec!(50), // 50 bps = 0.5%
+            exit_threshold_bps: dec!(10),  // 10 bps for mean-reversion exit
             order_size: dec!(1),
-            trailing_stop_bps: dec!(30),    // 30 bps trailing stop
+            trailing_stop_bps: dec!(30), // 30 bps trailing stop
             max_position: dec!(5),
         }
     }

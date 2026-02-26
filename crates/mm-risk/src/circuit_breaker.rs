@@ -220,11 +220,7 @@ impl CircuitBreaker {
     ///
     /// Levels are checked in ascending severity (L1 through L5). The highest
     /// triggered level determines the action.
-    pub fn check(
-        &self,
-        order: &NewOrder,
-        portfolio: &PortfolioRisk,
-    ) -> CircuitBreakerResult {
+    pub fn check(&self, order: &NewOrder, portfolio: &PortfolioRisk) -> CircuitBreakerResult {
         let mut state = self.state.lock();
         let now = Utc::now();
 
@@ -528,12 +524,7 @@ impl CircuitBreaker {
 
     /// Transition a level from `Triggered` to `Cooldown`, and from `Cooldown`
     /// back to `Active` once the cooldown duration expires.
-    fn maybe_expire_cooldown(
-        &self,
-        ls: &mut LevelState,
-        cooldown_secs: u64,
-        now: DateTime<Utc>,
-    ) {
+    fn maybe_expire_cooldown(&self, ls: &mut LevelState, cooldown_secs: u64, now: DateTime<Utc>) {
         match ls.state {
             BreakerState::Triggered => {
                 // Move to cooldown immediately after trigger.
