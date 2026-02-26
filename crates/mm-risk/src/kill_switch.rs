@@ -535,4 +535,245 @@ mod tests {
         });
         assert!(flag.load(Ordering::SeqCst));
     }
+
+    #[test]
+    fn test_kill_switch_exchange_disconnect_trigger() {
+        let ks = KillSwitch::new(test_config());
+        // Exchange disconnected for longer than the timeout (30s).
+        let exchanges = vec![ExchangeState {
+            exchange: Exchange::Binance,
+            connected: false,
+            last_message_at: Some(Utc::now() - Duration::seconds(60)),
+        }];
+
+        let activation = ks.check_triggers(&empty_portfolio(), &exchanges);
+        assert!(activation.is_some());
+        let activation = activation.unwrap();
+
+        // Verify the trigger is ExchangeDisconnect.
+        match &activation.trigger {
+            KillSwitchTrigger::ExchangeDisconnect {
+                exchange, timeout, ..
+            } => {
+                assert_eq!(*exchange, Exchange::Binance);
+                assert_eq!(timeout.num_seconds(), 30);
+            }
+            other => panic!("expected ExchangeDisconnect trigger, got {:?}", other),
+        }
+        assert!(ks.is_active());
+    }
+
+    #[test]
+    fn test_kill_switch_exchange_never_connected_triggers() {
+        let ks = KillSwitch::new(test_config());
+        // Exchange that has never sent a message (last_message_at = None).
+        let exchanges = vec![ExchangeState {
+            exchange: Exchange::Coinbase,
+            connected: false,
+            last_message_at: None,
+        }];
+
+        let activation = ks.check_triggers(&empty_portfolio(), &exchanges);
+        assert!(
+            activation.is_some(),
+            "exchange that never connected should trigger kill switch"
+        );
+        assert!(ks.is_active());
+    }
+
+    #[test]
+    fn test_kill_switch_exchange_disconnect_within_timeout_no_trigger() {
+        let ks = KillSwitch::new(test_config());
+        // Exchange disconnected but within the 30s timeout.
+        let exchanges = vec![ExchangeState {
+            exchange: Exchange::Binance,
+            connected: false,
+            last_message_at: Some(Utc::now() - Duration::seconds(10)),
+        }];
+
+        let result = ks.check_triggers(&empty_portfolio(), &exchanges);
+        assert!(
+            result.is_none(),
+            "disconnect within timeout should not trigger"
+        );
+        assert!(!ks.is_active());
+    }
+
+    #[test]
+    fn test_kill_switch_heartbeat_timeout_trigger() {
+        let mut config = test_config();
+        config.heartbeat_timeout_secs = 2;
+        let ks = KillSwitch::new(config);
+
+        // Manually set last heartbeat to far in the past by not recording any
+        // new heartbeat and using a very short timeout.
+        // The constructor sets last_heartbeat to Utc::now(). We need to
+        // simulate time passing. Set last heartbeat to 5 seconds ago.
+        {
+            let mut inner = ks.inner.lock();
+            inner.last_heartbeat = Some(Utc::now() - Duration::seconds(5));
+        }
+
+        let activation = ks.check_triggers(&empty_portfolio(), &healthy_exchanges());
+        assert!(
+            activation.is_some(),
+            "stale heartbeat should trigger kill switch"
+        );
+
+        let activation = activation.unwrap();
+        match &activation.trigger {
+            KillSwitchTrigger::HeartbeatFailure { timeout, .. } => {
+                assert_eq!(timeout.num_seconds(), 2);
+            }
+            other => panic!("expected HeartbeatFailure trigger, got {:?}", other),
+        }
+        assert!(ks.is_active());
+    }
+
+    #[test]
+    fn test_kill_switch_heartbeat_refresh_prevents_trigger() {
+        let mut config = test_config();
+        config.heartbeat_timeout_secs = 2;
+        let ks = KillSwitch::new(config);
+
+        // Record a fresh heartbeat — should prevent timeout trigger.
+        ks.record_heartbeat();
+
+        let result = ks.check_triggers(&empty_portfolio(), &healthy_exchanges());
+        assert!(
+            result.is_none(),
+            "fresh heartbeat should not trigger kill switch"
+        );
+        assert!(!ks.is_active());
+    }
+
+    #[test]
+    fn test_kill_switch_position_limit_trigger() {
+        let ks = KillSwitch::new(test_config());
+        let mut portfolio = empty_portfolio();
+        portfolio.positions.push(Position {
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("ETH", "USDT"),
+            quantity: dec!(200), // exceeds max_position_per_symbol of 100
+            average_entry_price: dec!(3000),
+            unrealized_pnl: Decimal::ZERO,
+            realized_pnl: Decimal::ZERO,
+            updated_at: Utc::now(),
+        });
+
+        let activation = ks.check_triggers(&portfolio, &healthy_exchanges());
+        assert!(activation.is_some());
+
+        let activation = activation.unwrap();
+        match &activation.trigger {
+            KillSwitchTrigger::MaxPositionSize {
+                symbol,
+                position,
+                threshold,
+            } => {
+                assert_eq!(symbol, "ETH/USDT");
+                assert_eq!(*position, dec!(200));
+                assert_eq!(*threshold, dec!(100));
+            }
+            other => panic!("expected MaxPositionSize trigger, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_kill_switch_reset() {
+        let ks = KillSwitch::new(test_config());
+
+        // Activate the kill switch.
+        ks.activate(KillSwitchTrigger::ManualActivation {
+            operator: "test".into(),
+        });
+        assert!(ks.is_active());
+        assert_eq!(ks.activation_count(), 1);
+
+        // Reset clears the active state.
+        ks.reset();
+        assert!(!ks.is_active());
+
+        // The shared flag also reflects the reset.
+        let flag = ks.active_flag();
+        assert!(!flag.load(Ordering::SeqCst));
+
+        // Activation history is preserved after reset.
+        assert_eq!(ks.activation_count(), 1);
+
+        // Can be re-triggered after reset.
+        let mut portfolio = empty_portfolio();
+        portfolio.daily_pnl = dec!(-15_000);
+        let result = ks.check_triggers(&portfolio, &healthy_exchanges());
+        assert!(result.is_some());
+        assert!(ks.is_active());
+        assert_eq!(ks.activation_count(), 2);
+    }
+
+    #[test]
+    fn test_kill_switch_active_flag_is_thread_safe() {
+        use std::thread;
+
+        let ks = KillSwitch::new(test_config());
+        let flag = ks.active_flag();
+
+        // Spawn a thread that polls the flag.
+        let flag_clone = Arc::clone(&flag);
+        let handle = thread::spawn(move || {
+            // Busy-wait until flag becomes true (with a safety limit).
+            for _ in 0..1_000_000 {
+                if flag_clone.load(Ordering::SeqCst) {
+                    return true;
+                }
+                std::hint::spin_loop();
+            }
+            false
+        });
+
+        // Activate from the main thread.
+        ks.activate(KillSwitchTrigger::ManualActivation {
+            operator: "thread_test".into(),
+        });
+
+        let seen_active = handle.join().expect("thread panicked");
+        assert!(
+            seen_active,
+            "background thread should have seen the kill switch activation"
+        );
+    }
+
+    #[test]
+    fn test_kill_switch_trigger_display_messages() {
+        // Verify Display implementations produce reasonable messages.
+        let trigger = KillSwitchTrigger::MaxDailyLoss {
+            daily_pnl: dec!(-15000),
+            threshold: dec!(10000),
+        };
+        let msg = format!("{}", trigger);
+        assert!(msg.contains("max daily loss"), "got: {}", msg);
+
+        let trigger = KillSwitchTrigger::ManualActivation {
+            operator: "admin".into(),
+        };
+        let msg = format!("{}", trigger);
+        assert!(msg.contains("manual activation"), "got: {}", msg);
+        assert!(msg.contains("admin"), "got: {}", msg);
+
+        let trigger = KillSwitchTrigger::ExchangeDisconnect {
+            exchange: Exchange::Binance,
+            disconnected_for: Duration::seconds(60),
+            timeout: Duration::seconds(30),
+        };
+        let msg = format!("{}", trigger);
+        assert!(msg.contains("exchange disconnect"), "got: {}", msg);
+        assert!(msg.contains("60"), "got: {}", msg);
+
+        let trigger = KillSwitchTrigger::HeartbeatFailure {
+            last_heartbeat: None,
+            timeout: Duration::seconds(10),
+        };
+        let msg = format!("{}", trigger);
+        assert!(msg.contains("heartbeat failure"), "got: {}", msg);
+        assert!(msg.contains("never"), "got: {}", msg);
+    }
 }
