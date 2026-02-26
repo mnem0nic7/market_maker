@@ -496,3 +496,241 @@ pub struct StrategyConfig {
     pub enabled: bool,
     pub params: serde_json::Value,
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    /// Helper to create a Fill with minimal boilerplate.
+    fn make_fill(side: Side, price: Decimal, quantity: Decimal) -> Fill {
+        Fill {
+            fill_id: Uuid::new_v4().to_string(),
+            client_order_id: "test-order".to_string(),
+            exchange_order_id: "exch-order".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            side,
+            price,
+            quantity,
+            fee: Decimal::ZERO,
+            fee_currency: "USDT".to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Helper to create a flat position on the simulated exchange.
+    fn flat_position() -> Position {
+        Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT"))
+    }
+
+    // 1. Buy from flat: verify quantity and avg entry price.
+    #[test]
+    fn test_open_long_position() {
+        let mut pos = flat_position();
+        let fill = make_fill(Side::Buy, dec!(50000), dec!(1));
+
+        pos.update_on_fill(&fill);
+
+        assert_eq!(pos.quantity, dec!(1));
+        assert_eq!(pos.average_entry_price, dec!(50000));
+        assert_eq!(pos.realized_pnl, dec!(0));
+        assert!(pos.is_long());
+        assert!(!pos.is_flat());
+        assert!(!pos.is_short());
+    }
+
+    // 2. Two buys — verify weighted average entry price.
+    #[test]
+    fn test_add_to_long_position() {
+        let mut pos = flat_position();
+
+        // Buy 1.0 @ 100
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(100), dec!(1)));
+        // Buy 1.0 @ 200
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(200), dec!(1)));
+
+        assert_eq!(pos.quantity, dec!(2));
+        // Weighted avg = (100*1 + 200*1) / 2 = 150
+        assert_eq!(pos.average_entry_price, dec!(150));
+        assert_eq!(pos.realized_pnl, dec!(0));
+    }
+
+    // 3. Buy then sell same qty — verify realized PnL and position is flat.
+    #[test]
+    fn test_close_long_position() {
+        let mut pos = flat_position();
+
+        // Buy 1.0 @ 100
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(100), dec!(1)));
+        // Sell 1.0 @ 110
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(110), dec!(1)));
+
+        assert_eq!(pos.quantity, dec!(0));
+        assert!(pos.is_flat());
+        // PnL = (110 - 100) * 1 = 10
+        assert_eq!(pos.realized_pnl, dec!(10));
+    }
+
+    // 4. Buy 1.0, sell 0.3 — verify remaining qty, avg entry unchanged, partial PnL.
+    #[test]
+    fn test_partial_close_long() {
+        let mut pos = flat_position();
+
+        // Buy 1.0 @ 100
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(100), dec!(1)));
+        // Sell 0.3 @ 120
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(120), dec!(0.3)));
+
+        assert_eq!(pos.quantity, dec!(0.7));
+        // Avg entry should remain 100 (partial close doesn't change avg entry)
+        assert_eq!(pos.average_entry_price, dec!(100));
+        // Realized PnL = (120 - 100) * 0.3 = 6
+        assert_eq!(pos.realized_pnl, dec!(6));
+    }
+
+    // 5. Buy 1.0 @ 100, sell 2.0 @ 110 — flip long to short.
+    //    Realized PnL on the closed 1.0 portion, new qty=-1.0, avg entry reset to 110.
+    #[test]
+    fn test_flip_long_to_short() {
+        let mut pos = flat_position();
+
+        // Buy 1.0 @ 100
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(100), dec!(1)));
+        // Sell 2.0 @ 110 (closes 1.0 long, opens 1.0 short)
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(110), dec!(2)));
+
+        assert_eq!(pos.quantity, dec!(-1));
+        assert!(pos.is_short());
+        // PnL realized on the closed 1.0: (110 - 100) * 1 = 10
+        assert_eq!(pos.realized_pnl, dec!(10));
+        // Avg entry resets to the fill price for the new short side
+        assert_eq!(pos.average_entry_price, dec!(110));
+    }
+
+    // 6. Sell from flat — open a short position.
+    #[test]
+    fn test_open_short_position() {
+        let mut pos = flat_position();
+        let fill = make_fill(Side::Sell, dec!(50000), dec!(1));
+
+        pos.update_on_fill(&fill);
+
+        assert_eq!(pos.quantity, dec!(-1));
+        assert_eq!(pos.average_entry_price, dec!(50000));
+        assert_eq!(pos.realized_pnl, dec!(0));
+        assert!(pos.is_short());
+        assert!(!pos.is_flat());
+        assert!(!pos.is_long());
+    }
+
+    // 7. Two sells — verify weighted average entry price.
+    #[test]
+    fn test_add_to_short_position() {
+        let mut pos = flat_position();
+
+        // Sell 1.0 @ 100
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(100), dec!(1)));
+        // Sell 1.0 @ 200
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(200), dec!(1)));
+
+        assert_eq!(pos.quantity, dec!(-2));
+        // Weighted avg = (100*1 + 200*1) / 2 = 150
+        assert_eq!(pos.average_entry_price, dec!(150));
+        assert_eq!(pos.realized_pnl, dec!(0));
+    }
+
+    // 8. Sell then buy — close short, verify realized PnL.
+    #[test]
+    fn test_close_short_position() {
+        let mut pos = flat_position();
+
+        // Sell 1.0 @ 100 (short entry)
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(100), dec!(1)));
+        // Buy 1.0 @ 90 (close short at profit)
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(90), dec!(1)));
+
+        assert_eq!(pos.quantity, dec!(0));
+        assert!(pos.is_flat());
+        // Short PnL = (entry - exit) * qty = (100 - 90) * 1 = 10
+        assert_eq!(pos.realized_pnl, dec!(10));
+    }
+
+    // 9. Sell 1.0 @ 100, buy 2.0 @ 90 — flip short to long.
+    //    PnL = 10 on the closed 1.0, qty = 1.0, avg entry = 90.
+    #[test]
+    fn test_flip_short_to_long() {
+        let mut pos = flat_position();
+
+        // Sell 1.0 @ 100
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(100), dec!(1)));
+        // Buy 2.0 @ 90 (closes 1.0 short, opens 1.0 long)
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(90), dec!(2)));
+
+        assert_eq!(pos.quantity, dec!(1));
+        assert!(pos.is_long());
+        // Short PnL on closed portion: (100 - 90) * 1 = 10
+        assert_eq!(pos.realized_pnl, dec!(10));
+        // Avg entry resets to fill price for the new long side
+        assert_eq!(pos.average_entry_price, dec!(90));
+    }
+
+    // 10. Multiple fills — verify PnL accumulates correctly across trades.
+    #[test]
+    fn test_multiple_fills_pnl_accumulation() {
+        let mut pos = flat_position();
+
+        // Trade 1: Buy 2.0 @ 100
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(100), dec!(2)));
+        assert_eq!(pos.quantity, dec!(2));
+        assert_eq!(pos.average_entry_price, dec!(100));
+
+        // Trade 2: Sell 1.0 @ 110 (partial close, realize +10)
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(110), dec!(1)));
+        assert_eq!(pos.quantity, dec!(1));
+        assert_eq!(pos.realized_pnl, dec!(10));
+        assert_eq!(pos.average_entry_price, dec!(100));
+
+        // Trade 3: Sell 1.0 @ 120 (close remaining, realize +20)
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(120), dec!(1)));
+        assert_eq!(pos.quantity, dec!(0));
+        assert!(pos.is_flat());
+        // Total realized: 10 + 20 = 30
+        assert_eq!(pos.realized_pnl, dec!(30));
+
+        // Trade 4: Sell 1.0 @ 200 (new short)
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(200), dec!(1)));
+        assert_eq!(pos.quantity, dec!(-1));
+        assert_eq!(pos.average_entry_price, dec!(200));
+        // Realized PnL unchanged
+        assert_eq!(pos.realized_pnl, dec!(30));
+
+        // Trade 5: Buy 1.0 @ 180 (close short, realize +20)
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(180), dec!(1)));
+        assert_eq!(pos.quantity, dec!(0));
+        assert!(pos.is_flat());
+        // Total realized: 30 + 20 = 50
+        assert_eq!(pos.realized_pnl, dec!(50));
+    }
+
+    // 11. Edge case: fill with zero quantity should not panic.
+    #[test]
+    fn test_zero_quantity_fill_no_panic() {
+        let mut pos = flat_position();
+
+        // Zero-qty fill from flat
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(100), dec!(0)));
+        assert_eq!(pos.quantity, dec!(0));
+        assert!(pos.is_flat());
+
+        // Open a position, then apply zero-qty fill
+        pos.update_on_fill(&make_fill(Side::Buy, dec!(100), dec!(1)));
+        pos.update_on_fill(&make_fill(Side::Sell, dec!(110), dec!(0)));
+        assert_eq!(pos.quantity, dec!(1));
+        assert_eq!(pos.realized_pnl, dec!(0));
+    }
+}
