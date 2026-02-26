@@ -1,3 +1,9 @@
+[package]
+name = "market-maker-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
 [workspace]
 resolver = "2"
 members = [
@@ -15,6 +21,19 @@ members = [
     "bins/backtester",
     "bins/connection-test",
 ]
+
+[dev-dependencies]
+mm-core = { path = "crates/mm-core" }
+mm-backtest = { path = "crates/mm-backtest" }
+mm-execution = { path = "crates/mm-execution" }
+mm-risk = { path = "crates/mm-risk" }
+mm-strategy = { path = "crates/mm-strategy" }
+tokio = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = "1"
+chrono = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
 
 [workspace.package]
 version = "0.1.0"

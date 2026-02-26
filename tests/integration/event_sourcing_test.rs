@@ -1,6 +1,5 @@
 //! Integration test: events are serializable and structurally correct.
 
-use chrono::Utc;
 use rust_decimal_macros::dec;
 
 use mm_core::{
@@ -21,7 +20,7 @@ fn envelope_serializes_and_deserializes() {
             side: Side::Buy,
             order_type: OrderType::Limit,
             time_in_force: TimeInForce::GTC,
-            price: dec!(50000),
+            price: Some(dec!(50000)),
             quantity: dec!(0.1),
         },
     );
@@ -51,7 +50,7 @@ fn envelope_serializes_and_deserializes() {
             assert_eq!(symbol.base, "BTC");
             assert_eq!(symbol.quote, "USDT");
             assert_eq!(*side, Side::Buy);
-            assert_eq!(*price, dec!(50000));
+            assert_eq!(*price, Some(dec!(50000)));
             assert_eq!(*quantity, dec!(0.1));
         }
         other => panic!("unexpected event type: {other:?}"),
@@ -109,7 +108,7 @@ fn envelope_with_cause_preserves_causation_id() {
         "corr-1",
         Event::OrderCancelled {
             client_order_id: "ord-1".into(),
-            exchange_order_id: "exch-1".into(),
+            exchange_order_id: Some("exch-1".into()),
             exchange: Exchange::Coinbase,
             symbol: Symbol::new("BTC", "USD"),
             reason: "user requested".into(),
@@ -136,7 +135,7 @@ fn all_event_variants_serialize() {
             side: Side::Sell,
             order_type: OrderType::Market,
             time_in_force: TimeInForce::IOC,
-            price: dec!(3000),
+            price: Some(dec!(3000)),
             quantity: dec!(1),
         },
         Event::OrderAcknowledged {
@@ -170,7 +169,7 @@ fn all_event_variants_serialize() {
         },
         Event::OrderCancelled {
             client_order_id: "a".into(),
-            exchange_order_id: "e".into(),
+            exchange_order_id: Some("e".into()),
             exchange: Exchange::Kraken,
             symbol: Symbol::new("ETH", "USD"),
             reason: "cancelled".into(),

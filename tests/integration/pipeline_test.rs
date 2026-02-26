@@ -10,7 +10,7 @@ use rust_decimal_macros::dec;
 use mm_core::{
     traits::Strategy,
     types::{
-        Exchange, Fill, MarketSnapshot, NewOrder, Order, OrderAction, OrderBook, OrderStatus,
+        Exchange, MarketSnapshot, NewOrder, OrderAction, OrderBook,
         Position, PriceLevel, Side, Symbol, Trade,
     },
     PortfolioRisk, RiskAction,
