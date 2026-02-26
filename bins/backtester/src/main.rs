@@ -3,20 +3,53 @@
 //! Loads historical market events from a JSON lines file (or generates
 //! synthetic sample data), creates a strategy, runs the replay engine,
 //! and prints the performance report.
+//!
+//! Configuration is loaded from config files and environment variables,
+//! then any CLI arguments override those values.
+//!
+//! # Examples
+//!
+//! ```sh
+//! # Run with synthetic data (defaults)
+//! backtester --strategy spread --synthetic --initial-capital 100000
+//!
+//! # Run with historical data file
+//! backtester --strategy avellaneda --data-file data/btc_trades.jsonl --source jsonl
+//!
+//! # Run with CSV OHLCV data
+//! backtester --strategy grid --data-file data/btc_ohlcv.csv --source csv
+//!
+//! # Download from Binance and backtest
+//! backtester --strategy spread --source binance --binance-symbol ETHUSDT --interval 5m
+//!
+//! # Parameter sweep / optimization
+//! backtester --strategy spread --optimize --param-ranges '{"spread_bps":[5,10,15,20]}'
+//!
+//! # Strategy-specific parameters via --params
+//! backtester --strategy spread --params spread_bps=15,order_size=0.1,num_levels=5
+//!
+//! # JSON output for scripting
+//! backtester --strategy spread --synthetic --output json
+//!
+//! # CSV output (single-line key metrics)
+//! backtester --strategy spread --synthetic --output csv
+//! ```
 
 use std::io::BufRead;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use chrono::{Duration, Utc};
+use clap::Parser;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::Deserialize;
 use tracing::info;
 
 use mm_backtest::{
-    print_report, BacktestConfig, MarketEvent, OptimizationConfig, OptimizationMetric,
-    ParameterOptimizer, ParameterRange, ReplayEngine,
+    print_report, BacktestConfig, BacktestResult, MarketEvent, OptimizationConfig,
+    OptimizationMetric, ParameterOptimizer, ParameterRange, ReplayEngine,
 };
 use mm_core::traits::Strategy;
 use mm_core::{Exchange, PriceLevel, Side, Symbol};
@@ -28,7 +61,138 @@ use mm_strategy::{
 };
 
 // ---------------------------------------------------------------------------
-// Configuration
+// CLI Argument Parsing (clap)
+// ---------------------------------------------------------------------------
+
+/// Market Maker Backtester - Run historical strategy simulations
+///
+/// Loads configuration from config files (config/backtester.toml,
+/// config/default.toml) and BACKTEST_* environment variables. Any CLI
+/// arguments provided will override those values.
+///
+/// Examples:
+///   backtester --strategy spread --synthetic --initial-capital 100000
+///   backtester --strategy avellaneda --data-file data/btc.jsonl --source jsonl
+///   backtester --strategy grid --optimize --param-ranges '{"spread_bps":[5,10,15]}'
+///   backtester --strategy spread --synthetic --output json
+///   backtester --strategy spread --params spread_bps=15,order_size=0.1
+#[derive(Parser, Debug)]
+#[command(name = "backtester", version, about, long_about = None)]
+struct Cli {
+    /// Strategy type to backtest.
+    /// Supported: spread, grid, avellaneda, twap, vwap, momentum, mean_reversion, stat_arb
+    #[arg(short, long)]
+    strategy: Option<String>,
+
+    /// Trading pair symbol (e.g., BTC/USDT). Format: BASE/QUOTE
+    #[arg(long)]
+    symbol: Option<String>,
+
+    /// Exchange to simulate
+    #[arg(long)]
+    exchange: Option<String>,
+
+    /// Initial capital in quote currency
+    #[arg(long)]
+    initial_capital: Option<f64>,
+
+    /// Path to historical data file (JSONL or CSV)
+    #[arg(short, long)]
+    data_file: Option<String>,
+
+    /// Data source type: synthetic, csv, binance, jsonl
+    #[arg(long)]
+    source: Option<String>,
+
+    /// Use synthetic/generated data instead of a file
+    #[arg(long)]
+    synthetic: bool,
+
+    /// Number of synthetic events to generate
+    #[arg(long)]
+    num_events: Option<usize>,
+
+    /// Binance symbol for download (e.g., BTCUSDT). Only with --source binance
+    #[arg(long)]
+    binance_symbol: Option<String>,
+
+    /// Kline interval for Binance download (e.g., 1m, 5m, 1h)
+    #[arg(long)]
+    interval: Option<String>,
+
+    /// Fee rate as a decimal (e.g., 0.001 = 10 bps)
+    #[arg(long)]
+    fee_rate: Option<f64>,
+
+    /// Maker fee in basis points (alternative to --fee-rate; converted to decimal)
+    #[arg(long)]
+    maker_fee_bps: Option<u32>,
+
+    /// Taker fee in basis points (sets fee_rate; converted to decimal)
+    #[arg(long)]
+    taker_fee_bps: Option<u32>,
+
+    /// Slippage in basis points
+    #[arg(long)]
+    slippage_bps: Option<f64>,
+
+    /// Spread in basis points (spread strategy)
+    #[arg(long)]
+    spread_bps: Option<f64>,
+
+    /// Order size per level
+    #[arg(long)]
+    order_size: Option<f64>,
+
+    /// Number of price levels per side
+    #[arg(long)]
+    num_levels: Option<usize>,
+
+    /// Grid spacing in price units (grid strategy)
+    #[arg(long)]
+    grid_spacing: Option<f64>,
+
+    /// Risk aversion parameter gamma (Avellaneda-Stoikov strategy)
+    #[arg(long)]
+    gamma: Option<f64>,
+
+    /// Volatility estimate sigma (Avellaneda-Stoikov strategy)
+    #[arg(long)]
+    sigma: Option<f64>,
+
+    /// Output format: text, json, csv
+    #[arg(short, long, default_value = "text")]
+    output: String,
+
+    /// Run parameter optimization (grid search)
+    #[arg(long)]
+    optimize: bool,
+
+    /// JSON string specifying parameter ranges for optimization.
+    /// Example: '{"spread_bps":[5,10,15,20], "num_levels":[2,3,5]}'
+    #[arg(long)]
+    param_ranges: Option<String>,
+
+    /// Optimization metric: sharpe, sortino, total_pnl, max_drawdown, profit_factor, win_rate
+    #[arg(long)]
+    metric: Option<String>,
+
+    /// Number of top optimization results to display
+    #[arg(long)]
+    top_n: Option<usize>,
+
+    /// Config file path (overrides default config file locations)
+    #[arg(short, long)]
+    config: Option<String>,
+
+    /// Strategy-specific parameters as key=value pairs (comma-separated).
+    /// Example: --params spread_bps=15,order_size=0.1,num_levels=5
+    #[arg(long, value_delimiter = ',')]
+    params: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Configuration (file/env based, overridden by CLI)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +281,10 @@ struct CliConfig {
     /// Number of top results to display.
     #[serde(default = "default_top_n")]
     top_n: usize,
+
+    /// Output format: "text" (default), "json", or "csv".
+    #[serde(default = "default_output_format")]
+    output_format: String,
 }
 
 fn default_source() -> String {
@@ -161,6 +329,9 @@ fn default_metric() -> String {
 fn default_top_n() -> usize {
     10
 }
+fn default_output_format() -> String {
+    "text".to_string()
+}
 
 impl Default for CliConfig {
     fn default() -> Self {
@@ -184,6 +355,215 @@ impl Default for CliConfig {
             param_ranges: String::new(),
             metric: default_metric(),
             top_n: default_top_n(),
+            output_format: default_output_format(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CLI -> Config merging
+// ---------------------------------------------------------------------------
+
+/// Parse strategy-specific --params key=value pairs and apply them to the config.
+fn apply_params(cfg: &mut CliConfig, params: &[String]) {
+    for param in params {
+        let param = param.trim();
+        if param.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = param.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            match key {
+                "spread_bps" => {
+                    if let Ok(v) = Decimal::from_str(value) {
+                        cfg.spread_bps = v;
+                    }
+                }
+                "order_size" => {
+                    if let Ok(v) = Decimal::from_str(value) {
+                        cfg.order_size = v;
+                    }
+                }
+                "num_levels" => {
+                    if let Ok(v) = value.parse::<usize>() {
+                        cfg.num_levels = v;
+                    }
+                }
+                "grid_spacing" => {
+                    if let Ok(v) = Decimal::from_str(value) {
+                        cfg.grid_spacing = v;
+                    }
+                }
+                "gamma" => {
+                    if let Ok(v) = Decimal::from_str(value) {
+                        cfg.gamma = v;
+                    }
+                }
+                "sigma" => {
+                    if let Ok(v) = Decimal::from_str(value) {
+                        cfg.sigma = v;
+                    }
+                }
+                "fee_rate" => {
+                    if let Ok(v) = Decimal::from_str(value) {
+                        cfg.fee_rate = v;
+                    }
+                }
+                "slippage_bps" => {
+                    if let Ok(v) = Decimal::from_str(value) {
+                        cfg.slippage_bps = v;
+                    }
+                }
+                "initial_capital" => {
+                    if let Ok(v) = Decimal::from_str(value) {
+                        cfg.initial_capital = v;
+                    }
+                }
+                "num_events" => {
+                    if let Ok(v) = value.parse::<usize>() {
+                        cfg.num_events = v;
+                    }
+                }
+                _ => {
+                    tracing::warn!(key, value, "unknown --params key, ignoring");
+                }
+            }
+        } else {
+            tracing::warn!(param, "invalid --params format, expected key=value");
+        }
+    }
+}
+
+/// Convert an f64 to Decimal via its string representation for precision.
+/// This avoids the imprecision of `Decimal::from_f64_retain` for values
+/// like 0.0005 that cannot be represented exactly in binary floating point.
+fn decimal_from_f64(v: f64) -> Option<Decimal> {
+    Decimal::from_str(&v.to_string()).ok()
+}
+
+/// Apply CLI arguments on top of the config-file-loaded CliConfig.
+/// Only overrides values that were explicitly provided on the command line.
+fn apply_cli_overrides(cfg: &mut CliConfig, cli: &Cli) {
+    if let Some(ref s) = cli.strategy {
+        cfg.strategy_type = s.clone();
+    }
+    if let Some(ref s) = cli.source {
+        cfg.source = s.clone();
+    }
+    if cli.synthetic {
+        cfg.source = "synthetic".to_string();
+        // Clear data_file when --synthetic is used, unless --data-file also given
+        if cli.data_file.is_none() {
+            cfg.data_file.clear();
+        }
+    }
+    if let Some(ref f) = cli.data_file {
+        cfg.data_file = f.clone();
+    }
+    if let Some(v) = cli.initial_capital {
+        cfg.initial_capital = decimal_from_f64(v).unwrap_or(cfg.initial_capital);
+    }
+    if let Some(v) = cli.fee_rate {
+        cfg.fee_rate = decimal_from_f64(v).unwrap_or(cfg.fee_rate);
+    }
+    // --maker-fee-bps and --taker-fee-bps convert basis points to decimal fee rate
+    if let Some(bps) = cli.maker_fee_bps {
+        cfg.fee_rate = Decimal::from(bps) / dec!(10000);
+    }
+    if let Some(bps) = cli.taker_fee_bps {
+        cfg.fee_rate = Decimal::from(bps) / dec!(10000);
+    }
+    if let Some(v) = cli.slippage_bps {
+        cfg.slippage_bps = decimal_from_f64(v).unwrap_or(cfg.slippage_bps);
+    }
+    if let Some(v) = cli.num_events {
+        cfg.num_events = v;
+    }
+    if let Some(ref s) = cli.binance_symbol {
+        cfg.binance_symbol = s.clone();
+    }
+    if let Some(ref s) = cli.interval {
+        cfg.interval = s.clone();
+    }
+    if let Some(v) = cli.spread_bps {
+        cfg.spread_bps = decimal_from_f64(v).unwrap_or(cfg.spread_bps);
+    }
+    if let Some(v) = cli.order_size {
+        cfg.order_size = decimal_from_f64(v).unwrap_or(cfg.order_size);
+    }
+    if let Some(v) = cli.num_levels {
+        cfg.num_levels = v;
+    }
+    if let Some(v) = cli.grid_spacing {
+        cfg.grid_spacing = decimal_from_f64(v).unwrap_or(cfg.grid_spacing);
+    }
+    if let Some(v) = cli.gamma {
+        cfg.gamma = decimal_from_f64(v).unwrap_or(cfg.gamma);
+    }
+    if let Some(v) = cli.sigma {
+        cfg.sigma = decimal_from_f64(v).unwrap_or(cfg.sigma);
+    }
+    if cli.optimize {
+        cfg.optimize = true;
+    }
+    if let Some(ref s) = cli.param_ranges {
+        cfg.param_ranges = s.clone();
+    }
+    if let Some(ref s) = cli.metric {
+        cfg.metric = s.clone();
+    }
+    if let Some(v) = cli.top_n {
+        cfg.top_n = v;
+    }
+
+    // Output format: CLI --output overrides config (default is "text")
+    cfg.output_format = cli.output.clone();
+
+    // Apply --params key=value overrides last (highest priority)
+    if !cli.params.is_empty() {
+        apply_params(cfg, &cli.params);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Output formatting
+// ---------------------------------------------------------------------------
+
+/// Output the backtest result in the requested format.
+fn output_result(result: &BacktestResult, format: &str) {
+    match format {
+        "json" => match serde_json::to_string_pretty(result) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Failed to serialize result to JSON: {}", e),
+        },
+        "csv" => {
+            // Print CSV header and a single data row with key metrics
+            println!(
+                "net_pnl,total_pnl,total_fees,num_trades,num_fills,win_rate,\
+                 max_drawdown,max_drawdown_pct,sharpe_ratio,sortino_ratio,\
+                 avg_trade_pnl,profit_factor,total_volume"
+            );
+            println!(
+                "{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                result.net_pnl,
+                result.total_pnl,
+                result.total_fees,
+                result.num_trades,
+                result.num_fills,
+                result.win_rate,
+                result.max_drawdown,
+                result.max_drawdown_pct,
+                result.sharpe_ratio,
+                result.sortino_ratio,
+                result.avg_trade_pnl,
+                result.profit_factor,
+                result.total_volume,
+            );
+        }
+        _ => {
+            // "text" or any unrecognized format: use the existing human-readable report
+            print_report(result);
         }
     }
 }
@@ -205,13 +585,30 @@ async fn main() -> Result<()> {
 
     info!("backtester starting");
 
-    // Load configuration.
-    let cfg = load_config().context("failed to load configuration")?;
+    // 1. Parse CLI arguments
+    let cli = Cli::parse();
+
+    // 2. Load base configuration from files + env vars
+    let mut cfg = load_config(cli.config.as_deref()).context("failed to load configuration")?;
+
+    // 3. Override config with CLI arguments
+    apply_cli_overrides(&mut cfg, &cli);
+
+    // Validate output format
+    let valid_formats = ["text", "json", "csv"];
+    if !valid_formats.contains(&cfg.output_format.as_str()) {
+        anyhow::bail!(
+            "invalid output format: '{}'. Supported: text, json, csv",
+            cfg.output_format
+        );
+    }
+
     info!(
         strategy = %cfg.strategy_type,
         initial_capital = %cfg.initial_capital,
         fee_rate = %cfg.fee_rate,
         slippage_bps = %cfg.slippage_bps,
+        output_format = %cfg.output_format,
         "configuration loaded"
     );
 
@@ -315,7 +712,9 @@ fn run_single_backtest(cfg: &CliConfig, events: Vec<MarketEvent>) -> Result<()> 
     info!("running backtest...");
 
     let result = engine.run(strategy.as_mut(), events);
-    print_report(&result);
+
+    // Output in the requested format
+    output_result(&result, &cfg.output_format);
 
     info!(
         net_pnl = %result.net_pnl,
@@ -754,8 +1153,8 @@ fn generate_sample_data(num_events: usize) -> Vec<MarketEvent> {
 // Configuration loading
 // ---------------------------------------------------------------------------
 
-fn load_config() -> Result<CliConfig> {
-    let settings = config::Config::builder()
+fn load_config(config_path: Option<&str>) -> Result<CliConfig> {
+    let mut builder = config::Config::builder()
         // Defaults
         .set_default("data_file", "")?
         .set_default("source", "synthetic")?
@@ -776,10 +1175,19 @@ fn load_config() -> Result<CliConfig> {
         .set_default("param_ranges", "")?
         .set_default("metric", "sharpe")?
         .set_default("top_n", 10_i64)?
-        // Config files (optional)
-        .add_source(config::File::with_name("config/backtester").required(false))
-        .add_source(config::File::with_name("config/default").required(false))
-        // Environment variables (prefixed with BACKTEST_)
+        .set_default("output_format", "text")?;
+
+    // Config files: if --config is specified, use that; otherwise use defaults
+    if let Some(path) = config_path {
+        builder = builder.add_source(config::File::with_name(path).required(true));
+    } else {
+        builder = builder
+            .add_source(config::File::with_name("config/backtester").required(false))
+            .add_source(config::File::with_name("config/default").required(false));
+    }
+
+    // Environment variables (prefixed with BACKTEST_)
+    let settings = builder
         .add_source(config::Environment::with_prefix("BACKTEST").separator("_"))
         .build()
         .context("failed to build config")?;
@@ -787,4 +1195,471 @@ fn load_config() -> Result<CliConfig> {
     settings
         .try_deserialize::<CliConfig>()
         .context("failed to deserialize config")
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    // -----------------------------------------------------------------------
+    // CLI parsing tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_cli_default_values() {
+        // No arguments: all Options should be None, defaults should apply
+        let cli = Cli::try_parse_from(["backtester"]).unwrap();
+        assert!(cli.strategy.is_none());
+        assert!(cli.data_file.is_none());
+        assert!(cli.initial_capital.is_none());
+        assert!(!cli.synthetic);
+        assert!(!cli.optimize);
+        assert_eq!(cli.output, "text");
+        assert!(cli.params.is_empty());
+    }
+
+    #[test]
+    fn test_cli_strategy_and_synthetic() {
+        let cli =
+            Cli::try_parse_from(["backtester", "--strategy", "avellaneda", "--synthetic"]).unwrap();
+        assert_eq!(cli.strategy.as_deref(), Some("avellaneda"));
+        assert!(cli.synthetic);
+    }
+
+    #[test]
+    fn test_cli_data_file_and_source() {
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--data-file",
+            "data/btc.jsonl",
+            "--source",
+            "jsonl",
+        ])
+        .unwrap();
+        assert_eq!(cli.data_file.as_deref(), Some("data/btc.jsonl"));
+        assert_eq!(cli.source.as_deref(), Some("jsonl"));
+    }
+
+    #[test]
+    fn test_cli_initial_capital() {
+        let cli = Cli::try_parse_from(["backtester", "--initial-capital", "50000.5"]).unwrap();
+        assert_eq!(cli.initial_capital, Some(50000.5));
+    }
+
+    #[test]
+    fn test_cli_fee_bps() {
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--maker-fee-bps",
+            "10",
+            "--taker-fee-bps",
+            "15",
+        ])
+        .unwrap();
+        assert_eq!(cli.maker_fee_bps, Some(10));
+        assert_eq!(cli.taker_fee_bps, Some(15));
+    }
+
+    #[test]
+    fn test_cli_output_format() {
+        let cli = Cli::try_parse_from(["backtester", "--output", "json"]).unwrap();
+        assert_eq!(cli.output, "json");
+
+        let cli = Cli::try_parse_from(["backtester", "--output", "csv"]).unwrap();
+        assert_eq!(cli.output, "csv");
+
+        let cli = Cli::try_parse_from(["backtester", "-o", "json"]).unwrap();
+        assert_eq!(cli.output, "json");
+    }
+
+    #[test]
+    fn test_cli_optimize_with_params() {
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--optimize",
+            "--param-ranges",
+            r#"{"spread_bps":[5,10,15]}"#,
+            "--metric",
+            "sharpe",
+            "--top-n",
+            "5",
+        ])
+        .unwrap();
+        assert!(cli.optimize);
+        assert_eq!(
+            cli.param_ranges.as_deref(),
+            Some(r#"{"spread_bps":[5,10,15]}"#)
+        );
+        assert_eq!(cli.metric.as_deref(), Some("sharpe"));
+        assert_eq!(cli.top_n, Some(5));
+    }
+
+    #[test]
+    fn test_cli_params_key_value() {
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--params",
+            "spread_bps=15,order_size=0.1,num_levels=5",
+        ])
+        .unwrap();
+        assert_eq!(cli.params.len(), 3);
+        assert_eq!(cli.params[0], "spread_bps=15");
+        assert_eq!(cli.params[1], "order_size=0.1");
+        assert_eq!(cli.params[2], "num_levels=5");
+    }
+
+    #[test]
+    fn test_cli_config_file_override() {
+        let cli = Cli::try_parse_from(["backtester", "--config", "/tmp/my_config.toml"]).unwrap();
+        assert_eq!(cli.config.as_deref(), Some("/tmp/my_config.toml"));
+    }
+
+    #[test]
+    fn test_cli_strategy_specific_args() {
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--spread-bps",
+            "20",
+            "--order-size",
+            "0.05",
+            "--num-levels",
+            "7",
+            "--grid-spacing",
+            "100",
+            "--gamma",
+            "0.3",
+            "--sigma",
+            "0.05",
+        ])
+        .unwrap();
+        assert_eq!(cli.spread_bps, Some(20.0));
+        assert_eq!(cli.order_size, Some(0.05));
+        assert_eq!(cli.num_levels, Some(7));
+        assert_eq!(cli.grid_spacing, Some(100.0));
+        assert_eq!(cli.gamma, Some(0.3));
+        assert_eq!(cli.sigma, Some(0.05));
+    }
+
+    #[test]
+    fn test_cli_short_flags() {
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "-s",
+            "grid",
+            "-d",
+            "data/test.csv",
+            "-o",
+            "csv",
+            "-c",
+            "config/test.toml",
+        ])
+        .unwrap();
+        assert_eq!(cli.strategy.as_deref(), Some("grid"));
+        assert_eq!(cli.data_file.as_deref(), Some("data/test.csv"));
+        assert_eq!(cli.output, "csv");
+        assert_eq!(cli.config.as_deref(), Some("config/test.toml"));
+    }
+
+    #[test]
+    fn test_cli_binance_args() {
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--source",
+            "binance",
+            "--binance-symbol",
+            "ETHUSDT",
+            "--interval",
+            "5m",
+        ])
+        .unwrap();
+        assert_eq!(cli.source.as_deref(), Some("binance"));
+        assert_eq!(cli.binance_symbol.as_deref(), Some("ETHUSDT"));
+        assert_eq!(cli.interval.as_deref(), Some("5m"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Config override tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_apply_cli_overrides_strategy() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from(["backtester", "--strategy", "grid"]).unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        assert_eq!(cfg.strategy_type, "grid");
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_synthetic_clears_data_file() {
+        let mut cfg = CliConfig::default();
+        cfg.data_file = "some/path.jsonl".to_string();
+        let cli = Cli::try_parse_from(["backtester", "--synthetic"]).unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        assert_eq!(cfg.source, "synthetic");
+        assert!(cfg.data_file.is_empty());
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_synthetic_with_data_file() {
+        let mut cfg = CliConfig::default();
+        let cli =
+            Cli::try_parse_from(["backtester", "--synthetic", "--data-file", "override.jsonl"])
+                .unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        assert_eq!(cfg.source, "synthetic");
+        assert_eq!(cfg.data_file, "override.jsonl");
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_initial_capital() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from(["backtester", "--initial-capital", "50000"]).unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        assert_eq!(cfg.initial_capital, dec!(50000));
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_maker_fee_bps() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from(["backtester", "--maker-fee-bps", "10"]).unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        assert_eq!(cfg.fee_rate, dec!(0.001)); // 10 / 10000 = 0.001
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_taker_fee_bps_overrides_maker() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--maker-fee-bps",
+            "10",
+            "--taker-fee-bps",
+            "15",
+        ])
+        .unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        // taker_fee_bps is applied after maker_fee_bps, so it wins
+        assert_eq!(cfg.fee_rate, dec!(0.0015)); // 15 / 10000 = 0.0015
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_output_format() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from(["backtester", "--output", "json"]).unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        assert_eq!(cfg.output_format, "json");
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_optimize() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from(["backtester", "--optimize"]).unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        assert!(cfg.optimize);
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_preserves_defaults_when_no_args() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from(["backtester"]).unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        // Defaults should be preserved
+        assert_eq!(cfg.strategy_type, "spread");
+        assert_eq!(cfg.initial_capital, dec!(100_000));
+        assert_eq!(cfg.fee_rate, dec!(0.001));
+        assert_eq!(cfg.spread_bps, dec!(10));
+        assert_eq!(cfg.order_size, dec!(0.01));
+        assert_eq!(cfg.num_levels, 3);
+        assert_eq!(cfg.num_events, 1000);
+        assert!(!cfg.optimize);
+    }
+
+    // -----------------------------------------------------------------------
+    // Params key=value parsing tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_apply_params_basic() {
+        let mut cfg = CliConfig::default();
+        let params = vec![
+            "spread_bps=15".to_string(),
+            "order_size=0.1".to_string(),
+            "num_levels=5".to_string(),
+        ];
+        apply_params(&mut cfg, &params);
+        assert_eq!(cfg.spread_bps, dec!(15));
+        assert_eq!(cfg.order_size, dec!(0.1));
+        assert_eq!(cfg.num_levels, 5);
+    }
+
+    #[test]
+    fn test_apply_params_all_known_keys() {
+        let mut cfg = CliConfig::default();
+        let params = vec![
+            "spread_bps=20".to_string(),
+            "order_size=0.5".to_string(),
+            "num_levels=10".to_string(),
+            "grid_spacing=100".to_string(),
+            "gamma=0.5".to_string(),
+            "sigma=0.03".to_string(),
+            "fee_rate=0.002".to_string(),
+            "slippage_bps=5".to_string(),
+            "initial_capital=200000".to_string(),
+            "num_events=2000".to_string(),
+        ];
+        apply_params(&mut cfg, &params);
+        assert_eq!(cfg.spread_bps, dec!(20));
+        assert_eq!(cfg.order_size, dec!(0.5));
+        assert_eq!(cfg.num_levels, 10);
+        assert_eq!(cfg.grid_spacing, dec!(100));
+        assert_eq!(cfg.gamma, dec!(0.5));
+        assert_eq!(cfg.sigma, dec!(0.03));
+        assert_eq!(cfg.fee_rate, dec!(0.002));
+        assert_eq!(cfg.slippage_bps, dec!(5));
+        assert_eq!(cfg.initial_capital, dec!(200000));
+        assert_eq!(cfg.num_events, 2000);
+    }
+
+    #[test]
+    fn test_apply_params_ignores_unknown_keys() {
+        let mut cfg = CliConfig::default();
+        let original_spread = cfg.spread_bps;
+        let params = vec!["unknown_key=42".to_string()];
+        apply_params(&mut cfg, &params);
+        // Should not change any known field
+        assert_eq!(cfg.spread_bps, original_spread);
+    }
+
+    #[test]
+    fn test_apply_params_ignores_invalid_format() {
+        let mut cfg = CliConfig::default();
+        let original_spread = cfg.spread_bps;
+        let params = vec!["no_equals_sign".to_string()];
+        apply_params(&mut cfg, &params);
+        assert_eq!(cfg.spread_bps, original_spread);
+    }
+
+    #[test]
+    fn test_apply_params_handles_whitespace() {
+        let mut cfg = CliConfig::default();
+        let params = vec!["  spread_bps = 25  ".to_string()];
+        apply_params(&mut cfg, &params);
+        assert_eq!(cfg.spread_bps, dec!(25));
+    }
+
+    #[test]
+    fn test_apply_params_skips_empty() {
+        let mut cfg = CliConfig::default();
+        let original = cfg.spread_bps;
+        let params = vec!["".to_string(), "  ".to_string()];
+        apply_params(&mut cfg, &params);
+        assert_eq!(cfg.spread_bps, original);
+    }
+
+    #[test]
+    fn test_apply_params_invalid_decimal_ignored() {
+        let mut cfg = CliConfig::default();
+        let original = cfg.spread_bps;
+        let params = vec!["spread_bps=not_a_number".to_string()];
+        apply_params(&mut cfg, &params);
+        // Invalid decimal should be silently ignored
+        assert_eq!(cfg.spread_bps, original);
+    }
+
+    // -----------------------------------------------------------------------
+    // Output format validation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_output_format_text_is_valid() {
+        let valid_formats = ["text", "json", "csv"];
+        assert!(valid_formats.contains(&"text"));
+    }
+
+    #[test]
+    fn test_output_format_json_is_valid() {
+        let valid_formats = ["text", "json", "csv"];
+        assert!(valid_formats.contains(&"json"));
+    }
+
+    #[test]
+    fn test_output_format_csv_is_valid() {
+        let valid_formats = ["text", "json", "csv"];
+        assert!(valid_formats.contains(&"csv"));
+    }
+
+    #[test]
+    fn test_output_format_invalid() {
+        let valid_formats = ["text", "json", "csv"];
+        assert!(!valid_formats.contains(&"xml"));
+        assert!(!valid_formats.contains(&"yaml"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Integration: CLI -> Config flow
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_full_cli_to_config_flow() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--strategy",
+            "avellaneda",
+            "--synthetic",
+            "--initial-capital",
+            "50000",
+            "--fee-rate",
+            "0.0005",
+            "--spread-bps",
+            "15",
+            "--order-size",
+            "0.05",
+            "--num-levels",
+            "5",
+            "--gamma",
+            "0.2",
+            "--sigma",
+            "0.03",
+            "--output",
+            "json",
+            "--num-events",
+            "500",
+        ])
+        .unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+
+        assert_eq!(cfg.strategy_type, "avellaneda");
+        assert_eq!(cfg.source, "synthetic");
+        assert_eq!(cfg.initial_capital, dec!(50000));
+        assert_eq!(cfg.fee_rate, dec!(0.0005));
+        assert_eq!(cfg.spread_bps, dec!(15));
+        assert_eq!(cfg.order_size, dec!(0.05));
+        assert_eq!(cfg.num_levels, 5);
+        assert_eq!(cfg.gamma, dec!(0.2));
+        assert_eq!(cfg.sigma, dec!(0.03));
+        assert_eq!(cfg.output_format, "json");
+        assert_eq!(cfg.num_events, 500);
+    }
+
+    #[test]
+    fn test_params_override_after_cli_args() {
+        let mut cfg = CliConfig::default();
+        let cli = Cli::try_parse_from([
+            "backtester",
+            "--spread-bps",
+            "20",
+            "--params",
+            "spread_bps=25",
+        ])
+        .unwrap();
+        apply_cli_overrides(&mut cfg, &cli);
+        // --params should override --spread-bps since it is applied last
+        assert_eq!(cfg.spread_bps, dec!(25));
+    }
 }

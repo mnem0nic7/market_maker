@@ -26,7 +26,7 @@ pub use binance::{BinanceExecutionConfig, BinanceExecutionConnector};
 pub use coinbase::{CoinbaseExecutionConfig, CoinbaseExecutionConnector};
 pub use ib::{IbExecutionConfig, IbExecutionConnector};
 pub use kraken::{KrakenExecutionConfig, KrakenExecutionConnector};
-pub use oms::OrderManager;
+pub use oms::{OrderManager, PositionReconciliation};
 pub use raydium::{RaydiumExecutionConfig, RaydiumExecutionConnector};
 pub use router::OrderRouter;
 pub use uniswap::{UniswapExecutionConfig, UniswapExecutionConnector};

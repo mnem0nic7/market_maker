@@ -7,9 +7,9 @@
 //!   `Filled -> New`.
 //! - Tracing instrumentation for every state change.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use mm_core::{CancelOrder, Exchange, NewOrder, Order, OrderStatus, OrderUpdate};
+use mm_core::{CancelOrder, Exchange, NewOrder, Order, OrderStatus, OrderUpdate, Position};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -343,6 +343,55 @@ impl OrderManager {
             .filter(|r| r.value().exchange == exchange)
             .map(|r| r.value().clone())
             .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Position Reconciliation
+// ---------------------------------------------------------------------------
+
+/// Result of comparing a local position against exchange-reported balances.
+///
+/// Used by the periodic reconciliation check to detect drift between the
+/// in-memory position state and the actual balances reported by the exchange.
+#[derive(Debug, Clone)]
+pub struct PositionReconciliation {
+    pub exchange: Exchange,
+    pub symbol: String,
+    pub local_quantity: Decimal,
+    pub exchange_quantity: Decimal,
+    pub drift: Decimal,
+    pub drift_pct: Decimal,
+    pub is_reconciled: bool,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl PositionReconciliation {
+    /// Compare a local [`Position`] against the exchange-reported balance.
+    ///
+    /// A position is considered reconciled when the percentage drift is less
+    /// than 1%. The caller can override this threshold in its logging logic.
+    pub fn check(local: &Position, exchange_balance: Decimal) -> Self {
+        let drift = local.quantity - exchange_balance;
+        let one_hundred = Decimal::from(100);
+        let drift_pct = if exchange_balance != Decimal::ZERO {
+            (drift / exchange_balance * one_hundred).abs()
+        } else if local.quantity != Decimal::ZERO {
+            one_hundred // 100% drift if exchange has 0 but local has quantity
+        } else {
+            Decimal::ZERO // both zero, reconciled
+        };
+
+        Self {
+            exchange: local.exchange,
+            symbol: local.symbol.canonical(),
+            local_quantity: local.quantity,
+            exchange_quantity: exchange_balance,
+            drift,
+            drift_pct,
+            is_reconciled: drift_pct < Decimal::ONE, // < 1% drift threshold
+            timestamp: Utc::now(),
+        }
     }
 }
 
@@ -818,5 +867,72 @@ mod tests {
         };
         let result = oms.update_order(&update);
         assert!(result.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Position Reconciliation Tests
+    // -----------------------------------------------------------------------
+
+    /// Helper to create a position with a given quantity.
+    fn position_with_qty(qty: Decimal) -> Position {
+        let mut pos = Position::new(Exchange::Binance, Symbol::new("BTC", "USDT"));
+        pos.quantity = qty;
+        pos
+    }
+
+    #[test]
+    fn test_reconciliation_check_exact_match() {
+        let pos = position_with_qty(dec!(1.5));
+        let recon = PositionReconciliation::check(&pos, dec!(1.5));
+
+        assert_eq!(recon.drift, Decimal::ZERO);
+        assert_eq!(recon.drift_pct, Decimal::ZERO);
+        assert!(recon.is_reconciled);
+        assert_eq!(recon.local_quantity, dec!(1.5));
+        assert_eq!(recon.exchange_quantity, dec!(1.5));
+    }
+
+    #[test]
+    fn test_reconciliation_check_small_drift() {
+        // Local has 100.0, exchange has 100.5 => drift = -0.5, pct ~ 0.497%
+        let pos = position_with_qty(dec!(100.0));
+        let recon = PositionReconciliation::check(&pos, dec!(100.5));
+
+        assert_eq!(recon.drift, dec!(-0.5));
+        assert!(recon.drift_pct < Decimal::ONE, "small drift should be < 1%");
+        assert!(recon.is_reconciled, "small drift should be reconciled");
+    }
+
+    #[test]
+    fn test_reconciliation_check_large_drift() {
+        // Local has 10.0, exchange has 8.0 => drift = 2.0, pct = 25%
+        let pos = position_with_qty(dec!(10.0));
+        let recon = PositionReconciliation::check(&pos, dec!(8.0));
+
+        assert_eq!(recon.drift, dec!(2.0));
+        assert_eq!(recon.drift_pct, dec!(25));
+        assert!(!recon.is_reconciled, "large drift should NOT be reconciled");
+    }
+
+    #[test]
+    fn test_reconciliation_check_zero_exchange_balance() {
+        // Local has quantity but exchange has 0 => 100% drift
+        let pos = position_with_qty(dec!(5.0));
+        let recon = PositionReconciliation::check(&pos, Decimal::ZERO);
+
+        assert_eq!(recon.drift, dec!(5.0));
+        assert_eq!(recon.drift_pct, Decimal::from(100));
+        assert!(!recon.is_reconciled, "100% drift should NOT be reconciled");
+    }
+
+    #[test]
+    fn test_reconciliation_check_both_zero() {
+        // Both local and exchange at zero => fully reconciled
+        let pos = position_with_qty(Decimal::ZERO);
+        let recon = PositionReconciliation::check(&pos, Decimal::ZERO);
+
+        assert_eq!(recon.drift, Decimal::ZERO);
+        assert_eq!(recon.drift_pct, Decimal::ZERO);
+        assert!(recon.is_reconciled, "both zero should be reconciled");
     }
 }

@@ -101,6 +101,7 @@ async-trait = "0.1"
 url = { version = "2", features = ["serde"] }
 bytes = "1"
 async-stream = "0.3"
+clap = { version = "4", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 
 # Workspace crates

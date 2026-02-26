@@ -447,6 +447,18 @@ pub struct TradingLoopConfig {
     /// data. Defaults to 5000 (5 seconds).
     #[serde(default = "default_order_book_stale_ms")]
     pub order_book_stale_ms: u64,
+
+    /// Interval in seconds between position reconciliation checks against
+    /// exchange-reported balances. Defaults to 300 (5 minutes). Set to 0 to
+    /// disable reconciliation.
+    #[serde(default = "default_reconciliation_interval_secs")]
+    pub reconciliation_interval_secs: u64,
+
+    /// Drift percentage threshold that triggers a warning log during
+    /// reconciliation. Defaults to 1.0 (1%). Drift above 5% triggers an
+    /// error log.
+    #[serde(default = "default_reconciliation_drift_threshold_pct")]
+    pub reconciliation_drift_threshold_pct: f64,
 }
 
 fn default_tick_interval() -> u64 {
@@ -457,11 +469,21 @@ fn default_order_book_stale_ms() -> u64 {
     5000
 }
 
+fn default_reconciliation_interval_secs() -> u64 {
+    300
+}
+
+fn default_reconciliation_drift_threshold_pct() -> f64 {
+    1.0
+}
+
 impl Default for TradingLoopConfig {
     fn default() -> Self {
         Self {
             tick_interval_ms: default_tick_interval(),
             order_book_stale_ms: default_order_book_stale_ms(),
+            reconciliation_interval_secs: default_reconciliation_interval_secs(),
+            reconciliation_drift_threshold_pct: default_reconciliation_drift_threshold_pct(),
         }
     }
 }
