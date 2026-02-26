@@ -241,6 +241,34 @@ export interface OptimizationResult {
   metric_value: number;
 }
 
+export interface BacktestResult {
+  total_pnl: string;
+  total_fees: string;
+  net_pnl: string;
+  num_trades: number;
+  num_fills: number;
+  win_rate: string;
+  max_drawdown: string;
+  max_drawdown_pct: string;
+  sharpe_ratio: string;
+  sortino_ratio: string;
+  avg_trade_pnl: string;
+  profit_factor: string;
+  total_volume: string;
+  start_time: string;
+  end_time: string;
+  duration: { secs: number; nanos: number };
+  equity_curve: [string, string][];
+}
+
+export interface BacktestRequest {
+  strategy_type: string;
+  symbol: string;
+  initial_capital?: string;
+  num_events?: number;
+  params?: Record<string, unknown>;
+}
+
 export const STRATEGY_TYPES: StrategyTypeInfo[] = [
   {
     type: "spread",

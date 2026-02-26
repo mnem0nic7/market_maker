@@ -26,6 +26,7 @@ const defaultLayouts: ResponsiveLayouts<Breakpoint> = {
     { i: "event-log", x: 8, y: 14, w: 4, h: 4, minW: 3, minH: 3 },
     { i: "strategy-form", x: 0, y: 18, w: 4, h: 6, minW: 3, minH: 5 },
     { i: "ai-assistant", x: 4, y: 18, w: 4, h: 6, minW: 3, minH: 4 },
+    { i: "backtest-results", x: 8, y: 18, w: 4, h: 6, minW: 3, minH: 4 },
   ],
 };
 

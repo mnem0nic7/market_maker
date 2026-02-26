@@ -515,3 +515,380 @@ fn millis_to_datetime(millis: u64) -> DateTime<Utc> {
         .single()
         .unwrap_or_else(Utc::now)
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    // -- Helper tests --------------------------------------------------------
+
+    #[test]
+    fn parse_price_levels_valid_input() {
+        let raw = vec![
+            ["25000.10".to_string(), "1.500".to_string()],
+            ["24999.90".to_string(), "0.750".to_string()],
+        ];
+        let levels = parse_price_levels(&raw);
+        assert_eq!(levels.len(), 2);
+        assert_eq!(levels[0].price, dec!(25000.10));
+        assert_eq!(levels[0].quantity, dec!(1.500));
+        assert_eq!(levels[1].price, dec!(24999.90));
+        assert_eq!(levels[1].quantity, dec!(0.750));
+    }
+
+    #[test]
+    fn parse_price_levels_empty_input() {
+        let raw: Vec<[String; 2]> = vec![];
+        let levels = parse_price_levels(&raw);
+        assert!(levels.is_empty());
+    }
+
+    #[test]
+    fn parse_price_levels_skips_invalid_entries() {
+        let raw = vec![
+            ["25000.10".to_string(), "1.500".to_string()],
+            ["not_a_number".to_string(), "1.0".to_string()],
+            ["25001.00".to_string(), "bad".to_string()],
+        ];
+        let levels = parse_price_levels(&raw);
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0].price, dec!(25000.10));
+    }
+
+    #[test]
+    fn millis_to_datetime_known_value() {
+        // 2023-01-01 00:00:00.000 UTC = 1672531200000 ms
+        let dt = millis_to_datetime(1672531200000);
+        assert_eq!(dt.year(), 2023);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 1);
+        assert_eq!(dt.hour(), 0);
+        assert_eq!(dt.minute(), 0);
+        assert_eq!(dt.second(), 0);
+    }
+
+    #[test]
+    fn millis_to_datetime_with_fractional_millis() {
+        // 1672531200123 => 2023-01-01T00:00:00.123Z
+        let dt = millis_to_datetime(1672531200123);
+        assert_eq!(dt.year(), 2023);
+        assert_eq!(dt.nanosecond(), 123_000_000);
+    }
+
+    #[test]
+    fn millis_to_datetime_zero() {
+        let dt = millis_to_datetime(0);
+        assert_eq!(dt.year(), 1970);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 1);
+    }
+
+    // -- Config tests --------------------------------------------------------
+
+    #[test]
+    fn default_config_has_expected_urls() {
+        let config = BinanceMarketDataConfig::default();
+        assert!(config.rest_url.contains("binance"));
+        assert!(config.ws_url.starts_with("wss://"));
+        assert!(config.ws_url.contains("binance"));
+    }
+
+    #[test]
+    fn custom_config_overrides() {
+        let config = BinanceMarketDataConfig {
+            rest_url: "https://testnet.binance.vision".into(),
+            ws_url: "wss://testnet.binance.vision/ws".into(),
+        };
+        assert_eq!(config.rest_url, "https://testnet.binance.vision");
+        assert_eq!(config.ws_url, "wss://testnet.binance.vision/ws");
+    }
+
+    // -- Connector construction tests ----------------------------------------
+
+    #[test]
+    fn connector_default_is_not_connected() {
+        let connector = BinanceConnector::default();
+        assert!(!connector.is_connected());
+        assert_eq!(connector.exchange(), Exchange::Binance);
+    }
+
+    #[test]
+    fn connector_with_custom_config() {
+        let config = BinanceMarketDataConfig {
+            rest_url: "https://custom.api".into(),
+            ws_url: "wss://custom.ws".into(),
+        };
+        let connector = BinanceConnector::new(config);
+        assert!(!connector.is_connected());
+        assert_eq!(connector.exchange(), Exchange::Binance);
+    }
+
+    // -- Deserialization tests -----------------------------------------------
+
+    #[test]
+    fn deserialize_depth_update() {
+        let json = r#"{
+            "e": "depthUpdate",
+            "E": 1672515782136,
+            "s": "BTCUSDT",
+            "U": 157,
+            "u": 160,
+            "b": [["25000.10", "1.500"], ["24999.90", "0.000"]],
+            "a": [["25000.20", "2.100"]]
+        }"#;
+        let depth: BinanceDepthUpdate = serde_json::from_str(json).unwrap();
+        assert_eq!(depth.symbol, "BTCUSDT");
+        assert_eq!(depth.event_time, 1672515782136);
+        assert_eq!(depth.first_update_id, 157);
+        assert_eq!(depth.last_update_id, 160);
+        assert_eq!(depth.bids.len(), 2);
+        assert_eq!(depth.asks.len(), 1);
+        assert_eq!(depth.bids[0][0], "25000.10");
+        assert_eq!(depth.bids[0][1], "1.500");
+        assert_eq!(depth.asks[0][0], "25000.20");
+        assert_eq!(depth.asks[0][1], "2.100");
+    }
+
+    #[test]
+    fn deserialize_trade() {
+        let json = r#"{
+            "e": "trade",
+            "E": 1672515782136,
+            "s": "BTCUSDT",
+            "t": 1234567,
+            "p": "25000.15",
+            "q": "0.100",
+            "T": 1672515782136,
+            "m": true
+        }"#;
+        let trade: BinanceTrade = serde_json::from_str(json).unwrap();
+        assert_eq!(trade.symbol, "BTCUSDT");
+        assert_eq!(trade.trade_id, 1234567);
+        assert_eq!(trade.price, "25000.15");
+        assert_eq!(trade.quantity, "0.100");
+        assert!(trade.is_buyer_maker);
+    }
+
+    #[test]
+    fn deserialize_trade_buyer_is_taker() {
+        let json = r#"{
+            "e": "trade",
+            "E": 1672515782136,
+            "s": "ETHUSDT",
+            "t": 99999,
+            "p": "1800.00",
+            "q": "5.500",
+            "T": 1672515782136,
+            "m": false
+        }"#;
+        let trade: BinanceTrade = serde_json::from_str(json).unwrap();
+        assert!(!trade.is_buyer_maker);
+        assert_eq!(trade.symbol, "ETHUSDT");
+    }
+
+    #[test]
+    fn deserialize_combined_stream_envelope() {
+        let json = r#"{
+            "stream": "btcusdt@trade",
+            "data": {
+                "e": "trade",
+                "E": 1672515782136,
+                "s": "BTCUSDT",
+                "t": 100,
+                "p": "25000.00",
+                "q": "1.0",
+                "T": 1672515782136,
+                "m": false
+            }
+        }"#;
+        let combined: BinanceCombinedStream = serde_json::from_str(json).unwrap();
+        assert_eq!(combined.stream, "btcusdt@trade");
+        assert_eq!(combined.data["e"], "trade");
+        assert_eq!(combined.data["s"], "BTCUSDT");
+    }
+
+    #[test]
+    fn deserialize_order_book_snapshot() {
+        let json = r#"{
+            "lastUpdateId": 12345,
+            "bids": [["25000.00", "1.5"], ["24999.00", "2.0"]],
+            "asks": [["25001.00", "0.5"], ["25002.00", "1.0"]]
+        }"#;
+        let snapshot: BinanceOrderBookSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snapshot.last_update_id, 12345);
+        assert_eq!(snapshot.bids.len(), 2);
+        assert_eq!(snapshot.asks.len(), 2);
+    }
+
+    // -- Message handling tests (async) --------------------------------------
+
+    #[tokio::test]
+    async fn handle_depth_update_message() {
+        let json = r#"{
+            "stream": "btcusdt@depth@100ms",
+            "data": {
+                "e": "depthUpdate",
+                "E": 1672531200000,
+                "s": "BTCUSDT",
+                "U": 100,
+                "u": 105,
+                "b": [["25000.10", "1.500"]],
+                "a": [["25000.20", "2.100"], ["25001.00", "0.500"]]
+            }
+        }"#;
+
+        let (book_tx, mut book_rx) = mpsc::channel(10);
+        let (trade_tx, _trade_rx) = mpsc::channel(10);
+        let symbols = vec![Symbol::new("BTC", "USDT")];
+
+        handle_binance_message(json, &book_tx, &trade_tx, &symbols)
+            .await
+            .unwrap();
+
+        let book = book_rx.recv().await.unwrap();
+        assert_eq!(book.exchange, Exchange::Binance);
+        assert_eq!(book.symbol.base, "BTC");
+        assert_eq!(book.symbol.quote, "USDT");
+        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.bids[0].price, dec!(25000.10));
+        assert_eq!(book.bids[0].quantity, dec!(1.500));
+        assert_eq!(book.asks.len(), 2);
+        assert_eq!(book.asks[0].price, dec!(25000.20));
+        assert_eq!(book.sequence, 105);
+    }
+
+    #[tokio::test]
+    async fn handle_trade_message() {
+        let json = r#"{
+            "stream": "btcusdt@trade",
+            "data": {
+                "e": "trade",
+                "E": 1672531200000,
+                "s": "BTCUSDT",
+                "t": 42,
+                "p": "25000.15",
+                "q": "0.100",
+                "T": 1672531200000,
+                "m": true
+            }
+        }"#;
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, mut trade_rx) = mpsc::channel(10);
+        let symbols = vec![Symbol::new("BTC", "USDT")];
+
+        handle_binance_message(json, &book_tx, &trade_tx, &symbols)
+            .await
+            .unwrap();
+
+        let trade = trade_rx.recv().await.unwrap();
+        assert_eq!(trade.exchange, Exchange::Binance);
+        assert_eq!(trade.symbol.base, "BTC");
+        assert_eq!(trade.symbol.quote, "USDT");
+        assert_eq!(trade.price, dec!(25000.15));
+        assert_eq!(trade.quantity, dec!(0.100));
+        assert_eq!(trade.side, Side::Sell); // is_buyer_maker = true => Sell
+        assert_eq!(trade.trade_id, "42");
+    }
+
+    #[tokio::test]
+    async fn handle_trade_message_buy_side() {
+        let json = r#"{
+            "stream": "ethusdt@trade",
+            "data": {
+                "e": "trade",
+                "E": 1672531200000,
+                "s": "ETHUSDT",
+                "t": 99,
+                "p": "1800.50",
+                "q": "10.0",
+                "T": 1672531200000,
+                "m": false
+            }
+        }"#;
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, mut trade_rx) = mpsc::channel(10);
+        let symbols = vec![Symbol::new("ETH", "USDT")];
+
+        handle_binance_message(json, &book_tx, &trade_tx, &symbols)
+            .await
+            .unwrap();
+
+        let trade = trade_rx.recv().await.unwrap();
+        assert_eq!(trade.side, Side::Buy); // is_buyer_maker = false => Buy
+        assert_eq!(trade.symbol.base, "ETH");
+        assert_eq!(trade.price, dec!(1800.50));
+    }
+
+    #[tokio::test]
+    async fn handle_unknown_event_type_does_not_error() {
+        let json = r#"{
+            "stream": "btcusdt@aggTrade",
+            "data": {
+                "e": "aggTrade",
+                "E": 1672531200000,
+                "s": "BTCUSDT"
+            }
+        }"#;
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, _trade_rx) = mpsc::channel(10);
+        let symbols = vec![Symbol::new("BTC", "USDT")];
+
+        // Unknown event types should be silently ignored (just a warning log).
+        let result = handle_binance_message(json, &book_tx, &trade_tx, &symbols).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_invalid_json_returns_error() {
+        let json = "this is not valid json";
+
+        let (book_tx, _book_rx) = mpsc::channel(10);
+        let (trade_tx, _trade_rx) = mpsc::channel(10);
+        let symbols = vec![Symbol::new("BTC", "USDT")];
+
+        let result = handle_binance_message(json, &book_tx, &trade_tx, &symbols).await;
+        assert!(result.is_err());
+    }
+
+    // -- Symbol normalization (connector-specific usage) ----------------------
+
+    #[test]
+    fn binance_symbol_normalization_btcusdt() {
+        let sym = Symbol::new("BTC", "USDT");
+        let raw = normalizer::to_exchange_symbol(Exchange::Binance, &sym);
+        assert_eq!(raw, "BTCUSDT");
+    }
+
+    #[test]
+    fn binance_symbol_normalization_lowercase_input() {
+        // The connect method lowercases the symbol for stream URLs.
+        let sym = Symbol::new("BTC", "USDT");
+        let raw = normalizer::to_exchange_symbol(Exchange::Binance, &sym).to_lowercase();
+        assert_eq!(raw, "btcusdt");
+    }
+
+    #[test]
+    fn binance_from_exchange_symbol_btcusdt() {
+        let sym = normalizer::from_exchange_symbol(Exchange::Binance, "BTCUSDT").unwrap();
+        assert_eq!(sym.base, "BTC");
+        assert_eq!(sym.quote, "USDT");
+    }
+
+    #[test]
+    fn binance_from_exchange_symbol_ethbtc() {
+        let sym = normalizer::from_exchange_symbol(Exchange::Binance, "ETHBTC").unwrap();
+        assert_eq!(sym.base, "ETH");
+        assert_eq!(sym.quote, "BTC");
+    }
+
+    use chrono::Datelike;
+    use chrono::Timelike;
+}
