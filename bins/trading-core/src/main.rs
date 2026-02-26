@@ -462,7 +462,9 @@ async fn main() -> Result<()> {
     tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Latest order book and trade snapshots for building MarketSnapshot.
-    let mut latest_books: HashMap<(Exchange, String), OrderBook> = HashMap::new();
+    // Books are wrapped in Arc to avoid deep-cloning BTreeMap/Vec price levels
+    // on every strategy tick in the hot path — Arc::clone is just a refcount bump.
+    let mut latest_books: HashMap<(Exchange, String), Arc<OrderBook>> = HashMap::new();
     let mut latest_trades: HashMap<(Exchange, String), Trade> = HashMap::new();
     // Track last order book receive time per exchange for disconnect detection.
     let mut last_book_time: HashMap<Exchange, chrono::DateTime<Utc>> = HashMap::new();
@@ -497,12 +499,6 @@ async fn main() -> Result<()> {
                 // Update the market data manager's local book.
                 md_manager.update_local_book(&book);
 
-                // Update the gateway state.
-                {
-                    let mut obs = api_state.order_books.write().await;
-                    obs.insert(key.clone(), book.clone());
-                }
-
                 // Record WebSocket connectivity metric (receiving books = connected).
                 metrics.websocket_connected
                     .with_label_values(&[&book.exchange.to_string()])
@@ -534,7 +530,14 @@ async fn main() -> Result<()> {
                 }
 
                 last_book_time.insert(book.exchange, Utc::now());
-                latest_books.insert(key, book);
+                // Wrap in Arc so the hot-path tick loop can share the book
+                // via cheap refcount bumps instead of deep-cloning Vec<PriceLevel>.
+                let arc_book = Arc::new(book);
+                {
+                    let mut obs = api_state.order_books.write().await;
+                    obs.insert(key.clone(), Arc::clone(&arc_book));
+                }
+                latest_books.insert(key, arc_book);
             }
 
             // --- Trade update ---
@@ -653,8 +656,10 @@ async fn main() -> Result<()> {
                         let key = (*exchange, symbol.canonical());
 
                         // We need a valid order book to run the strategy.
+                        // Arc::clone is a cheap refcount bump — no deep copy of
+                        // the Vec<PriceLevel> bid/ask levels.
                         let book = match latest_books.get(&key) {
-                            Some(b) => b.clone(),
+                            Some(b) => Arc::clone(b),
                             None => {
                                 debug!(
                                     exchange = %exchange,
@@ -683,6 +688,10 @@ async fn main() -> Result<()> {
 
                         let last_trade = latest_trades.get(&key).cloned();
 
+                        // Position is cloned here; it's a small fixed-size struct
+                        // (a few Decimals + Exchange + Symbol + DateTime) so the
+                        // copy cost is negligible compared to OrderBook.  Not worth
+                        // Arc-wrapping because Position is mutated via update_on_fill.
                         let position = {
                             let pos_map = positions.read().await;
                             pos_map

@@ -127,7 +127,8 @@ pub struct ApiState {
     pub strategies: RwLock<Vec<StrategyStatus>>,
 
     /// Latest order book snapshots keyed by (exchange, symbol).
-    pub order_books: RwLock<HashMap<(Exchange, String), OrderBook>>,
+    /// Wrapped in `Arc` to match the hot-path storage — cheap to share, no deep clone.
+    pub order_books: RwLock<HashMap<(Exchange, String), Arc<OrderBook>>>,
 
     /// Whether the global kill-switch is currently active.
     pub kill_switch_active: Mutex<bool>,
@@ -876,7 +877,8 @@ async fn get_orderbook(
     let found = books.get(&(exchange_parsed, normalised_symbol.clone()));
 
     match found {
-        Some(book) => Ok(ApiResponse::ok(book.clone())),
+        // Deref the Arc to serialize the inner OrderBook directly.
+        Some(book) => Ok(ApiResponse::ok(book.as_ref().clone())),
         None => Err(ApiResponse::not_found(format!(
             "order book not found for {exchange_parsed} {normalised_symbol}"
         ))),

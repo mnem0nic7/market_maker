@@ -49,6 +49,28 @@ pub struct GridConfig {
     pub grid_type: GridType,
 }
 
+impl GridConfig {
+    /// Validate logical constraints on the configuration parameters.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.order_size <= Decimal::ZERO {
+            return Err("order_size must be positive".to_string());
+        }
+        if self.num_grids == 0 {
+            return Err("num_grids must be greater than zero".to_string());
+        }
+        if self.upper_price <= Decimal::ZERO {
+            return Err("upper_price must be positive".to_string());
+        }
+        if self.lower_price <= Decimal::ZERO {
+            return Err("lower_price must be positive".to_string());
+        }
+        if self.upper_price <= self.lower_price {
+            return Err("upper_price must be greater than lower_price".to_string());
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Grid Level Tracking
 // ---------------------------------------------------------------------------
@@ -487,7 +509,7 @@ mod tests {
         MarketSnapshot {
             exchange: Exchange::Simulated,
             symbol: Symbol::new("BTC", "USDT"),
-            order_book: OrderBook {
+            order_book: std::sync::Arc::new(OrderBook {
                 exchange: Exchange::Simulated,
                 symbol: Symbol::new("BTC", "USDT"),
                 bids: vec![PriceLevel {
@@ -500,7 +522,7 @@ mod tests {
                 }],
                 timestamp: ts,
                 sequence: 1,
-            },
+            }),
             last_trade: None,
             position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
             open_orders: vec![],
@@ -514,14 +536,14 @@ mod tests {
         MarketSnapshot {
             exchange: Exchange::Simulated,
             symbol: Symbol::new("BTC", "USDT"),
-            order_book: OrderBook {
+            order_book: std::sync::Arc::new(OrderBook {
                 exchange: Exchange::Simulated,
                 symbol: Symbol::new("BTC", "USDT"),
                 bids: vec![],
                 asks: vec![],
                 timestamp: ts,
                 sequence: 1,
-            },
+            }),
             last_trade: None,
             position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
             open_orders: vec![],
@@ -817,5 +839,59 @@ mod tests {
         let mut config = make_config();
         config.num_grids = 0;
         GridStrategy::new(config);
+    }
+
+    // -----------------------------------------------------------------------
+    // Validation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = make_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_zero_order_size() {
+        let mut config = make_config();
+        config.order_size = Decimal::ZERO;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("order_size must be positive"));
+    }
+
+    #[test]
+    fn test_validate_upper_less_than_lower() {
+        let mut config = make_config();
+        config.upper_price = dec!(50000);
+        config.lower_price = dec!(60000);
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("upper_price must be greater than lower_price"));
+    }
+
+    #[test]
+    fn test_validate_upper_equal_lower() {
+        let mut config = make_config();
+        config.upper_price = dec!(60000);
+        config.lower_price = dec!(60000);
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("upper_price must be greater than lower_price"));
+    }
+
+    #[test]
+    fn test_validate_zero_num_grids() {
+        let mut config = make_config();
+        config.num_grids = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("num_grids must be greater than zero"));
     }
 }

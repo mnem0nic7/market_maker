@@ -47,6 +47,17 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+/// Base delay in seconds for WebSocket reconnection backoff.
+const WS_RECONNECT_DELAY_SECS: u64 = 5;
+
+/// Maximum number of consecutive reconnection attempts before giving up.
+const WS_MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
+/// Calculate exponential backoff delay for a given attempt, capped at 60 seconds.
+fn ws_backoff_secs(attempt: u32) -> u64 {
+    (WS_RECONNECT_DELAY_SECS.saturating_mul(2u64.saturating_pow(attempt))).min(60)
+}
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -247,74 +258,120 @@ impl CoinbaseExecutionConnector {
         connected: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            info!("Coinbase: connecting user data WebSocket");
+            let mut reconnect_attempts = 0u32;
 
-            let ws_stream = match tokio_tungstenite::connect_async(&config.ws_url).await {
-                Ok((stream, _)) => stream,
-                Err(e) => {
-                    error!(error = %e, "Coinbase: WebSocket connection failed");
-                    connected.store(false, Ordering::SeqCst);
-                    return;
-                }
-            };
+            loop {
+                info!("Coinbase: connecting user data WebSocket");
 
-            let (mut write, mut read) = ws_stream.split();
-
-            // Authenticate and subscribe to the user channel using JWT (no uri claim for WS).
-            let jwt = match Self::build_jwt(&config.api_key, &config.secret_key, None) {
-                Ok(t) => t,
-                Err(e) => {
-                    error!(error = %e, "Coinbase: failed to build WS JWT");
-                    connected.store(false, Ordering::SeqCst);
-                    return;
-                }
-            };
-
-            let subscribe = serde_json::json!({
-                "type": "subscribe",
-                "product_ids": [],
-                "channel": "user",
-                "jwt": jwt,
-            });
-
-            if let Err(e) = write.send(WsMessage::Text(subscribe.to_string())).await {
-                error!(error = %e, "Coinbase: failed to send subscribe");
-                connected.store(false, Ordering::SeqCst);
-                return;
-            }
-
-            info!("Coinbase: subscribed to user channel");
-
-            while let Some(msg_result) = read.next().await {
-                let msg = match msg_result {
-                    Ok(m) => m,
+                let ws_stream = match tokio_tungstenite::connect_async(&config.ws_url).await {
+                    Ok((stream, _)) => stream,
                     Err(e) => {
-                        error!(error = %e, "Coinbase: WebSocket read error");
+                        warn!(error = %e, "Coinbase: WebSocket connection failed");
+                        connected.store(false, Ordering::SeqCst);
+
+                        reconnect_attempts += 1;
+                        if reconnect_attempts > WS_MAX_RECONNECT_ATTEMPTS {
+                            error!("Coinbase: max WebSocket reconnection attempts exceeded");
+                            break;
+                        }
+                        let delay = ws_backoff_secs(reconnect_attempts - 1);
+                        info!(
+                            attempt = reconnect_attempts,
+                            delay_secs = delay,
+                            "Coinbase: reconnecting user data stream"
+                        );
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                        continue;
+                    }
+                };
+
+                let (mut write, mut read) = ws_stream.split();
+
+                // Authenticate and subscribe to the user channel using JWT (no uri claim for WS).
+                let jwt = match Self::build_jwt(&config.api_key, &config.secret_key, None) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!(error = %e, "Coinbase: failed to build WS JWT");
+                        connected.store(false, Ordering::SeqCst);
+                        // JWT build failure is not transient; do not retry.
                         break;
                     }
                 };
 
-                match msg {
-                    WsMessage::Text(text) => {
-                        if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
-                            warn!(error = %e, "Coinbase: failed to process WS message");
-                        }
-                    }
-                    WsMessage::Ping(data) => {
-                        if let Err(e) = write.send(WsMessage::Pong(data)).await {
-                            warn!(error = %e, "Coinbase: failed to send pong");
-                        }
-                    }
-                    WsMessage::Close(_) => {
-                        info!("Coinbase: WebSocket closed by server");
+                let subscribe = serde_json::json!({
+                    "type": "subscribe",
+                    "product_ids": [],
+                    "channel": "user",
+                    "jwt": jwt,
+                });
+
+                if let Err(e) = write.send(WsMessage::Text(subscribe.to_string())).await {
+                    warn!(error = %e, "Coinbase: failed to send subscribe");
+                    connected.store(false, Ordering::SeqCst);
+
+                    reconnect_attempts += 1;
+                    if reconnect_attempts > WS_MAX_RECONNECT_ATTEMPTS {
+                        error!("Coinbase: max WebSocket reconnection attempts exceeded");
                         break;
                     }
-                    _ => {}
+                    let delay = ws_backoff_secs(reconnect_attempts - 1);
+                    info!(
+                        attempt = reconnect_attempts,
+                        delay_secs = delay,
+                        "Coinbase: reconnecting user data stream"
+                    );
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
                 }
-            }
 
-            connected.store(false, Ordering::SeqCst);
-            warn!("Coinbase: user data stream disconnected");
+                reconnect_attempts = 0;
+                connected.store(true, Ordering::SeqCst);
+                info!("Coinbase: subscribed to user channel");
+
+                while let Some(msg_result) = read.next().await {
+                    let msg = match msg_result {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!(error = %e, "Coinbase: WebSocket read error");
+                            break;
+                        }
+                    };
+
+                    match msg {
+                        WsMessage::Text(text) => {
+                            if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
+                                warn!(error = %e, "Coinbase: failed to process WS message");
+                            }
+                        }
+                        WsMessage::Ping(data) => {
+                            if let Err(e) = write.send(WsMessage::Pong(data)).await {
+                                warn!(error = %e, "Coinbase: failed to send pong");
+                            }
+                        }
+                        WsMessage::Close(_) => {
+                            info!("Coinbase: WebSocket closed by server");
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+
+                connected.store(false, Ordering::SeqCst);
+                warn!("Coinbase: user data stream disconnected, will attempt reconnect");
+
+                reconnect_attempts += 1;
+                if reconnect_attempts > WS_MAX_RECONNECT_ATTEMPTS {
+                    error!("Coinbase: max WebSocket reconnection attempts exceeded");
+                    break;
+                }
+                let delay = ws_backoff_secs(reconnect_attempts - 1);
+                info!(
+                    attempt = reconnect_attempts,
+                    delay_secs = delay,
+                    "Coinbase: reconnecting user data stream"
+                );
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
         })
     }
 
@@ -1122,6 +1179,30 @@ mod tests {
         });
         let result = CoinbaseExecutionConnector::parse_order_event("update", &order).unwrap();
         assert!(result.is_none(), "unknown status should return None");
+    }
+
+    // -- WebSocket reconnection backoff --
+
+    #[test]
+    fn test_ws_reconnect_constants() {
+        assert_eq!(WS_RECONNECT_DELAY_SECS, 5);
+        assert_eq!(WS_MAX_RECONNECT_ATTEMPTS, 10);
+    }
+
+    #[test]
+    fn test_ws_backoff_secs_exponential() {
+        assert_eq!(ws_backoff_secs(0), 5); // 5 * 2^0 = 5
+        assert_eq!(ws_backoff_secs(1), 10); // 5 * 2^1 = 10
+        assert_eq!(ws_backoff_secs(2), 20); // 5 * 2^2 = 20
+        assert_eq!(ws_backoff_secs(3), 40); // 5 * 2^3 = 40
+    }
+
+    #[test]
+    fn test_ws_backoff_secs_capped_at_60() {
+        assert_eq!(ws_backoff_secs(4), 60); // 5 * 2^4 = 80 -> capped to 60
+        assert_eq!(ws_backoff_secs(5), 60); // 5 * 2^5 = 160 -> capped to 60
+        assert_eq!(ws_backoff_secs(10), 60);
+        assert_eq!(ws_backoff_secs(u32::MAX), 60);
     }
 
     // -- Connector state --

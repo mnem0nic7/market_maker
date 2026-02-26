@@ -439,7 +439,10 @@ pub enum CandleInterval {
 pub struct MarketSnapshot {
     pub exchange: Exchange,
     pub symbol: Symbol,
-    pub order_book: OrderBook,
+    /// Wrapped in `Arc` to avoid deep-cloning the order book on every strategy
+    /// tick in the hot path. Strategies only read the book via `&MarketSnapshot`,
+    /// so shared ownership is safe and eliminates per-tick Vec<PriceLevel> copies.
+    pub order_book: std::sync::Arc<OrderBook>,
     pub last_trade: Option<Trade>,
     pub position: Position,
     pub open_orders: Vec<Order>,

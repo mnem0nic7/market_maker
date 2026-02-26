@@ -49,6 +49,17 @@ use tracing::{debug, error, info, warn};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Base delay in seconds for WebSocket reconnection backoff.
+const WS_RECONNECT_DELAY_SECS: u64 = 5;
+
+/// Maximum number of consecutive reconnection attempts before giving up.
+const WS_MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
+/// Calculate exponential backoff delay for a given attempt, capped at 60 seconds.
+fn ws_backoff_secs(attempt: u32) -> u64 {
+    (WS_RECONNECT_DELAY_SECS.saturating_mul(2u64.saturating_pow(attempt))).min(60)
+}
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -226,50 +237,84 @@ impl BinanceExecutionConnector {
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             let endpoint = format!("{}/ws/{}", ws_url, listen_key);
-            info!(endpoint = %endpoint, "Binance: connecting user data stream");
+            let mut reconnect_attempts = 0u32;
 
-            let ws_stream = match tokio_tungstenite::connect_async(&endpoint).await {
-                Ok((stream, _)) => stream,
-                Err(e) => {
-                    error!(error = %e, "Binance: WebSocket connection failed");
-                    connected.store(false, Ordering::SeqCst);
-                    return;
-                }
-            };
+            loop {
+                info!(endpoint = %endpoint, "Binance: connecting user data stream");
 
-            let (mut _write, mut read) = ws_stream.split();
-            info!("Binance: user data stream connected");
-
-            while let Some(msg_result) = read.next().await {
-                let msg = match msg_result {
-                    Ok(m) => m,
+                let ws_stream = match tokio_tungstenite::connect_async(&endpoint).await {
+                    Ok((stream, _)) => {
+                        reconnect_attempts = 0;
+                        connected.store(true, Ordering::SeqCst);
+                        stream
+                    }
                     Err(e) => {
-                        error!(error = %e, "Binance: WebSocket read error");
-                        break;
+                        warn!(error = %e, "Binance: WebSocket connection failed");
+                        connected.store(false, Ordering::SeqCst);
+
+                        reconnect_attempts += 1;
+                        if reconnect_attempts > WS_MAX_RECONNECT_ATTEMPTS {
+                            error!("Binance: max WebSocket reconnection attempts exceeded");
+                            break;
+                        }
+                        let delay = ws_backoff_secs(reconnect_attempts - 1);
+                        info!(
+                            attempt = reconnect_attempts,
+                            delay_secs = delay,
+                            "Binance: reconnecting user data stream"
+                        );
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                        continue;
                     }
                 };
 
-                match msg {
-                    WsMessage::Text(text) => {
-                        if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
-                            warn!(error = %e, "Binance: failed to process WS message");
-                        }
-                    }
-                    WsMessage::Ping(data) => {
-                        if let Err(e) = _write.send(WsMessage::Pong(data)).await {
-                            warn!(error = %e, "Binance: failed to send pong");
-                        }
-                    }
-                    WsMessage::Close(_) => {
-                        info!("Binance: WebSocket closed by server");
-                        break;
-                    }
-                    _ => {}
-                }
-            }
+                let (mut _write, mut read) = ws_stream.split();
+                info!("Binance: user data stream connected");
 
-            connected.store(false, Ordering::SeqCst);
-            warn!("Binance: user data stream disconnected");
+                while let Some(msg_result) = read.next().await {
+                    let msg = match msg_result {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!(error = %e, "Binance: WebSocket read error");
+                            break;
+                        }
+                    };
+
+                    match msg {
+                        WsMessage::Text(text) => {
+                            if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
+                                warn!(error = %e, "Binance: failed to process WS message");
+                            }
+                        }
+                        WsMessage::Ping(data) => {
+                            if let Err(e) = _write.send(WsMessage::Pong(data)).await {
+                                warn!(error = %e, "Binance: failed to send pong");
+                            }
+                        }
+                        WsMessage::Close(_) => {
+                            info!("Binance: WebSocket closed by server");
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+
+                connected.store(false, Ordering::SeqCst);
+                warn!("Binance: user data stream disconnected, will attempt reconnect");
+
+                reconnect_attempts += 1;
+                if reconnect_attempts > WS_MAX_RECONNECT_ATTEMPTS {
+                    error!("Binance: max WebSocket reconnection attempts exceeded");
+                    break;
+                }
+                let delay = ws_backoff_secs(reconnect_attempts - 1);
+                info!(
+                    attempt = reconnect_attempts,
+                    delay_secs = delay,
+                    "Binance: reconnecting user data stream"
+                );
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
         })
     }
 
@@ -1114,6 +1159,30 @@ mod tests {
         });
         let result = BinanceExecutionConnector::parse_execution_report(&msg);
         assert!(result.is_err());
+    }
+
+    // -- WebSocket reconnection backoff --
+
+    #[test]
+    fn test_ws_reconnect_constants() {
+        assert_eq!(WS_RECONNECT_DELAY_SECS, 5);
+        assert_eq!(WS_MAX_RECONNECT_ATTEMPTS, 10);
+    }
+
+    #[test]
+    fn test_ws_backoff_secs_exponential() {
+        assert_eq!(ws_backoff_secs(0), 5); // 5 * 2^0 = 5
+        assert_eq!(ws_backoff_secs(1), 10); // 5 * 2^1 = 10
+        assert_eq!(ws_backoff_secs(2), 20); // 5 * 2^2 = 20
+        assert_eq!(ws_backoff_secs(3), 40); // 5 * 2^3 = 40
+    }
+
+    #[test]
+    fn test_ws_backoff_secs_capped_at_60() {
+        assert_eq!(ws_backoff_secs(4), 60); // 5 * 2^4 = 80 -> capped to 60
+        assert_eq!(ws_backoff_secs(5), 60); // 5 * 2^5 = 160 -> capped to 60
+        assert_eq!(ws_backoff_secs(10), 60);
+        assert_eq!(ws_backoff_secs(u32::MAX), 60);
     }
 
     // -- Connector state --
