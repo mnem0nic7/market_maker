@@ -313,10 +313,8 @@ pub fn create_strategy(
                     s.parse().ok()
                 } else if let Some(n) = v.as_f64() {
                     Decimal::from_f64_retain(n)
-                } else if let Some(n) = v.as_i64() {
-                    Some(Decimal::from(n))
                 } else {
-                    None
+                    v.as_i64().map(Decimal::from)
                 }
             })
             .unwrap_or(default)

@@ -208,8 +208,7 @@ impl BinanceExecutionConnector {
     fn from_binance_symbol(s: &str) -> Symbol {
         // Try known quote assets in longest-first order.
         for quote in &["USDT", "BUSD", "USDC", "BTC", "ETH", "BNB", "USD"] {
-            if s.ends_with(quote) {
-                let base = &s[..s.len() - quote.len()];
+            if let Some(base) = s.strip_suffix(quote) {
                 if !base.is_empty() {
                     return Symbol::new(base, *quote);
                 }

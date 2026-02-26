@@ -240,6 +240,7 @@ impl TimescaleStore {
     // -----------------------------------------------------------------------
 
     /// Insert a market data tick.
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn insert_market_tick(
         &self,
@@ -274,6 +275,7 @@ impl TimescaleStore {
     }
 
     /// Insert a trade record.
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn insert_trade(
         &self,
@@ -306,6 +308,7 @@ impl TimescaleStore {
     }
 
     /// Upsert an order (insert or update on conflict with client_order_id).
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn upsert_order(
         &self,
@@ -362,6 +365,7 @@ impl TimescaleStore {
     }
 
     /// Insert a fill record.
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn insert_fill(
         &self,
@@ -400,6 +404,7 @@ impl TimescaleStore {
     }
 
     /// Upsert a position (insert or update on conflict with exchange + symbol).
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self))]
     pub async fn upsert_position(
         &self,

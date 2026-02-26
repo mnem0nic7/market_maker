@@ -241,7 +241,7 @@ impl MarketDataConnector for IbConnector {
                                 conid
                             );
                             debug!(msg = %sub_msg, "IB: subscribing to market data");
-                            if let Err(e) = write.send(Message::Text(sub_msg.into())).await {
+                            if let Err(e) = write.send(Message::Text(sub_msg)).await {
                                 error!(error = %e, "IB: failed to send subscription message");
                                 break;
                             }
@@ -441,19 +441,19 @@ async fn handle_ib_ws_message(
     let bid_price = msg
         .get("84")
         .and_then(|v| v.as_str())
-        .and_then(|s| parse_ib_decimal(s));
+        .and_then(parse_ib_decimal);
     let ask_price = msg
         .get("85")
         .and_then(|v| v.as_str())
-        .and_then(|s| parse_ib_decimal(s));
+        .and_then(parse_ib_decimal);
     let bid_size = msg
         .get("88")
         .and_then(|v| v.as_str())
-        .and_then(|s| parse_ib_decimal(s));
+        .and_then(parse_ib_decimal);
     let ask_size = msg
         .get("87")
         .and_then(|v| v.as_str())
-        .and_then(|s| parse_ib_decimal(s));
+        .and_then(parse_ib_decimal);
 
     // If we have bid/ask data, send an order book update.
     if bid_price.is_some() || ask_price.is_some() {
@@ -495,12 +495,12 @@ async fn handle_ib_ws_message(
     if let Some(last_price) = msg
         .get("31")
         .and_then(|v| v.as_str())
-        .and_then(|s| parse_ib_decimal(s))
+        .and_then(parse_ib_decimal)
     {
         let volume = msg
             .get("86")
             .and_then(|v| v.as_str())
-            .and_then(|s| parse_ib_decimal(s))
+            .and_then(parse_ib_decimal)
             .unwrap_or(Decimal::ZERO);
 
         // We don't know the true trade side from a last-price tick;

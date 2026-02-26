@@ -568,7 +568,7 @@ where
         message: format!("failed to serialize subscribe message: {}", e),
     })?;
 
-    sink.send(Message::Text(json.into())).await.map_err(|e| MmError::Exchange {
+    sink.send(Message::Text(json)).await.map_err(|e| MmError::Exchange {
         exchange: Exchange::Coinbase,
         message: format!("failed to send WebSocket message: {}", e),
     })?;

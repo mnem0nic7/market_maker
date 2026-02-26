@@ -132,8 +132,7 @@ fn stream_from_sse(
                 let line = buffer[..line_end].trim().to_string();
                 buffer = buffer[line_end + 1..].to_string();
 
-                if line.starts_with("data: ") {
-                    let json_str = &line[6..];
+                if let Some(json_str) = line.strip_prefix("data: ") {
                     if json_str == "[DONE]" {
                         return;
                     }

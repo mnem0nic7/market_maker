@@ -166,7 +166,7 @@ impl MarketDataManager {
     pub fn is_connected(&self, exchange: Exchange) -> bool {
         self.connectors
             .get(&exchange)
-            .map_or(false, |c| c.is_connected())
+            .is_some_and(|c| c.is_connected())
     }
 
     /// List all registered exchanges.

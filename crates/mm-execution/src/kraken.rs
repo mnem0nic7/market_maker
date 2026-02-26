@@ -263,12 +263,11 @@ impl KrakenExecutionConnector {
         // Strip the leading X/Z prefixes Kraken sometimes uses.
         let cleaned = pair
             .strip_prefix('X')
-            .or_else(|| Some(pair))
+            .or(Some(pair))
             .unwrap_or(pair);
 
         for quote in &["USDT", "ZUSD", "USD", "EUR", "XBT", "ETH"] {
-            if cleaned.ends_with(quote) {
-                let base = &cleaned[..cleaned.len() - quote.len()];
+            if let Some(base) = cleaned.strip_suffix(quote) {
                 if !base.is_empty() {
                     let normalized_quote = match *quote {
                         "ZUSD" => "USD",
@@ -322,7 +321,7 @@ impl KrakenExecutionConnector {
             });
 
             if let Err(e) = write
-                .send(WsMessage::Text(subscribe.to_string().into()))
+                .send(WsMessage::Text(subscribe.to_string()))
                 .await
             {
                 error!(error = %e, "Kraken: failed to send subscribe");

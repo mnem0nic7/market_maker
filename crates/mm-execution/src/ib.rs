@@ -799,13 +799,13 @@ impl ExecutionConnector for IbExecutionConnector {
         let total_cash = body
             .get("totalcashvalue")
             .and_then(|v| v.get("amount"))
-            .and_then(|v| decimal_from_json_value(v))
+            .and_then(decimal_from_json_value)
             .unwrap_or(Decimal::ZERO);
 
         let available_funds = body
             .get("availablefunds")
             .and_then(|v| v.get("amount"))
-            .and_then(|v| decimal_from_json_value(v))
+            .and_then(decimal_from_json_value)
             .unwrap_or(Decimal::ZERO);
 
         let currency = body
@@ -851,10 +851,8 @@ fn decimal_from_json_value(v: &serde_json::Value) -> Option<Decimal> {
     } else if let Some(f) = v.as_f64() {
         // Fall back to converting via string to preserve precision.
         f.to_string().parse::<Decimal>().ok()
-    } else if let Some(n) = v.as_i64() {
-        Some(Decimal::from(n))
     } else {
-        None
+        v.as_i64().map(Decimal::from)
     }
 }
 

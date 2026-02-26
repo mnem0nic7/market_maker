@@ -194,7 +194,7 @@ impl AlpacaExecutionConnector {
             });
 
             if let Err(e) = write
-                .send(WsMessage::Text(auth_msg.to_string().into()))
+                .send(WsMessage::Text(auth_msg.to_string()))
                 .await
             {
                 error!(error = %e, "Alpaca: failed to send auth message");
@@ -242,7 +242,7 @@ impl AlpacaExecutionConnector {
             });
 
             if let Err(e) = write
-                .send(WsMessage::Text(listen_msg.to_string().into()))
+                .send(WsMessage::Text(listen_msg.to_string()))
                 .await
             {
                 error!(error = %e, "Alpaca: failed to send listen message");

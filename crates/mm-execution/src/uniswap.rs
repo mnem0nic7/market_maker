@@ -325,6 +325,7 @@ impl UniswapExecutionConnector {
     /// - uint256 amountIn
     /// - uint256 amountOutMinimum
     /// - uint160 sqrtPriceLimitX96 (0 = no limit)
+    #[allow(clippy::too_many_arguments)]
     fn build_exact_input_single_calldata(
         &self,
         token_in: &str,
@@ -358,6 +359,7 @@ impl UniswapExecutionConnector {
     ///
     /// This is a placeholder that returns a properly formatted but unsigned
     /// transaction. A production implementation would use `k256` or similar.
+    #[allow(clippy::too_many_arguments)]
     fn build_raw_transaction(
         &self,
         nonce: u64,

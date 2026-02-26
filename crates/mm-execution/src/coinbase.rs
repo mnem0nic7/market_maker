@@ -279,7 +279,7 @@ impl CoinbaseExecutionConnector {
             });
 
             if let Err(e) = write
-                .send(WsMessage::Text(subscribe.to_string().into()))
+                .send(WsMessage::Text(subscribe.to_string()))
                 .await
             {
                 error!(error = %e, "Coinbase: failed to send subscribe");

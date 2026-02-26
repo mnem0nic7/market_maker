@@ -829,7 +829,7 @@ fn generate_optimizer_events(num_events: usize) -> Vec<mm_backtest::MarketEvent>
         }];
 
         if i % 3 == 0 && i > 0 {
-            let trade_side = if seed % 2 == 0 {
+            let trade_side = if seed.is_multiple_of(2) {
                 mm_core::Side::Buy
             } else {
                 mm_core::Side::Sell

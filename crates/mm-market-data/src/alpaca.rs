@@ -251,7 +251,7 @@ impl MarketDataConnector for AlpacaConnector {
                         });
 
                         if let Err(e) = write
-                            .send(Message::Text(auth_msg.to_string().into()))
+                            .send(Message::Text(auth_msg.to_string()))
                             .await
                         {
                             error!(error = %e, "Alpaca: failed to send auth message");
@@ -301,7 +301,7 @@ impl MarketDataConnector for AlpacaConnector {
                         });
 
                         if let Err(e) = write
-                            .send(Message::Text(subscribe_msg.to_string().into()))
+                            .send(Message::Text(subscribe_msg.to_string()))
                             .await
                         {
                             error!(error = %e, "Alpaca: failed to send subscribe message");

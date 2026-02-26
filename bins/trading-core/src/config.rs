@@ -23,7 +23,7 @@ use mm_core::Exchange;
 // ---------------------------------------------------------------------------
 
 /// Root configuration for the trading-core binary.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TradingConfig {
     /// Per-exchange connection settings (keyed by lowercase exchange name).
     #[serde(default)]
@@ -50,18 +50,6 @@ pub struct TradingConfig {
     pub trading_loop: TradingLoopConfig,
 }
 
-impl Default for TradingConfig {
-    fn default() -> Self {
-        Self {
-            exchanges: HashMap::new(),
-            strategies: Vec::new(),
-            risk: RiskConfig::default(),
-            nats: NatsStreamConfig::default(),
-            gateway: GatewayInstanceConfig::default(),
-            trading_loop: TradingLoopConfig::default(),
-        }
-    }
-}
 
 impl TradingConfig {
     /// Validate the configuration, collecting **all** errors before returning.
@@ -198,7 +186,7 @@ fn default_empty_object() -> serde_json::Value {
 // ---------------------------------------------------------------------------
 
 /// Risk management configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RiskConfig {
     /// Position limit settings.
     #[serde(default)]
@@ -221,17 +209,6 @@ pub struct RiskConfig {
     pub kill_switch: KillSwitchSettings,
 }
 
-impl Default for RiskConfig {
-    fn default() -> Self {
-        Self {
-            position_limits: PositionLimitSettings::default(),
-            order_limits: OrderLimitSettings::default(),
-            pnl_limits: PnlLimitSettings::default(),
-            rate_limits: RateLimitSettings::default(),
-            kill_switch: KillSwitchSettings::default(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionLimitSettings {
