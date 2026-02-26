@@ -685,11 +685,11 @@ async fn handle_ws_message(
     let log = &params["result"];
 
     // Verify this is a Swap event by checking topics[0].
-    let topics = log["topics"].as_array();
-    if topics.is_none() || topics.unwrap().is_empty() {
-        return Ok(());
-    }
-    let topic0 = topics.unwrap()[0].as_str().unwrap_or("");
+    let topics = match log["topics"].as_array() {
+        Some(t) if !t.is_empty() => t,
+        _ => return Ok(()),
+    };
+    let topic0 = topics[0].as_str().unwrap_or("");
     if topic0 != SWAP_EVENT_TOPIC {
         return Ok(());
     }
