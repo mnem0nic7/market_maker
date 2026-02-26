@@ -30,5 +30,8 @@ tonic = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 
+[dev-dependencies]
+rust_decimal_macros = { workspace = true }
+
 [build-dependencies]
 tonic-build = "0.12"

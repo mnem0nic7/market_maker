@@ -1006,4 +1006,64 @@ mod tests {
             );
         }
     }
+
+    // -------------------------------------------------------------------
+    // Connector creation and config tests
+    // -------------------------------------------------------------------
+
+    fn test_raydium_config() -> RaydiumConfig {
+        RaydiumConfig {
+            rpc_http_url: "https://api.mainnet-beta.solana.com".into(),
+            rpc_ws_url: "wss://api.mainnet-beta.solana.com".into(),
+            pool_addresses: HashMap::from([(
+                "SOL/USDC".to_string(),
+                "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2".to_string(),
+            )]),
+            token_decimals: HashMap::from([("SOL".to_string(), 9), ("USDC".to_string(), 6)]),
+        }
+    }
+
+    #[test]
+    fn test_connector_reports_correct_exchange() {
+        let config = test_raydium_config();
+        let connector = RaydiumConnector::new(config);
+        assert_eq!(connector.exchange(), Exchange::Raydium);
+    }
+
+    #[test]
+    fn test_connector_starts_disconnected() {
+        let config = test_raydium_config();
+        let connector = RaydiumConnector::new(config);
+        assert!(
+            !connector.is_connected(),
+            "connector should start disconnected"
+        );
+    }
+
+    #[test]
+    fn test_config_construction() {
+        let config = test_raydium_config();
+        assert!(config.pool_addresses.contains_key("SOL/USDC"));
+        assert_eq!(config.token_decimals.get("SOL").copied(), Some(9));
+        assert_eq!(config.token_decimals.get("USDC").copied(), Some(6));
+    }
+
+    #[test]
+    fn test_solana_address_format_base58() {
+        let config = test_raydium_config();
+        let base58_chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        for (_pair, addr) in &config.pool_addresses {
+            for c in addr.chars() {
+                assert!(
+                    base58_chars.contains(c),
+                    "pool address contains non-base58 character: '{}'",
+                    c
+                );
+            }
+            assert!(
+                addr.len() >= 32 && addr.len() <= 44,
+                "Solana address length should be 32-44 chars"
+            );
+        }
+    }
 }

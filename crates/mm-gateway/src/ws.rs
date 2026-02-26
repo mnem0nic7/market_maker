@@ -354,7 +354,7 @@ async fn handle_client_message(text: &str, subscriptions: &Arc<RwLock<HashSet<Ch
 
 /// Determine whether a broadcast message should be forwarded to a client
 /// based on its current subscription set.
-fn should_send(subscriptions: &HashSet<Channel>, msg: &ServerMessage) -> bool {
+pub(crate) fn should_send(subscriptions: &HashSet<Channel>, msg: &ServerMessage) -> bool {
     if subscriptions.contains(&Channel::All) {
         return true;
     }
@@ -369,5 +369,378 @@ fn should_send(subscriptions: &HashSet<Channel>, msg: &ServerMessage) -> bool {
         | ServerMessage::Error { .. }
         | ServerMessage::Subscribed { .. }
         | ServerMessage::Unsubscribed { .. } => true,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    // -----------------------------------------------------------------------
+    // Helper constructors
+    // -----------------------------------------------------------------------
+
+    fn position_update() -> ServerMessage {
+        ServerMessage::PositionUpdate {
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            quantity: dec!(1.0),
+            unrealized_pnl: dec!(100),
+            realized_pnl: dec!(50),
+        }
+    }
+
+    fn order_update() -> ServerMessage {
+        ServerMessage::OrderUpdate {
+            client_order_id: "ord-001".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("ETH", "USDT"),
+            status: "Filled".to_string(),
+            filled_quantity: dec!(2.5),
+            remaining_quantity: dec!(0),
+        }
+    }
+
+    fn risk_update() -> ServerMessage {
+        ServerMessage::RiskUpdate {
+            net_exposure: dec!(10000),
+            gross_exposure: dec!(25000),
+            daily_pnl: dec!(350),
+            kill_switch_active: false,
+        }
+    }
+
+    fn market_data_tick() -> ServerMessage {
+        ServerMessage::MarketDataTick {
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            best_bid: dec!(50000),
+            best_ask: dec!(50010),
+            mid_price: dec!(50005),
+            spread_bps: dec!(2.0),
+        }
+    }
+
+    fn strategy_metrics_msg() -> ServerMessage {
+        ServerMessage::StrategyMetrics {
+            strategy_id: "spread-btc".to_string(),
+            metrics: mm_core::StrategyMetrics {
+                strategy_id: "spread-btc".to_string(),
+                realized_pnl: dec!(100),
+                unrealized_pnl: dec!(50),
+                total_fills: 10,
+                total_orders_placed: 20,
+                total_orders_cancelled: 5,
+                total_orders_rejected: 1,
+                avg_spread_captured_bps: dec!(3.5),
+                volume_traded: dec!(100000),
+                uptime_secs: 3600,
+                last_fill_at: None,
+            },
+        }
+    }
+
+    fn error_msg() -> ServerMessage {
+        ServerMessage::Error {
+            message: "something went wrong".to_string(),
+        }
+    }
+
+    fn subs(channels: &[Channel]) -> HashSet<Channel> {
+        channels.iter().cloned().collect()
+    }
+
+    // =======================================================================
+    // Channel parsing tests
+    // =======================================================================
+
+    #[test]
+    fn test_channel_from_str_positions() {
+        assert_eq!(Channel::from_str("positions"), Some(Channel::Positions));
+    }
+
+    #[test]
+    fn test_channel_from_str_market_data_variants() {
+        assert_eq!(Channel::from_str("market_data"), Some(Channel::MarketData));
+        assert_eq!(Channel::from_str("marketdata"), Some(Channel::MarketData));
+        assert_eq!(Channel::from_str("market-data"), Some(Channel::MarketData));
+    }
+
+    #[test]
+    fn test_channel_from_str_all_variants() {
+        assert_eq!(Channel::from_str("all"), Some(Channel::All));
+        assert_eq!(Channel::from_str("*"), Some(Channel::All));
+    }
+
+    #[test]
+    fn test_channel_from_str_unknown() {
+        assert_eq!(Channel::from_str("unknown_channel"), None);
+        assert_eq!(Channel::from_str(""), None);
+        assert_eq!(Channel::from_str("prices"), None);
+    }
+
+    #[test]
+    fn test_channel_from_str_case_insensitive() {
+        assert_eq!(Channel::from_str("POSITIONS"), Some(Channel::Positions));
+        assert_eq!(Channel::from_str("Orders"), Some(Channel::Orders));
+        assert_eq!(Channel::from_str("RISK"), Some(Channel::Risk));
+        assert_eq!(Channel::from_str("MARKET_DATA"), Some(Channel::MarketData));
+        assert_eq!(Channel::from_str("All"), Some(Channel::All));
+    }
+
+    // =======================================================================
+    // Subscription filtering tests
+    // =======================================================================
+
+    #[test]
+    fn test_should_send_all_channel_receives_everything() {
+        let subscriptions = subs(&[Channel::All]);
+
+        assert!(should_send(&subscriptions, &position_update()));
+        assert!(should_send(&subscriptions, &order_update()));
+        assert!(should_send(&subscriptions, &risk_update()));
+        assert!(should_send(&subscriptions, &market_data_tick()));
+        assert!(should_send(&subscriptions, &strategy_metrics_msg()));
+        assert!(should_send(&subscriptions, &error_msg()));
+    }
+
+    #[test]
+    fn test_should_send_positions_only() {
+        let subscriptions = subs(&[Channel::Positions]);
+
+        assert!(should_send(&subscriptions, &position_update()));
+        assert!(!should_send(&subscriptions, &order_update()));
+        assert!(!should_send(&subscriptions, &risk_update()));
+        assert!(!should_send(&subscriptions, &market_data_tick()));
+    }
+
+    #[test]
+    fn test_should_send_orders_only() {
+        let subscriptions = subs(&[Channel::Orders]);
+
+        assert!(should_send(&subscriptions, &order_update()));
+        assert!(!should_send(&subscriptions, &position_update()));
+        assert!(!should_send(&subscriptions, &risk_update()));
+        assert!(!should_send(&subscriptions, &market_data_tick()));
+    }
+
+    #[test]
+    fn test_should_send_risk_only() {
+        let subscriptions = subs(&[Channel::Risk]);
+
+        assert!(should_send(&subscriptions, &risk_update()));
+        assert!(!should_send(&subscriptions, &position_update()));
+        assert!(!should_send(&subscriptions, &order_update()));
+        assert!(!should_send(&subscriptions, &market_data_tick()));
+    }
+
+    #[test]
+    fn test_should_send_market_data_only() {
+        let subscriptions = subs(&[Channel::MarketData]);
+
+        assert!(should_send(&subscriptions, &market_data_tick()));
+        assert!(!should_send(&subscriptions, &position_update()));
+        assert!(!should_send(&subscriptions, &order_update()));
+        assert!(!should_send(&subscriptions, &risk_update()));
+    }
+
+    #[test]
+    fn test_should_send_strategy_metrics_always_forwarded() {
+        // StrategyMetrics should pass regardless of which channels are subscribed.
+        let empty = subs(&[]);
+        let positions_only = subs(&[Channel::Positions]);
+        let risk_only = subs(&[Channel::Risk]);
+
+        assert!(should_send(&empty, &strategy_metrics_msg()));
+        assert!(should_send(&positions_only, &strategy_metrics_msg()));
+        assert!(should_send(&risk_only, &strategy_metrics_msg()));
+    }
+
+    #[test]
+    fn test_should_send_error_always_forwarded() {
+        // Error messages should pass regardless of subscriptions.
+        let empty = subs(&[]);
+        let positions_only = subs(&[Channel::Positions]);
+
+        assert!(should_send(&empty, &error_msg()));
+        assert!(should_send(&positions_only, &error_msg()));
+    }
+
+    #[test]
+    fn test_should_send_empty_subscriptions_blocks_filtered_messages() {
+        let empty = subs(&[]);
+
+        // Filtered message types should be blocked.
+        assert!(!should_send(&empty, &position_update()));
+        assert!(!should_send(&empty, &order_update()));
+        assert!(!should_send(&empty, &risk_update()));
+        assert!(!should_send(&empty, &market_data_tick()));
+
+        // "Always forwarded" messages should still pass.
+        assert!(should_send(&empty, &strategy_metrics_msg()));
+        assert!(should_send(&empty, &error_msg()));
+        assert!(should_send(
+            &empty,
+            &ServerMessage::Subscribed {
+                channel: "test".to_string()
+            }
+        ));
+        assert!(should_send(
+            &empty,
+            &ServerMessage::Unsubscribed {
+                channel: "test".to_string()
+            }
+        ));
+    }
+
+    // =======================================================================
+    // Message serialization tests
+    // =======================================================================
+
+    #[test]
+    fn test_server_message_serialization_position_update() {
+        let msg = position_update();
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+
+        assert_eq!(value["type"], "PositionUpdate");
+        assert_eq!(value["exchange"], "Simulated");
+        assert!(value["quantity"].is_string() || value["quantity"].is_number());
+    }
+
+    #[test]
+    fn test_server_message_serialization_market_data_tick() {
+        let msg = market_data_tick();
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+
+        assert_eq!(value["type"], "MarketDataTick");
+        assert_eq!(value["exchange"], "Binance");
+        // Verify all expected fields are present.
+        assert!(value.get("best_bid").is_some());
+        assert!(value.get("best_ask").is_some());
+        assert!(value.get("mid_price").is_some());
+        assert!(value.get("spread_bps").is_some());
+        assert!(value.get("symbol").is_some());
+    }
+
+    #[test]
+    fn test_client_message_deserialization_subscribe() {
+        let json = r#"{"action":"subscribe","channel":"positions"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).expect("deserialize");
+
+        match msg {
+            ClientMessage::Subscribe { channel } => {
+                assert_eq!(channel, "positions");
+            }
+            other => panic!("expected Subscribe, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_client_message_deserialization_ping() {
+        let json = r#"{"action":"ping"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).expect("deserialize");
+
+        match msg {
+            ClientMessage::Ping => {} // success
+            other => panic!("expected Ping, got {:?}", other),
+        }
+    }
+
+    // =======================================================================
+    // Broadcaster tests (async)
+    // =======================================================================
+
+    #[tokio::test]
+    async fn test_broadcaster_sender_and_subscribe() {
+        let broadcaster = DashboardBroadcaster::new(16, 16);
+
+        let sender = broadcaster.sender();
+        let mut receiver = broadcaster.subscribe();
+
+        let msg = position_update();
+        sender.send(msg.clone()).await.expect("send");
+
+        let received = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+            .await
+            .expect("timeout waiting for message")
+            .expect("recv");
+
+        // Verify the received message matches what was sent.
+        let sent_json = serde_json::to_string(&position_update()).unwrap();
+        let recv_json = serde_json::to_string(&received).unwrap();
+        assert_eq!(sent_json, recv_json);
+    }
+
+    #[tokio::test]
+    async fn test_broadcaster_multiple_subscribers() {
+        let broadcaster = DashboardBroadcaster::new(16, 16);
+
+        let sender = broadcaster.sender();
+        let mut rx1 = broadcaster.subscribe();
+        let mut rx2 = broadcaster.subscribe();
+
+        let msg = order_update();
+        sender.send(msg.clone()).await.expect("send");
+
+        let timeout = std::time::Duration::from_secs(1);
+
+        let recv1 = tokio::time::timeout(timeout, rx1.recv())
+            .await
+            .expect("timeout rx1")
+            .expect("recv rx1");
+
+        let recv2 = tokio::time::timeout(timeout, rx2.recv())
+            .await
+            .expect("timeout rx2")
+            .expect("recv rx2");
+
+        // Both subscribers should receive the same message.
+        let expected_json = serde_json::to_string(&order_update()).unwrap();
+        assert_eq!(serde_json::to_string(&recv1).unwrap(), expected_json);
+        assert_eq!(serde_json::to_string(&recv2).unwrap(), expected_json);
+    }
+
+    #[tokio::test]
+    async fn test_handle_client_message_subscribe_adds_channel() {
+        let subscriptions = Arc::new(RwLock::new(HashSet::new()));
+
+        // Before: no channels subscribed.
+        assert!(subscriptions.read().await.is_empty());
+
+        // Send a subscribe message.
+        let subscribe_json = r#"{"action":"subscribe","channel":"positions"}"#;
+        handle_client_message(subscribe_json, &subscriptions).await;
+
+        // After: "positions" channel should be in the set.
+        let subs = subscriptions.read().await;
+        assert!(subs.contains(&Channel::Positions));
+        assert_eq!(subs.len(), 1);
+        drop(subs);
+
+        // Subscribe to another channel.
+        let subscribe_json2 = r#"{"action":"subscribe","channel":"risk"}"#;
+        handle_client_message(subscribe_json2, &subscriptions).await;
+
+        let subs = subscriptions.read().await;
+        assert!(subs.contains(&Channel::Positions));
+        assert!(subs.contains(&Channel::Risk));
+        assert_eq!(subs.len(), 2);
+        drop(subs);
+
+        // Unsubscribe from positions.
+        let unsub_json = r#"{"action":"unsubscribe","channel":"positions"}"#;
+        handle_client_message(unsub_json, &subscriptions).await;
+
+        let subs = subscriptions.read().await;
+        assert!(!subs.contains(&Channel::Positions));
+        assert!(subs.contains(&Channel::Risk));
+        assert_eq!(subs.len(), 1);
     }
 }

@@ -686,4 +686,268 @@ mod tests {
         let result = check.check_order(&sample_order(), &empty_portfolio()).await;
         assert!(matches!(result, RiskAction::Reject { .. }));
     }
+
+    // ----------------------------------------------------------------
+    // Additional PositionLimitCheck tests
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn position_limit_allows_reduce_only_orders() {
+        let check = PositionLimitCheck::new(PositionLimitConfig {
+            max_position_per_symbol: dec!(5),
+            max_gross_exposure: dec!(1_000_000),
+        });
+        let portfolio = portfolio_with_position(dec!(5), dec!(250_000));
+
+        // A reduce-only order should always be allowed, even if position is at the limit.
+        let mut order = sample_order();
+        order.reduce_only = true;
+        order.quantity = dec!(100); // way above limits
+        let result = check.check_order(&order, &portfolio).await;
+        assert!(matches!(result, RiskAction::Allow));
+    }
+
+    #[tokio::test]
+    async fn position_limit_allows_sell_that_reduces_position() {
+        let check = PositionLimitCheck::new(PositionLimitConfig {
+            max_position_per_symbol: dec!(5),
+            max_gross_exposure: dec!(1_000_000),
+        });
+        // We hold 5 BTC (at limit).
+        let portfolio = portfolio_with_position(dec!(5), dec!(250_000));
+
+        // A sell order that reduces the position should be allowed.
+        let mut order = sample_order();
+        order.side = Side::Sell;
+        order.quantity = dec!(3);
+        let result = check.check_order(&order, &portfolio).await;
+        assert!(matches!(result, RiskAction::Allow));
+    }
+
+    #[tokio::test]
+    async fn position_limit_rejects_gross_exposure_exceeded() {
+        let check = PositionLimitCheck::new(PositionLimitConfig {
+            max_position_per_symbol: dec!(1000), // high enough not to trigger
+            max_gross_exposure: dec!(100_000),
+        });
+        // Gross exposure already at max.
+        let portfolio = portfolio_with_position(dec!(2), dec!(100_000));
+
+        let result = check.check_order(&sample_order(), &portfolio).await;
+        assert!(
+            matches!(result, RiskAction::Reject { .. }),
+            "expected Reject when gross exposure is at max, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn position_limit_reduces_size_for_gross_exposure() {
+        let check = PositionLimitCheck::new(PositionLimitConfig {
+            max_position_per_symbol: dec!(1000),
+            max_gross_exposure: dec!(200_000),
+        });
+        // Current gross exposure: 150,000. Max: 200,000. Headroom: 50,000.
+        // Order: 2 BTC at 50,000 => notional 100,000, which exceeds headroom.
+        let portfolio = portfolio_with_position(dec!(3), dec!(150_000));
+        let mut order = sample_order();
+        order.quantity = dec!(2); // notional = 100,000
+        let result = check.check_order(&order, &portfolio).await;
+
+        match result {
+            RiskAction::ReduceSize { max_quantity, .. } => {
+                // headroom_notional = 50,000 / price 50,000 = 1 BTC
+                assert_eq!(max_quantity, dec!(1));
+            }
+            other => panic!("expected ReduceSize, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn position_limit_check_portfolio_rejects_over_gross() {
+        let check = PositionLimitCheck::new(PositionLimitConfig {
+            max_position_per_symbol: dec!(1000),
+            max_gross_exposure: dec!(100_000),
+        });
+        let mut portfolio = empty_portfolio();
+        portfolio.gross_exposure = dec!(150_000);
+        let result = check.check_portfolio(&portfolio).await;
+        assert!(matches!(result, RiskAction::Reject { .. }));
+    }
+
+    #[tokio::test]
+    async fn position_limit_check_portfolio_rejects_over_symbol() {
+        let check = PositionLimitCheck::new(PositionLimitConfig {
+            max_position_per_symbol: dec!(10),
+            max_gross_exposure: dec!(10_000_000),
+        });
+        let portfolio = portfolio_with_position(dec!(15), dec!(750_000));
+        let result = check.check_portfolio(&portfolio).await;
+        assert!(matches!(result, RiskAction::Reject { .. }));
+    }
+
+    #[tokio::test]
+    async fn position_limit_check_portfolio_allows_within_bounds() {
+        let check = PositionLimitCheck::new(PositionLimitConfig {
+            max_position_per_symbol: dec!(100),
+            max_gross_exposure: dec!(10_000_000),
+        });
+        let portfolio = portfolio_with_position(dec!(5), dec!(250_000));
+        let result = check.check_portfolio(&portfolio).await;
+        assert!(matches!(result, RiskAction::Allow));
+    }
+
+    // ----------------------------------------------------------------
+    // Additional OrderSizeCheck tests
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn order_size_check_portfolio_always_allows() {
+        let check = OrderSizeCheck::new(OrderSizeConfig {
+            max_order_quantity: dec!(1),
+            max_order_notional: dec!(1),
+        });
+        // Portfolio-level check should always allow for order-size check.
+        let mut portfolio = empty_portfolio();
+        portfolio.gross_exposure = dec!(999_999_999);
+        let result = check.check_portfolio(&portfolio).await;
+        assert!(matches!(result, RiskAction::Allow));
+    }
+
+    #[tokio::test]
+    async fn order_size_allows_exact_limit() {
+        let check = OrderSizeCheck::new(OrderSizeConfig {
+            max_order_quantity: dec!(1),
+            max_order_notional: dec!(50_000),
+        });
+        // Order with exactly the max quantity and exactly the max notional.
+        let result = check.check_order(&sample_order(), &empty_portfolio()).await;
+        assert!(matches!(result, RiskAction::Allow));
+    }
+
+    // ----------------------------------------------------------------
+    // Additional PnlLimitCheck tests
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn pnl_limit_triggers_kill_switch_on_portfolio_daily_loss() {
+        let check = PnlLimitCheck::new(PnlLimitConfig {
+            max_daily_loss: dec!(10_000),
+            max_drawdown_pct: dec!(0.05),
+        });
+        let mut portfolio = empty_portfolio();
+        portfolio.daily_pnl = dec!(-15_000);
+        let result = check.check_portfolio(&portfolio).await;
+        assert!(matches!(result, RiskAction::KillSwitch { .. }));
+    }
+
+    #[tokio::test]
+    async fn pnl_limit_triggers_kill_switch_on_portfolio_drawdown() {
+        let check = PnlLimitCheck::new(PnlLimitConfig {
+            max_daily_loss: dec!(1_000_000), // high enough not to trigger
+            max_drawdown_pct: dec!(0.05),
+        });
+        let mut portfolio = empty_portfolio();
+        portfolio.gross_exposure = dec!(100_000);
+        portfolio.max_drawdown = dec!(-10_000); // 10% drawdown exceeds 5% limit
+        let result = check.check_portfolio(&portfolio).await;
+        assert!(matches!(result, RiskAction::KillSwitch { .. }));
+    }
+
+    #[tokio::test]
+    async fn pnl_limit_record_and_current_tracking() {
+        let check = PnlLimitCheck::new(PnlLimitConfig {
+            max_daily_loss: dec!(10_000),
+            max_drawdown_pct: dec!(0.05),
+        });
+
+        assert_eq!(check.current_daily_pnl(), Decimal::ZERO);
+        assert_eq!(check.current_drawdown(), Decimal::ZERO);
+
+        check.record_pnl(dec!(500));
+        assert_eq!(check.current_daily_pnl(), dec!(500));
+
+        check.record_pnl(dec!(-200));
+        assert_eq!(check.current_daily_pnl(), dec!(300));
+        // HWM was 500, current is 300, drawdown = 200.
+        assert_eq!(check.current_drawdown(), dec!(200));
+    }
+
+    #[tokio::test]
+    async fn pnl_limit_uses_internal_pnl_when_recorded() {
+        let check = PnlLimitCheck::new(PnlLimitConfig {
+            max_daily_loss: dec!(5_000),
+            max_drawdown_pct: dec!(0.50),
+        });
+        // Record an internal PnL that exceeds the limit.
+        check.record_pnl(dec!(-6_000));
+
+        // Even though the portfolio snapshot shows zero daily_pnl, the
+        // internally tracked PnL should be used.
+        let result = check.check_order(&sample_order(), &empty_portfolio()).await;
+        assert!(matches!(result, RiskAction::KillSwitch { .. }));
+    }
+
+    #[tokio::test]
+    async fn pnl_limit_check_portfolio_allows_within_bounds() {
+        let check = PnlLimitCheck::new(PnlLimitConfig {
+            max_daily_loss: dec!(10_000),
+            max_drawdown_pct: dec!(0.05),
+        });
+        let mut portfolio = empty_portfolio();
+        portfolio.daily_pnl = dec!(-5_000); // within limit
+        portfolio.gross_exposure = dec!(100_000);
+        portfolio.max_drawdown = dec!(-2_000); // 2% < 5%
+        let result = check.check_portfolio(&portfolio).await;
+        assert!(matches!(result, RiskAction::Allow));
+    }
+
+    // ----------------------------------------------------------------
+    // Additional RateLimitCheck tests
+    // ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn rate_limit_per_minute_rejects_when_exceeded() {
+        let check = RateLimitCheck::new(RateLimitConfig {
+            max_orders_per_second: 100, // high enough not to trigger per-second
+            max_orders_per_minute: 3,
+        });
+        // Record 3 orders (filling up the minute window).
+        check.record_order(Exchange::Binance);
+        check.record_order(Exchange::Binance);
+        check.record_order(Exchange::Binance);
+
+        let result = check.check_order(&sample_order(), &empty_portfolio()).await;
+        assert!(
+            matches!(result, RiskAction::Reject { .. }),
+            "expected Reject when per-minute limit exceeded, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limit_allows_different_exchanges_independently() {
+        let check = RateLimitCheck::new(RateLimitConfig {
+            max_orders_per_second: 2,
+            max_orders_per_minute: 100,
+        });
+        // Fill up Coinbase rate limit.
+        check.record_order(Exchange::Coinbase);
+        check.record_order(Exchange::Coinbase);
+
+        // A Binance order should still be allowed.
+        let result = check.check_order(&sample_order(), &empty_portfolio()).await;
+        assert!(matches!(result, RiskAction::Allow));
+    }
+
+    #[tokio::test]
+    async fn rate_limit_check_portfolio_always_allows() {
+        let check = RateLimitCheck::new(RateLimitConfig {
+            max_orders_per_second: 1,
+            max_orders_per_minute: 1,
+        });
+        // Even with the tightest limits, portfolio-level check should allow.
+        let result = check.check_portfolio(&empty_portfolio()).await;
+        assert!(matches!(result, RiskAction::Allow));
+    }
 }

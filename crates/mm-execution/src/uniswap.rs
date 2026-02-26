@@ -1,9 +1,14 @@
 //! Uniswap V3 execution connector.
 //!
-//! Implements [`ExecutionConnector`] for Uniswap V3 on Ethereum.
+//! **Status: Experimental / Incomplete**
+//!
+//! This connector provides the structural framework for Uniswap integration
+//! but transaction signing and submission are not yet implemented. Orders will
+//! return simulated/placeholder signatures. Do NOT use in production with real funds.
 //!
 //! # Approach
 //!
+//! Implements [`ExecutionConnector`] for Uniswap V3 on Ethereum.
 //! DEX execution is fundamentally different from CEX execution:
 //!
 //! - **Submit order** builds an `exactInputSingle` swap transaction to the
@@ -733,6 +738,8 @@ impl ExecutionConnector for UniswapExecutionConnector {
     }
 
     async fn submit_order(&self, order: &NewOrder) -> MmResult<String> {
+        warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
+
         if !self.connected.load(Ordering::SeqCst) {
             return Err(MmError::Exchange {
                 exchange: Exchange::Uniswap,
@@ -875,6 +882,7 @@ impl ExecutionConnector for UniswapExecutionConnector {
     }
 
     async fn cancel_order(&self, cancel: &CancelOrder) -> MmResult<()> {
+        warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
         // DEX swaps are atomic and cannot be cancelled once submitted.
         // If the transaction is still in the mempool, it might be replaced
         // with a higher-gas no-op transaction, but that is complex and
@@ -1204,5 +1212,232 @@ mod tests {
             8 + 8 * 64,
             "calldata should be selector + 8 ABI words"
         );
+    }
+
+    // -------------------------------------------------------------------
+    // Additional tests: config, connector creation, addresses, state
+    // -------------------------------------------------------------------
+
+    /// Helper to create a full test config.
+    fn full_test_config() -> UniswapExecutionConfig {
+        UniswapExecutionConfig {
+            rpc_http_url: "https://eth-mainnet.g.alchemy.com/v2/test".into(),
+            chain_id: 1,
+            private_key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            router_address: default_router_address(),
+            token_addresses: HashMap::from([
+                (
+                    "WETH".to_string(),
+                    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(),
+                ),
+                (
+                    "USDC".to_string(),
+                    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(),
+                ),
+                (
+                    "USDT".to_string(),
+                    "0xdAC17F958D2ee523a2206206994597C13D831ec7".to_string(),
+                ),
+            ]),
+            token_decimals: HashMap::from([
+                ("WETH".to_string(), 18),
+                ("USDC".to_string(), 6),
+                ("USDT".to_string(), 6),
+            ]),
+            fee_tiers: HashMap::from([("WETH/USDC".to_string(), 500)]),
+            max_slippage: default_slippage(),
+        }
+    }
+
+    #[test]
+    fn test_config_defaults_sensible() {
+        let config = full_test_config();
+        assert_eq!(config.chain_id, 1, "Ethereum mainnet chain ID should be 1");
+        assert!(
+            (config.max_slippage - 0.005).abs() < f64::EPSILON,
+            "default slippage should be 0.5%"
+        );
+        assert_eq!(
+            config.router_address, DEFAULT_ROUTER_ADDRESS,
+            "should use the mainnet SwapRouter address"
+        );
+    }
+
+    #[test]
+    fn test_connector_reports_correct_exchange() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+        assert_eq!(connector.exchange(), Exchange::Uniswap);
+    }
+
+    #[test]
+    fn test_connector_starts_disconnected() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+        assert!(
+            !connector.is_connected(),
+            "connector should start disconnected"
+        );
+    }
+
+    #[test]
+    fn test_connector_no_pending_swaps_initially() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+        let pending = connector.pending_swaps.try_lock().unwrap();
+        assert!(pending.is_empty(), "should have no pending swaps initially");
+    }
+
+    #[test]
+    fn test_ethereum_address_checksummed_format() {
+        // ERC-20 token addresses should be checksummed (mixed-case) 0x-prefixed 40-hex-char strings.
+        let config = full_test_config();
+        for (token, addr) in &config.token_addresses {
+            assert!(
+                addr.starts_with("0x"),
+                "token {} address should start with 0x, got: {}",
+                token,
+                addr
+            );
+            assert_eq!(
+                addr.len(),
+                42,
+                "token {} address should be 42 chars (0x + 40 hex), got {} chars",
+                token,
+                addr.len()
+            );
+            // Verify the hex part contains only valid hex characters.
+            let hex_part = &addr[2..];
+            for c in hex_part.chars() {
+                assert!(
+                    c.is_ascii_hexdigit(),
+                    "token {} address contains non-hex character '{}' in: {}",
+                    token,
+                    c,
+                    addr
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_router_address_format() {
+        // SwapRouter address should be a valid Ethereum address.
+        let addr = DEFAULT_ROUTER_ADDRESS;
+        assert!(addr.starts_with("0x"));
+        assert_eq!(addr.len(), 42);
+        let hex_part = &addr[2..];
+        assert!(
+            hex_part.chars().all(|c| c.is_ascii_hexdigit()),
+            "router address contains non-hex characters"
+        );
+    }
+
+    #[test]
+    fn test_chain_id_values() {
+        // Verify well-known chain IDs.
+        let mainnet_config = full_test_config();
+        assert_eq!(mainnet_config.chain_id, 1);
+
+        // Test with other chain IDs.
+        let mut goerli_config = full_test_config();
+        goerli_config.chain_id = 5;
+        assert_eq!(goerli_config.chain_id, 5);
+
+        let mut arbitrum_config = full_test_config();
+        arbitrum_config.chain_id = 42161;
+        assert_eq!(arbitrum_config.chain_id, 42161);
+    }
+
+    #[test]
+    fn test_erc20_token_address_validation() {
+        let config = full_test_config();
+
+        // WETH address should be the canonical Wrapped Ether address.
+        let weth = config.token_addresses.get("WETH").unwrap();
+        assert_eq!(weth, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+        // USDC address should be the canonical USDC address.
+        let usdc = config.token_addresses.get("USDC").unwrap();
+        assert_eq!(usdc, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+
+        // USDT address should be the canonical USDT address.
+        let usdt = config.token_addresses.get("USDT").unwrap();
+        assert_eq!(usdt, "0xdAC17F958D2ee523a2206206994597C13D831ec7");
+    }
+
+    #[test]
+    fn test_token_address_resolution() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+
+        // Known tokens should resolve.
+        assert!(connector.token_address("WETH").is_ok());
+        assert!(connector.token_address("USDC").is_ok());
+
+        // Unknown tokens should return an error.
+        assert!(connector.token_address("UNKNOWN_TOKEN").is_err());
+    }
+
+    #[test]
+    fn test_fee_tier_resolution() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+
+        // Explicitly configured fee tier.
+        let symbol_weth_usdc = Symbol::new("WETH", "USDC");
+        assert_eq!(connector.fee_tier(&symbol_weth_usdc), 500);
+
+        // Unknown pair should fall back to default (3000 = 0.3%).
+        let symbol_unknown = Symbol::new("FOO", "BAR");
+        assert_eq!(connector.fee_tier(&symbol_unknown), DEFAULT_FEE_TIER);
+    }
+
+    #[test]
+    fn test_wallet_address_derivation_format() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+
+        let addr = connector.wallet_address();
+        // Should be a valid Ethereum address format (0x + 40 hex chars).
+        assert!(
+            addr.starts_with("0x"),
+            "wallet address should start with 0x"
+        );
+        assert_eq!(
+            addr.len(),
+            42,
+            "wallet address should be 42 chars, got {}",
+            addr.len()
+        );
+    }
+
+    #[test]
+    fn test_symbol_canonical_format() {
+        let symbol = Symbol::new("WETH", "USDC");
+        assert_eq!(symbol.canonical(), "WETH/USDC");
+
+        let symbol2 = Symbol::new("UNI", "WETH");
+        assert_eq!(symbol2.canonical(), "UNI/WETH");
+    }
+
+    #[test]
+    fn test_config_serialization_roundtrip() {
+        let config = full_test_config();
+        let json = serde_json::to_string(&config).expect("should serialize");
+        let deserialized: UniswapExecutionConfig =
+            serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(deserialized.chain_id, config.chain_id);
+        assert_eq!(deserialized.router_address, config.router_address);
+        assert_eq!(deserialized.token_addresses, config.token_addresses);
+        assert_eq!(deserialized.token_decimals, config.token_decimals);
+    }
+
+    #[test]
+    fn test_nonce_starts_at_zero() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+        let nonce = connector.nonce.try_lock().unwrap();
+        assert_eq!(*nonce, 0, "nonce should start at 0");
     }
 }

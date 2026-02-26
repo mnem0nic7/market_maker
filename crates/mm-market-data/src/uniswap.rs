@@ -916,4 +916,68 @@ mod tests {
         // First ask should be closest to mid.
         assert!(book.asks[0].price < book.asks[1].price);
     }
+
+    // -------------------------------------------------------------------
+    // Connector creation and config tests
+    // -------------------------------------------------------------------
+
+    fn test_uniswap_config() -> UniswapConfig {
+        UniswapConfig {
+            rpc_http_url: "https://eth-mainnet.g.alchemy.com/v2/test".into(),
+            rpc_ws_url: "wss://eth-mainnet.g.alchemy.com/v2/test".into(),
+            chain_id: 1,
+            pool_addresses: HashMap::from([(
+                "WETH/USDC".to_string(),
+                "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8".to_string(),
+            )]),
+            token_decimals: HashMap::from([("WETH".to_string(), 18), ("USDC".to_string(), 6)]),
+        }
+    }
+
+    #[test]
+    fn test_connector_reports_correct_exchange() {
+        let config = test_uniswap_config();
+        let connector = UniswapConnector::new(config);
+        assert_eq!(connector.exchange(), Exchange::Uniswap);
+    }
+
+    #[test]
+    fn test_connector_starts_disconnected() {
+        let config = test_uniswap_config();
+        let connector = UniswapConnector::new(config);
+        assert!(
+            !connector.is_connected(),
+            "connector should start disconnected"
+        );
+    }
+
+    #[test]
+    fn test_config_holds_correct_chain_id() {
+        let config = test_uniswap_config();
+        assert_eq!(config.chain_id, 1, "should be Ethereum mainnet");
+    }
+
+    #[test]
+    fn test_ethereum_address_format() {
+        let config = test_uniswap_config();
+        for (_pair, addr) in &config.pool_addresses {
+            assert!(
+                addr.starts_with("0x"),
+                "Ethereum address should start with 0x"
+            );
+            assert_eq!(addr.len(), 42, "Ethereum address should be 42 chars");
+            let hex_part = &addr[2..];
+            assert!(
+                hex_part.chars().all(|c| c.is_ascii_hexdigit()),
+                "address contains non-hex characters"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_signed_hex_zero() {
+        let hex = "0000000000000000000000000000000000000000000000000000000000000000";
+        let val = parse_signed_hex_to_f64(hex);
+        assert!((val - 0.0).abs() < 1e-10);
+    }
 }

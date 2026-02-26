@@ -384,4 +384,150 @@ mod tests {
         assert!((z_score(0.99) - 2.326).abs() < 1e-6);
         assert!((z_score(0.90) - 1.282).abs() < 1e-6);
     }
+
+    #[test]
+    fn test_parametric_var_zero_exposure() {
+        let var_calc = ParametricVar::new(dec!(0.60));
+        let portfolio = empty_portfolio_with_exposure(Decimal::ZERO);
+
+        let var = var_calc.compute_var(&portfolio, 0.95, 1.0);
+        assert_eq!(var, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_parametric_var_zero_volatility() {
+        let var_calc = ParametricVar::new(Decimal::ZERO);
+        let portfolio = empty_portfolio_with_exposure(dec!(100_000));
+
+        let var = var_calc.compute_var(&portfolio, 0.95, 1.0);
+        assert_eq!(var, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_parametric_var_set_volatility() {
+        let mut var_calc = ParametricVar::new(dec!(0.30));
+        let portfolio = empty_portfolio_with_exposure(dec!(100_000));
+
+        let var_before = var_calc.compute_var(&portfolio, 0.95, 1.0);
+
+        var_calc.set_volatility(dec!(0.60));
+        let var_after = var_calc.compute_var(&portfolio, 0.95, 1.0);
+
+        // Doubling volatility should double the VaR.
+        assert!(var_after > var_before);
+        let ratio = decimal_to_f64(var_after) / decimal_to_f64(var_before);
+        assert!((ratio - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_historical_var_all_positive_returns() {
+        let hist = HistoricalVar::new(100);
+        // All positive returns: 0.01, 0.02, ..., 0.50
+        for i in 1..=50 {
+            let ret = Decimal::from(i) / Decimal::from(100);
+            hist.add_return(ret);
+        }
+
+        let var = hist.compute_var(0.95).unwrap();
+        // VaR is -sorted[idx]. All returns are positive, so sorted values
+        // are all positive, meaning -sorted[idx] is negative (no loss).
+        assert!(
+            var < Decimal::ZERO,
+            "VaR should be negative (no loss) when all returns are positive, got {}",
+            var
+        );
+    }
+
+    #[test]
+    fn test_historical_var_all_negative_returns() {
+        let hist = HistoricalVar::new(100);
+        // All negative returns: -0.50, -0.49, ..., -0.01
+        for i in 1..=50 {
+            let ret = -Decimal::from(i) / Decimal::from(100);
+            hist.add_return(ret);
+        }
+
+        let var = hist.compute_var(0.95).unwrap();
+        // All returns are losses, so VaR should be positive.
+        assert!(
+            var > Decimal::ZERO,
+            "VaR should be positive when all returns are negative, got {}",
+            var
+        );
+    }
+
+    #[test]
+    fn test_historical_var_clear() {
+        let hist = HistoricalVar::new(100);
+        for i in 0..20 {
+            hist.add_return(Decimal::from(i));
+        }
+        assert_eq!(hist.observation_count(), 20);
+
+        hist.clear();
+        assert_eq!(hist.observation_count(), 0);
+        // After clear, compute should return None (not enough data).
+        assert!(hist.compute_var(0.95).is_none());
+    }
+
+    #[test]
+    fn test_historical_var_99_vs_95() {
+        let hist = HistoricalVar::new(200);
+        // Add 200 returns spanning a wide range: -0.10 to +0.09
+        for i in 0..200 {
+            let ret = Decimal::from(-100 + i as i64) / Decimal::from(1000);
+            hist.add_return(ret);
+        }
+
+        let var_95 = hist.compute_var(0.95).unwrap();
+        let var_99 = hist.compute_var(0.99).unwrap();
+        // 99% VaR should be >= 95% VaR (deeper into the tail).
+        assert!(
+            var_99 >= var_95,
+            "99% VaR ({}) should be >= 95% VaR ({})",
+            var_99,
+            var_95
+        );
+    }
+
+    #[test]
+    fn test_rolling_volatility_constant_prices() {
+        let vol = RollingVolatility::new(30, 252.0);
+        // All prices are exactly the same — zero returns.
+        for _ in 0..20 {
+            vol.add_price(dec!(100));
+        }
+
+        let result = vol.compute();
+        // With constant prices, log-returns are all zero, so volatility should
+        // be zero (or very near zero due to floating point).
+        assert!(result.is_some());
+        let annualized = result.unwrap();
+        assert!(
+            annualized < dec!(0.0001),
+            "constant prices should produce near-zero volatility, got {}",
+            annualized
+        );
+    }
+
+    #[test]
+    fn test_rolling_volatility_window_respects_max_size() {
+        let vol = RollingVolatility::new(10, 252.0);
+        // Add more prices than window_size.
+        for i in 0..25 {
+            vol.add_price(Decimal::from(100 + i));
+        }
+        assert_eq!(vol.price_count(), 10);
+    }
+
+    #[test]
+    fn test_z_score_unsupported_defaults_to_95() {
+        // An unsupported confidence level should fall back to 1.645 (95%).
+        let z = z_score(0.42);
+        assert!(
+            (z - 1.645).abs() < 1e-6,
+            "unsupported confidence should default to 1.645, got {}",
+            z
+        );
+    }
 }

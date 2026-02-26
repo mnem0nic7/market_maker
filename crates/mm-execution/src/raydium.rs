@@ -1,10 +1,16 @@
 //! Raydium (Solana DEX) execution connector.
 //!
+//! **Status: Experimental / Incomplete**
+//!
+//! This connector provides the structural framework for Raydium integration
+//! but transaction signing and submission are not yet implemented. Orders will
+//! return simulated/placeholder signatures. Do NOT use in production with real funds.
+//!
+//! # Approach
+//!
 //! Implements [`ExecutionConnector`] for executing swaps on the Raydium AMM
 //! via Solana JSON-RPC. Unlike traditional CEX connectors, DEX "orders" are
 //! atomic blockchain transactions — there is no concept of resting limit orders.
-//!
-//! # Approach
 //!
 //! - **Submit order (swap)**: Constructs a Raydium AMM swap instruction and
 //!   submits it via `sendTransaction` JSON-RPC. The instruction includes:
@@ -764,6 +770,8 @@ impl ExecutionConnector for RaydiumExecutionConnector {
     }
 
     async fn submit_order(&self, order: &NewOrder) -> MmResult<String> {
+        warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
+
         if !self.connected.load(Ordering::SeqCst) {
             return Err(MmError::Exchange {
                 exchange: Exchange::Raydium,
@@ -849,6 +857,7 @@ impl ExecutionConnector for RaydiumExecutionConnector {
     }
 
     async fn cancel_order(&self, cancel: &CancelOrder) -> MmResult<()> {
+        warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
         // Solana transactions are atomic — once submitted, they either confirm
         // or expire. There is no way to cancel a pending transaction.
         info!(
@@ -926,5 +935,236 @@ impl ExecutionConnector for RaydiumExecutionConnector {
 
     fn is_connected(&self) -> bool {
         self.connected.load(Ordering::SeqCst)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create a minimal test config.
+    fn test_config() -> RaydiumExecutionConfig {
+        RaydiumExecutionConfig {
+            rpc_http_url: "https://api.mainnet-beta.solana.com".into(),
+            wallet_address: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU".into(),
+            keypair_path: "/tmp/test-keypair.json".into(),
+            pool_addresses: HashMap::from([(
+                "SOL/USDC".to_string(),
+                "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2".to_string(),
+            )]),
+            token_decimals: HashMap::from([("SOL".to_string(), 9), ("USDC".to_string(), 6)]),
+            slippage_bps: DEFAULT_SLIPPAGE_BPS,
+        }
+    }
+
+    #[test]
+    fn test_config_defaults_are_sensible() {
+        let config = test_config();
+        assert_eq!(
+            config.slippage_bps, 50,
+            "default slippage should be 50 bps (0.5%)"
+        );
+        assert!(
+            config.pool_addresses.contains_key("SOL/USDC"),
+            "should have SOL/USDC pool configured"
+        );
+        assert_eq!(
+            config.token_decimals.get("SOL").copied(),
+            Some(9),
+            "SOL should have 9 decimals"
+        );
+        assert_eq!(
+            config.token_decimals.get("USDC").copied(),
+            Some(6),
+            "USDC should have 6 decimals"
+        );
+    }
+
+    #[test]
+    fn test_default_slippage_bps() {
+        assert_eq!(default_slippage_bps(), 50);
+    }
+
+    #[test]
+    fn test_connector_reports_correct_exchange() {
+        let config = test_config();
+        let connector = RaydiumExecutionConnector::new(config);
+        assert_eq!(connector.exchange(), Exchange::Raydium);
+    }
+
+    #[test]
+    fn test_connector_starts_disconnected() {
+        let config = test_config();
+        let connector = RaydiumExecutionConnector::new(config);
+        assert!(
+            !connector.is_connected(),
+            "connector should start disconnected"
+        );
+    }
+
+    #[test]
+    fn test_connector_has_no_pending_transactions_initially() {
+        let config = test_config();
+        let connector = RaydiumExecutionConnector::new(config);
+        // The pending_txs Arc<Mutex<Vec>> should be empty.
+        let pending = connector.pending_txs.try_lock().unwrap();
+        assert!(
+            pending.is_empty(),
+            "should have no pending transactions initially"
+        );
+    }
+
+    #[test]
+    fn test_solana_program_id_constants() {
+        // Raydium AMM V4 program ID should be a valid base58 Solana address.
+        assert_eq!(
+            RAYDIUM_AMM_PROGRAM_ID,
+            "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
+        );
+
+        // SPL Token program ID.
+        assert_eq!(
+            SPL_TOKEN_PROGRAM_ID,
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        );
+
+        // System program ID is all ones in base58.
+        assert_eq!(SYSTEM_PROGRAM_ID, "11111111111111111111111111111111");
+
+        // Serum DEX program ID.
+        assert_eq!(
+            SERUM_PROGRAM_ID,
+            "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX"
+        );
+    }
+
+    #[test]
+    fn test_solana_address_format_base58() {
+        // Wallet address and pool addresses should be valid base58 strings.
+        let config = test_config();
+        let wallet = &config.wallet_address;
+
+        // Base58 characters are: 123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz
+        // (no 0, O, I, l)
+        let base58_chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        for c in wallet.chars() {
+            assert!(
+                base58_chars.contains(c),
+                "wallet address contains non-base58 character: '{}'",
+                c
+            );
+        }
+
+        // Solana addresses are 32-44 characters in base58.
+        assert!(
+            wallet.len() >= 32 && wallet.len() <= 44,
+            "Solana address length should be 32-44 chars, got {}",
+            wallet.len()
+        );
+
+        // Pool addresses should also be valid base58.
+        for (pair, addr) in &config.pool_addresses {
+            for c in addr.chars() {
+                assert!(
+                    base58_chars.contains(c),
+                    "pool address for {} contains non-base58 character: '{}'",
+                    pair,
+                    c
+                );
+            }
+            assert!(
+                addr.len() >= 32 && addr.len() <= 44,
+                "pool address for {} has unexpected length: {}",
+                pair,
+                addr.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_known_mint_to_ticker_mappings() {
+        assert_eq!(
+            RaydiumExecutionConnector::known_mint_to_ticker(
+                "So11111111111111111111111111111111111111112"
+            ),
+            Some("SOL")
+        );
+        assert_eq!(
+            RaydiumExecutionConnector::known_mint_to_ticker(
+                "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+            ),
+            Some("USDC")
+        );
+        assert_eq!(
+            RaydiumExecutionConnector::known_mint_to_ticker(
+                "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+            ),
+            Some("USDT")
+        );
+        assert_eq!(
+            RaydiumExecutionConnector::known_mint_to_ticker(
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+            ),
+            Some("BONK")
+        );
+        assert_eq!(
+            RaydiumExecutionConnector::known_mint_to_ticker(
+                "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"
+            ),
+            Some("JUP")
+        );
+        // Unknown mint should return None.
+        assert_eq!(
+            RaydiumExecutionConnector::known_mint_to_ticker("UnknownMintAddress123"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_symbol_canonical_format() {
+        // DEX symbols use the same canonical "BASE/QUOTE" format.
+        let symbol = Symbol::new("SOL", "USDC");
+        assert_eq!(symbol.canonical(), "SOL/USDC");
+
+        let symbol2 = Symbol::new("RAY", "USDT");
+        assert_eq!(symbol2.canonical(), "RAY/USDT");
+    }
+
+    #[test]
+    fn test_config_serialization_roundtrip() {
+        let config = test_config();
+        let json = serde_json::to_string(&config).expect("should serialize");
+        let deserialized: RaydiumExecutionConfig =
+            serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(deserialized.rpc_http_url, config.rpc_http_url);
+        assert_eq!(deserialized.wallet_address, config.wallet_address);
+        assert_eq!(deserialized.slippage_bps, config.slippage_bps);
+        assert_eq!(deserialized.pool_addresses, config.pool_addresses);
+        assert_eq!(deserialized.token_decimals, config.token_decimals);
+    }
+
+    #[test]
+    fn test_config_default_slippage_on_deserialize() {
+        // When slippage_bps is absent from JSON, it should default to 50.
+        let json = r#"{
+            "rpc_http_url": "https://api.mainnet-beta.solana.com",
+            "wallet_address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+            "keypair_path": "/tmp/test.json",
+            "pool_addresses": {},
+            "token_decimals": {}
+        }"#;
+        let config: RaydiumExecutionConfig =
+            serde_json::from_str(json).expect("should deserialize");
+        assert_eq!(config.slippage_bps, DEFAULT_SLIPPAGE_BPS);
+    }
+
+    #[test]
+    fn test_tx_poll_constants() {
+        assert_eq!(TX_POLL_INTERVAL_SECS, 2);
+        assert_eq!(MAX_TX_POLLS, 30);
     }
 }
