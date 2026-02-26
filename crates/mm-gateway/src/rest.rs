@@ -1291,6 +1291,154 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
+    // --- Kill switch tests ---
+
+    #[tokio::test]
+    async fn test_kill_switch_activate_returns_ok() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/risk/kill-switch")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_kill_switch_reset_returns_ok() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/risk/kill-switch")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // --- Portfolio risk tests ---
+
+    #[tokio::test]
+    async fn test_portfolio_risk_returns_data() {
+        let state = ApiState::new();
+        {
+            let mut risk = state.portfolio_risk.write().await;
+            *risk = Some(PortfolioRisk {
+                total_var_95: rust_decimal::Decimal::new(1000, 2),
+                total_var_99: rust_decimal::Decimal::new(1500, 2),
+                net_exposure: rust_decimal::Decimal::new(5000, 2),
+                gross_exposure: rust_decimal::Decimal::new(10000, 2),
+                max_drawdown: rust_decimal::Decimal::new(200, 2),
+                daily_pnl: rust_decimal::Decimal::new(50, 2),
+                positions: vec![],
+                timestamp: Utc::now(),
+            });
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/portfolio/risk")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_portfolio_risk_not_found_when_empty() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/portfolio/risk")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- Strategy metrics tests ---
+
+    #[tokio::test]
+    async fn test_strategy_metrics_returns_data() {
+        let state = ApiState::new();
+        {
+            let mut metrics = state.strategy_metrics.write().await;
+            metrics.insert(
+                "metrics-test-1".to_string(),
+                StrategyMetrics {
+                    strategy_id: "metrics-test-1".to_string(),
+                    realized_pnl: rust_decimal::Decimal::new(500, 2),
+                    unrealized_pnl: rust_decimal::Decimal::new(100, 2),
+                    total_fills: 10,
+                    total_orders_placed: 20,
+                    total_orders_cancelled: 5,
+                    total_orders_rejected: 1,
+                    avg_spread_captured_bps: rust_decimal::Decimal::new(15, 1),
+                    volume_traded: rust_decimal::Decimal::new(100000, 2),
+                    uptime_secs: 3600,
+                    last_fill_at: Some(Utc::now()),
+                },
+            );
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/strategies/metrics-test-1/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_strategy_metrics_not_found() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/strategies/nonexistent/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
     // --- AI Assistant tests ---
 
     #[tokio::test]
