@@ -8,11 +8,12 @@ mod config;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -490,6 +491,11 @@ async fn main() -> Result<()> {
                     obs.insert(key.clone(), book.clone());
                 }
 
+                // Record WebSocket connectivity metric (receiving books = connected).
+                metrics.websocket_connected
+                    .with_label_values(&[&book.exchange.to_string()])
+                    .set(1.0);
+
                 // Broadcast market data tick to WebSocket dashboard clients.
                 if let (Some(bid), Some(ask)) = (book.best_bid(), book.best_ask()) {
                     let mid = (bid.price + ask.price) / Decimal::from(2);
@@ -498,6 +504,12 @@ async fn main() -> Result<()> {
                     } else {
                         Decimal::ZERO
                     };
+
+                    // Record order book spread metric.
+                    metrics.order_book_spread_bps
+                        .with_label_values(&[&book.exchange.to_string(), &book.symbol.canonical()])
+                        .set(spread_bps.to_f64().unwrap_or(0.0));
+
                     let tick_msg = ServerMessage::MarketDataTick {
                         exchange: book.exchange,
                         symbol: book.symbol.clone(),
@@ -538,6 +550,7 @@ async fn main() -> Result<()> {
                     event_publisher.as_ref(),
                     &mut strategy_metrics_tracker,
                     &pnl_limit_check,
+                    &metrics,
                 ).await;
             }
 
@@ -548,9 +561,11 @@ async fn main() -> Result<()> {
 
                 // Check kill switch — if active, do not tick strategies.
                 if kill_switch.is_active() {
+                    metrics.kill_switch_active.set(1.0);
                     debug!("kill switch active, skipping strategy tick");
                     continue;
                 }
+                metrics.kill_switch_active.set(0.0);
 
                 // Build portfolio risk snapshot for risk checks.
                 let pos_snapshot = positions.read().await;
@@ -615,6 +630,7 @@ async fn main() -> Result<()> {
 
                     // Update gateway state.
                     *api_state.kill_switch_active.lock().await = true;
+                    metrics.kill_switch_active.set(1.0);
 
                     continue;
                 }
@@ -664,8 +680,13 @@ async fn main() -> Result<()> {
                             timestamp: Utc::now(),
                         };
 
-                        // Run strategies.
+                        // Run strategies and measure tick duration.
+                        let tick_start = Instant::now();
                         let actions = strategy_engine_shared.lock().await.tick(&snapshot);
+                        let tick_elapsed = tick_start.elapsed();
+                        metrics.strategy_tick_duration
+                            .with_label_values(&[&format!("{}:{}", exchange, symbol.canonical())])
+                            .observe(tick_elapsed.as_secs_f64());
 
                         if actions.is_empty() {
                             continue;
@@ -686,8 +707,17 @@ async fn main() -> Result<()> {
                                         .evaluate_order(new_order, &portfolio_risk)
                                         .await;
 
+                                    let exchange_label = new_order.exchange.to_string();
+                                    let side_label = new_order.side.to_string().to_lowercase();
+
                                     match risk_result {
                                         RiskAction::Allow => {
+                                            metrics.risk_checks_total
+                                                .with_label_values(&["risk_engine", "allow"])
+                                                .inc();
+                                            metrics.orders_total
+                                                .with_label_values(&[&exchange_label, &side_label, "submitted"])
+                                                .inc();
                                             strategy_metrics_tracker.on_order_placed(&new_order.strategy_id);
                                             Some(action)
                                         }
@@ -696,6 +726,12 @@ async fn main() -> Result<()> {
                                                 reason = %reason,
                                                 "order rejected by risk engine"
                                             );
+                                            metrics.risk_checks_total
+                                                .with_label_values(&["risk_engine", "reject"])
+                                                .inc();
+                                            metrics.orders_total
+                                                .with_label_values(&[&exchange_label, &side_label, "rejected"])
+                                                .inc();
                                             strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
                                             None
                                         }
@@ -705,6 +741,12 @@ async fn main() -> Result<()> {
                                                     reason = %reason,
                                                     "risk engine reduced order to zero quantity, dropping"
                                                 );
+                                                metrics.risk_checks_total
+                                                    .with_label_values(&["risk_engine", "reject"])
+                                                    .inc();
+                                                metrics.orders_total
+                                                    .with_label_values(&[&exchange_label, &side_label, "rejected"])
+                                                    .inc();
                                                 strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
                                                 None
                                             } else {
@@ -713,6 +755,12 @@ async fn main() -> Result<()> {
                                                     reason = %reason,
                                                     "risk engine reducing order size"
                                                 );
+                                                metrics.risk_checks_total
+                                                    .with_label_values(&["risk_engine", "reduce_size"])
+                                                    .inc();
+                                                metrics.orders_total
+                                                    .with_label_values(&[&exchange_label, &side_label, "submitted"])
+                                                    .inc();
                                                 strategy_metrics_tracker.on_order_placed(&new_order.strategy_id);
                                                 let mut reduced = new_order.clone();
                                                 reduced.quantity = max_quantity;
@@ -724,6 +772,13 @@ async fn main() -> Result<()> {
                                                 reason = %reason,
                                                 "risk check triggered kill switch"
                                             );
+                                            metrics.risk_checks_total
+                                                .with_label_values(&["risk_engine", "kill_switch"])
+                                                .inc();
+                                            metrics.orders_total
+                                                .with_label_values(&[&exchange_label, &side_label, "rejected"])
+                                                .inc();
+                                            metrics.kill_switch_active.set(1.0);
                                             strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
                                             let activation = kill_switch.activate(
                                                 mm_risk::KillSwitchTrigger::MaxDailyLoss {
@@ -912,6 +967,7 @@ async fn handle_order_update(
     event_publisher: Option<&Arc<dyn EventPublisher>>,
     strategy_metrics_tracker: &mut StrategyMetricsTracker,
     pnl_limit_check: &Arc<PnlLimitCheck>,
+    metrics: &Arc<MetricsRegistry>,
 ) {
     // Apply the update to the OMS.
     let updated_order = order_manager.update_order(update);
@@ -945,6 +1001,15 @@ async fn handle_order_update(
                     timestamp: update.timestamp,
                 };
 
+                // Record fill metrics.
+                {
+                    let exchange_label = update.exchange.to_string();
+                    let side_label = order.side.to_string().to_lowercase();
+                    metrics.fills_total
+                        .with_label_values(&[&exchange_label, &side_label])
+                        .inc();
+                }
+
                 // Update position.
                 {
                     let mut pos_map = positions.write().await;
@@ -953,6 +1018,21 @@ async fn handle_order_update(
                         .or_insert_with(|| Position::new(update.exchange, update.symbol.clone()));
                     let prev_realized = pos.realized_pnl;
                     pos.update_on_fill(&fill);
+
+                    // Record position and PnL metrics after the fill.
+                    {
+                        let exchange_label = update.exchange.to_string();
+                        let symbol_label = update.symbol.canonical();
+                        metrics.position_quantity
+                            .with_label_values(&[&exchange_label, &symbol_label])
+                            .set(pos.quantity.to_f64().unwrap_or(0.0));
+                        metrics.pnl_realized
+                            .with_label_values(&[&exchange_label, &symbol_label])
+                            .set(pos.realized_pnl.to_f64().unwrap_or(0.0));
+                        metrics.pnl_unrealized
+                            .with_label_values(&[&exchange_label, &symbol_label])
+                            .set(pos.unrealized_pnl.to_f64().unwrap_or(0.0));
+                    }
 
                     // Accumulate the realized PnL delta from this fill.
                     let realized_delta = pos.realized_pnl - prev_realized;
