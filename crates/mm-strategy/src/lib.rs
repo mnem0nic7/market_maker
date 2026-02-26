@@ -9,7 +9,7 @@ pub mod twap;
 pub mod vwap;
 
 pub use avellaneda::{AvellanedaStoikovConfig, AvellanedaStoikovStrategy};
-pub use engine::StrategyEngine;
+pub use engine::{StrategyEngine, StrategyParamUpdate};
 pub use grid::{GridConfig, GridStrategy, GridType};
 pub use mean_reversion::{MeanReversionConfig, MeanReversionStrategy};
 pub use momentum::{MomentumConfig, MomentumStrategy};

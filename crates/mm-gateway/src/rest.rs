@@ -1,12 +1,14 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
     extract::{Path, Query, Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use chrono::Utc;
@@ -19,13 +21,110 @@ use mm_core::{
     Side, StrategyConfig, StrategyMetrics, TimeInForce,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{info, warn};
 
 use mm_core::traits::Strategy;
-use mm_strategy::{build_strategy_from_config, StrategyEngine};
+use mm_strategy::{build_strategy_from_config, StrategyEngine, StrategyParamUpdate};
 
 use crate::assistant::{build_system_context, AssistantConfig, ChatRequest, ClaudeClient};
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+/// Configuration for the API rate limiter.
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    /// Maximum sustained requests per second.
+    pub requests_per_second: u32,
+    /// Burst capacity -- the maximum number of tokens in the bucket.
+    pub burst_size: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_second: 100,
+            burst_size: 50,
+        }
+    }
+}
+
+/// A simple token-bucket rate limiter.
+///
+/// Tokens are replenished at `refill_rate` per second up to `max_tokens`.
+/// Each request consumes one token. When the bucket is empty, requests are
+/// rejected with HTTP 429.
+pub struct RateLimiter {
+    /// Current number of available tokens (scaled by 1000 to avoid floats).
+    tokens: AtomicU64,
+    /// Maximum tokens the bucket can hold (scaled by 1000).
+    max_tokens: u64,
+    /// Last time tokens were refilled.
+    last_refill: std::sync::Mutex<Instant>,
+    /// Tokens added per second (scaled by 1000).
+    refill_rate: u64,
+}
+
+/// Scale factor -- we store tokens * SCALE to get sub-token precision without floats.
+const TOKEN_SCALE: u64 = 1000;
+
+impl RateLimiter {
+    /// Create a new rate limiter.
+    ///
+    /// - `requests_per_second` -- sustained refill rate.
+    /// - `burst_size` -- maximum bucket capacity (and initial fill level).
+    pub fn new(requests_per_second: u32, burst_size: u32) -> Self {
+        let max_tokens = (burst_size as u64) * TOKEN_SCALE;
+        Self {
+            tokens: AtomicU64::new(max_tokens),
+            max_tokens,
+            last_refill: std::sync::Mutex::new(Instant::now()),
+            refill_rate: (requests_per_second as u64) * TOKEN_SCALE,
+        }
+    }
+
+    /// Create a rate limiter from a [`RateLimitConfig`].
+    pub fn from_config(config: &RateLimitConfig) -> Self {
+        Self::new(config.requests_per_second, config.burst_size)
+    }
+
+    /// Try to consume one token. Returns `true` if the request is allowed.
+    pub fn try_acquire(&self) -> bool {
+        self.refill();
+        // Attempt to subtract one token (TOKEN_SCALE units).
+        loop {
+            let current = self.tokens.load(Ordering::Relaxed);
+            if current < TOKEN_SCALE {
+                return false;
+            }
+            match self.tokens.compare_exchange_weak(
+                current,
+                current - TOKEN_SCALE,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(_) => continue, // CAS retry
+            }
+        }
+    }
+
+    /// Refill tokens based on elapsed time since the last refill.
+    fn refill(&self) {
+        let mut last = self.last_refill.lock().expect("rate limiter lock poisoned");
+        let now = Instant::now();
+        let elapsed = now.duration_since(*last);
+        let new_tokens = (elapsed.as_secs_f64() * self.refill_rate as f64) as u64;
+        if new_tokens > 0 {
+            *last = now;
+            let current = self.tokens.load(Ordering::Relaxed);
+            let updated = (current + new_tokens).min(self.max_tokens);
+            self.tokens.store(updated, Ordering::Release);
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // API Response wrapper
@@ -155,6 +254,18 @@ pub struct ApiState {
     /// Shared strategy engine — when set, start/stop handlers register real
     /// strategy instances with the trading loop's engine.
     pub strategy_engine: Option<Arc<Mutex<StrategyEngine>>>,
+
+    /// Optional rate limiter. When set, all non-exempt endpoints are subject
+    /// to token-bucket rate limiting. `None` means no rate limiting.
+    pub rate_limit: Option<Arc<RateLimiter>>,
+
+    /// Sender for hot-updating running strategy parameters. When set, the API
+    /// can push parameter updates to the strategy engine without stop/restart.
+    pub param_update_tx: Option<mpsc::Sender<StrategyParamUpdate>>,
+
+    /// Timestamp when the API state was created — used by the health endpoint
+    /// to report uptime.
+    pub startup_time: std::time::Instant,
 }
 
 /// State of an optimisation job (running, completed, or failed).
@@ -191,6 +302,9 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
+            rate_limit: None,
+            param_update_tx: None,
+            startup_time: std::time::Instant::now(),
         })
     }
 
@@ -210,6 +324,9 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
+            rate_limit: None,
+            param_update_tx: None,
+            startup_time: std::time::Instant::now(),
         })
     }
 
@@ -232,6 +349,9 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: Some(engine),
+            rate_limit: None,
+            param_update_tx: None,
+            startup_time: std::time::Instant::now(),
         })
     }
 
@@ -256,6 +376,37 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: Some(engine),
+            rate_limit: None,
+            param_update_tx: None,
+            startup_time: std::time::Instant::now(),
+        })
+    }
+
+    /// Create state with all components: metrics, strategy engine, kill switch,
+    /// and a parameter update sender for hot-updating running strategies.
+    pub fn with_param_updates(
+        metrics: Arc<MetricsRegistry>,
+        engine: Arc<Mutex<StrategyEngine>>,
+        kill_switch: Arc<mm_risk::KillSwitch>,
+        param_update_tx: mpsc::Sender<StrategyParamUpdate>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            positions: RwLock::new(Vec::new()),
+            orders: RwLock::new(Vec::new()),
+            portfolio_risk: RwLock::new(None),
+            strategies: RwLock::new(Vec::new()),
+            order_books: RwLock::new(HashMap::new()),
+            kill_switch_active: Mutex::new(false),
+            kill_switch: Some(kill_switch),
+            metrics: Some(metrics),
+            strategy_metrics: RwLock::new(HashMap::new()),
+            optimization_jobs: RwLock::new(HashMap::new()),
+            backtest_results: RwLock::new(Vec::new()),
+            assistant_config: AssistantConfig::from_env(),
+            strategy_engine: Some(engine),
+            rate_limit: None,
+            param_update_tx: Some(param_update_tx),
+            startup_time: std::time::Instant::now(),
         })
     }
 }
@@ -276,6 +427,9 @@ impl Default for ApiState {
             backtest_results: RwLock::new(Vec::new()),
             assistant_config: AssistantConfig::from_env(),
             strategy_engine: None,
+            rate_limit: None,
+            param_update_tx: None,
+            startup_time: std::time::Instant::now(),
         }
     }
 }
@@ -320,6 +474,48 @@ async fn metrics_middleware(
 }
 
 // ---------------------------------------------------------------------------
+// Rate-limit middleware
+// ---------------------------------------------------------------------------
+
+/// Axum middleware that enforces a global token-bucket rate limit.
+///
+/// Health checks (`/api/v1/health`) and the metrics endpoint (`/metrics`) are
+/// exempt so that monitoring infrastructure is never throttled.
+///
+/// When the rate limit is exceeded the middleware returns `429 Too Many Requests`
+/// with a `Retry-After: 1` header.  If no rate limiter is configured on the
+/// state, all requests pass through unconditionally.
+async fn rate_limit_middleware(
+    State(state): State<Arc<ApiState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if let Some(ref limiter) = state.rate_limit {
+        let path = req.uri().path();
+        // Exempt health and metrics endpoints from rate limiting.
+        let exempt = path == "/api/v1/health" || path == "/metrics";
+
+        if !exempt && !limiter.try_acquire() {
+            warn!(
+                path = %req.uri().path(),
+                method = %req.method(),
+                "rate limit exceeded — returning 429"
+            );
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "1")],
+                Json(serde_json::json!({
+                    "status": "error",
+                    "error": "rate limit exceeded"
+                })),
+            )
+                .into_response();
+        }
+    }
+    next.run(req).await
+}
+
+// ---------------------------------------------------------------------------
 // Router construction
 // ---------------------------------------------------------------------------
 
@@ -353,6 +549,10 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/strategies/{id}/start", post(start_strategy))
         .route("/api/v1/strategies/{id}/stop", post(stop_strategy))
         .route("/api/v1/strategies/{id}/metrics", get(get_strategy_metrics))
+        .route(
+            "/api/v1/strategies/{id}/params",
+            patch(patch_strategy_params),
+        )
         // Risk controls
         .route("/api/v1/risk/kill-switch", post(activate_kill_switch))
         .route("/api/v1/risk/kill-switch", delete(reset_kill_switch))
@@ -376,6 +576,12 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             metrics_middleware,
+        ))
+        // Rate-limit middleware — rejects excess requests with 429.
+        // Applied after metrics so that rejected requests are still counted.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
         ))
         .with_state(state)
 }
@@ -435,18 +641,135 @@ fn default_time_in_force() -> String {
 // Health check
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct HealthResponse {
-    status: &'static str,
+    status: String,
+    uptime_secs: u64,
     timestamp: String,
     version: &'static str,
+    components: ComponentHealth,
 }
 
-async fn health_check() -> impl IntoResponse {
+#[derive(Debug, Serialize)]
+struct ComponentHealth {
+    strategy_engine: ComponentStatus,
+    order_manager: ComponentStatus,
+    market_data: ComponentStatus,
+    risk_engine: ComponentStatus,
+}
+
+#[derive(Debug, Serialize)]
+struct ComponentStatus {
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<String>,
+}
+
+async fn health_check(State(state): State<Arc<ApiState>>) -> impl IntoResponse {
+    let uptime_secs = state.startup_time.elapsed().as_secs();
+
+    // Strategy engine: "up" if at least one strategy is registered.
+    let strategies = state.strategies.read().await;
+    let strategy_count = strategies.len();
+    let strategy_engine = if strategy_count > 0 {
+        ComponentStatus {
+            status: "up".to_string(),
+            details: Some(format!("{} strategies loaded", strategy_count)),
+        }
+    } else {
+        ComponentStatus {
+            status: "up".to_string(),
+            details: Some("no strategies loaded".to_string()),
+        }
+    };
+    drop(strategies);
+
+    // Order manager: "up" if the read lock succeeds (it always will in
+    // practice, but this proves the RwLock is not poisoned).
+    let order_manager = match state.orders.try_read() {
+        Ok(orders) => {
+            let count = orders.len();
+            ComponentStatus {
+                status: "up".to_string(),
+                details: Some(format!("{} orders tracked", count)),
+            }
+        }
+        Err(_) => ComponentStatus {
+            status: "degraded".to_string(),
+            details: Some("unable to read orders lock".to_string()),
+        },
+    };
+
+    // Market data: "up" if at least one order book snapshot exists.
+    let market_data = match state.order_books.try_read() {
+        Ok(books) => {
+            if books.is_empty() {
+                ComponentStatus {
+                    status: "up".to_string(),
+                    details: Some("no market data yet".to_string()),
+                }
+            } else {
+                ComponentStatus {
+                    status: "up".to_string(),
+                    details: Some(format!("{} books active", books.len())),
+                }
+            }
+        }
+        Err(_) => ComponentStatus {
+            status: "degraded".to_string(),
+            details: Some("unable to read order books lock".to_string()),
+        },
+    };
+
+    // Risk engine: "up" unless the kill switch is triggered.
+    let kill_switch_triggered = if let Some(ref ks) = state.kill_switch {
+        ks.is_active()
+    } else {
+        *state.kill_switch_active.lock().await
+    };
+
+    let risk_engine = if kill_switch_triggered {
+        ComponentStatus {
+            status: "degraded".to_string(),
+            details: Some("kill switch is active".to_string()),
+        }
+    } else {
+        ComponentStatus {
+            status: "up".to_string(),
+            details: None,
+        }
+    };
+
+    // Determine overall status.
+    let component_statuses = [
+        &strategy_engine.status,
+        &order_manager.status,
+        &market_data.status,
+        &risk_engine.status,
+    ];
+
+    let any_down = component_statuses.iter().any(|s| s.as_str() == "down");
+    let any_degraded = component_statuses.iter().any(|s| s.as_str() == "degraded");
+
+    let overall = if any_down {
+        "unhealthy"
+    } else if any_degraded {
+        "degraded"
+    } else {
+        "healthy"
+    };
+
     ApiResponse::ok(HealthResponse {
-        status: "healthy",
+        status: overall.to_string(),
+        uptime_secs,
         timestamp: Utc::now().to_rfc3339(),
         version: env!("CARGO_PKG_VERSION"),
+        components: ComponentHealth {
+            strategy_engine,
+            order_manager,
+            market_data,
+            risk_engine,
+        },
     })
 }
 
@@ -829,17 +1152,40 @@ async fn update_strategy(
 
     match strategy {
         Some(s) => {
-            if s.running {
-                return Err(ApiResponse::conflict(format!(
-                    "cannot update running strategy: {id}. Stop it first."
-                )));
-            }
             // Preserve the original strategy_id regardless of what was sent in the body
             let mut new_config = config;
             new_config.strategy_id = id.clone();
-            s.config = new_config;
-            info!(strategy_id = %id, "strategy updated via API");
-            Ok(ApiResponse::ok_message(format!("strategy {id} updated")))
+
+            // Validate the new params by attempting to build a strategy instance.
+            if let Err(e) = build_strategy_from_config(&new_config) {
+                return Err(ApiResponse::bad_request(format!(
+                    "invalid strategy params: {e}"
+                )));
+            }
+
+            if s.running {
+                // Hot-update: send the new config through the param update channel
+                // so the strategy engine can replace the strategy instance.
+                if let Some(ref tx) = state.param_update_tx {
+                    let update = StrategyParamUpdate {
+                        strategy_id: id.clone(),
+                        config: new_config.clone(),
+                    };
+                    tx.try_send(update).map_err(|e| {
+                        ApiResponse::error(format!("failed to send param update: {e}"))
+                    })?;
+                }
+                s.config = new_config;
+                info!(strategy_id = %id, "running strategy hot-updated via API");
+                Ok(ApiResponse::ok_message(format!(
+                    "strategy {id} updated (hot-applied to running instance)"
+                )))
+            } else {
+                // Strategy is stopped — just update the stored config.
+                s.config = new_config;
+                info!(strategy_id = %id, "strategy updated via API");
+                Ok(ApiResponse::ok_message(format!("strategy {id} updated")))
+            }
         }
         None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
     }
@@ -863,6 +1209,67 @@ async fn delete_strategy(
             strategies.remove(idx);
             info!(strategy_id = %id, "strategy deleted via API");
             Ok(ApiResponse::ok_message(format!("strategy {id} deleted")))
+        }
+        None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
+    }
+}
+
+/// Partial parameter update -- merges the provided JSON fields with the
+/// existing strategy params and applies the result. Works on both running
+/// and stopped strategies.
+async fn patch_strategy_params(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(partial_params): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    if !partial_params.is_object() {
+        return Err(ApiResponse::bad_request(
+            "request body must be a JSON object",
+        ));
+    }
+
+    let mut strategies = state.strategies.write().await;
+
+    let strategy = strategies.iter_mut().find(|s| s.config.strategy_id == id);
+
+    match strategy {
+        Some(s) => {
+            // Merge the partial params into the existing params.
+            let mut merged = s.config.params.clone();
+            if let (Some(existing), Some(patch)) =
+                (merged.as_object_mut(), partial_params.as_object())
+            {
+                for (k, v) in patch {
+                    existing.insert(k.clone(), v.clone());
+                }
+            }
+
+            // Build a candidate config with merged params for validation.
+            let mut candidate_config = s.config.clone();
+            candidate_config.params = merged;
+
+            if let Err(e) = build_strategy_from_config(&candidate_config) {
+                return Err(ApiResponse::bad_request(format!(
+                    "invalid strategy params after merge: {e}"
+                )));
+            }
+
+            if s.running {
+                // Hot-update via the param update channel.
+                if let Some(ref tx) = state.param_update_tx {
+                    let update = StrategyParamUpdate {
+                        strategy_id: id.clone(),
+                        config: candidate_config.clone(),
+                    };
+                    tx.try_send(update).map_err(|e| {
+                        ApiResponse::error(format!("failed to send param update: {e}"))
+                    })?;
+                }
+            }
+
+            s.config = candidate_config;
+            info!(strategy_id = %id, "strategy params patched via API");
+            Ok(ApiResponse::ok(s.config.clone()))
         }
         None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
     }
@@ -1417,6 +1824,36 @@ mod tests {
         }
     }
 
+    /// Helper to build a StrategyConfig with valid spread params for tests
+    /// that exercise the validation path.
+    fn test_valid_strategy_config(id: &str) -> StrategyConfig {
+        StrategyConfig {
+            strategy_id: id.to_string(),
+            strategy_type: "spread".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            enabled: true,
+            params: serde_json::json!({
+                "spread_bps": "10",
+                "order_size": "0.1",
+                "num_levels": 1,
+                "refresh_interval_ms": 1000,
+                "min_spread_bps": "1",
+                "reprice_threshold_bps": "100"
+            }),
+        }
+    }
+
+    /// Helper to build a running StrategyStatus with valid params.
+    fn test_valid_running_strategy_status(id: &str) -> StrategyStatus {
+        StrategyStatus {
+            config: test_valid_strategy_config(id),
+            running: true,
+            started_at: Some(Utc::now()),
+            stopped_at: None,
+        }
+    }
+
     /// Helper to build a StrategyStatus (not running).
     fn test_strategy_status(id: &str) -> StrategyStatus {
         StrategyStatus {
@@ -1453,6 +1890,104 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_health_returns_healthy_with_defaults() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["data"]["status"], "healthy");
+        assert_eq!(
+            json["data"]["components"]["strategy_engine"]["status"],
+            "up"
+        );
+        assert_eq!(json["data"]["components"]["order_manager"]["status"], "up");
+        assert_eq!(json["data"]["components"]["market_data"]["status"], "up");
+        assert_eq!(json["data"]["components"]["risk_engine"]["status"], "up");
+    }
+
+    #[tokio::test]
+    async fn test_health_returns_degraded_when_kill_switch_active() {
+        let state = ApiState::new();
+        {
+            *state.kill_switch_active.lock().await = true;
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["data"]["status"], "degraded");
+        assert_eq!(
+            json["data"]["components"]["risk_engine"]["status"],
+            "degraded"
+        );
+        assert_eq!(
+            json["data"]["components"]["risk_engine"]["details"],
+            "kill switch is active"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_health_includes_uptime() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        // Small sleep to ensure uptime > 0.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        // uptime_secs should be present and non-negative.
+        assert!(json["data"]["uptime_secs"].is_u64());
     }
 
     #[tokio::test]
@@ -1576,8 +2111,7 @@ mod tests {
         }
         let app = rest_router(state);
 
-        let mut config = test_strategy_config("update-1");
-        config.strategy_type = "grid".to_string();
+        let config = test_valid_strategy_config("update-1");
         let body = serde_json::to_string(&config).unwrap();
 
         let resp = app
@@ -1596,7 +2130,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_running_strategy_returns_409() {
+    async fn update_running_strategy_succeeds() {
         let state = ApiState::new();
         {
             let mut strategies = state.strategies.write().await;
@@ -1604,7 +2138,7 @@ mod tests {
         }
         let app = rest_router(state);
 
-        let config = test_strategy_config("running-update-1");
+        let config = test_valid_strategy_config("running-update-1");
         let body = serde_json::to_string(&config).unwrap();
 
         let resp = app
@@ -1619,7 +2153,35 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn update_strategy_validates_params() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_running_strategy_status("validate-update-1"));
+        }
+        let app = rest_router(state);
+
+        // Empty params should fail validation for spread strategy.
+        let config = test_strategy_config("validate-update-1");
+        let body = serde_json::to_string(&config).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/strategies/validate-update-1")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -2605,5 +3167,241 @@ mod tests {
 
         metrics.ws_active_connections.dec();
         assert_eq!(metrics.ws_active_connections.get(), 0);
+    }
+
+    // --- Rate limiter unit tests ---
+
+    #[test]
+    fn test_rate_limiter_allows_within_limit() {
+        // Burst of 5 -- should allow 5 requests immediately.
+        let limiter = RateLimiter::new(10, 5);
+        for i in 0..5 {
+            assert!(
+                limiter.try_acquire(),
+                "request {} should be allowed within burst",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_rejects_over_limit() {
+        // Burst of 3 -- 4th request should be rejected.
+        let limiter = RateLimiter::new(10, 3);
+        assert!(limiter.try_acquire());
+        assert!(limiter.try_acquire());
+        assert!(limiter.try_acquire());
+        assert!(
+            !limiter.try_acquire(),
+            "4th request should be rejected when burst is 3"
+        );
+    }
+
+    #[test]
+    fn test_rate_limiter_refills_over_time() {
+        // Burst of 1, refill at 1000/sec -- exhaust it, wait, then retry.
+        let limiter = RateLimiter::new(1000, 1);
+        assert!(limiter.try_acquire());
+        assert!(!limiter.try_acquire(), "should be empty after 1 request");
+
+        // Sleep long enough for at least 1 token to refill.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        assert!(
+            limiter.try_acquire(),
+            "should allow a request after refill interval"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_health_exempt_from_rate_limit() {
+        // Create state with a rate limiter that has burst = 0 (rejects everything).
+        let state = Arc::new(ApiState {
+            rate_limit: Some(Arc::new(RateLimiter::new(0, 0))),
+            ..Default::default()
+        });
+        let app = rest_router(state);
+
+        // Health endpoint should still return 200.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_returns_429() {
+        // Create state with a rate limiter that has burst = 1.
+        let state = Arc::new(ApiState {
+            rate_limit: Some(Arc::new(RateLimiter::new(1, 1))),
+            ..Default::default()
+        });
+
+        // First request should succeed.
+        let app = rest_router(state.clone());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/positions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Second request should be rate-limited (429).
+        let app = rest_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/positions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Verify Retry-After header is present.
+        let retry_after = resp.headers().get("retry-after").unwrap();
+        assert_eq!(retry_after, "1");
+    }
+
+    // --- Hot parameter update tests ---
+
+    #[tokio::test]
+    async fn test_patch_strategy_params_merges() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(StrategyStatus {
+                config: test_valid_strategy_config("patch-merge-1"),
+                running: false,
+                started_at: None,
+                stopped_at: None,
+            });
+        }
+        let app = rest_router(state);
+
+        // PATCH with just the spread_bps field.
+        let patch_body = serde_json::json!({ "spread_bps": "20" });
+        let body = serde_json::to_string(&patch_body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/v1/strategies/patch-merge-1/params")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Verify the response contains the merged config with the new value.
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+        // The spread_bps should be the new value.
+        assert_eq!(json["data"]["params"]["spread_bps"], "20");
+        // The order_size should still have its original value.
+        assert_eq!(json["data"]["params"]["order_size"], "0.1");
+    }
+
+    #[tokio::test]
+    async fn test_patch_nonexistent_strategy_returns_404() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let patch_body = serde_json::json!({ "spread_bps": "20" });
+        let body = serde_json::to_string(&patch_body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/v1/strategies/no-such/params")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_patch_invalid_params_returns_400() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(StrategyStatus {
+                config: test_valid_strategy_config("patch-invalid-1"),
+                running: false,
+                started_at: None,
+                stopped_at: None,
+            });
+        }
+        let app = rest_router(state);
+
+        // Set spread_bps to a negative value which should fail validation.
+        let patch_body = serde_json::json!({ "spread_bps": "-10" });
+        let body = serde_json::to_string(&patch_body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/v1/strategies/patch-invalid-1/params")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_patch_running_strategy_succeeds() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_valid_running_strategy_status("patch-running-1"));
+        }
+        let app = rest_router(state);
+
+        // PATCH a running strategy — should succeed.
+        let patch_body = serde_json::json!({ "spread_bps": "15" });
+        let body = serde_json::to_string(&patch_body).unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/v1/strategies/patch-running-1/params")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }

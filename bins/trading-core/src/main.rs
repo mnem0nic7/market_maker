@@ -45,7 +45,7 @@ use mm_risk::{
     PnlLimitConfig, PositionLimitCheck, PositionLimitConfig, RateLimitCheck, RateLimitConfig,
     RiskEngine,
 };
-use mm_strategy::{build_strategy_from_config, StrategyEngine};
+use mm_strategy::{build_strategy_from_config, StrategyEngine, StrategyParamUpdate};
 
 use crate::config::{parse_exchange, parse_symbol};
 
@@ -56,6 +56,7 @@ use crate::config::{parse_exchange, parse_symbol};
 const BOOK_CHANNEL_CAPACITY: usize = 4096;
 const TRADE_CHANNEL_CAPACITY: usize = 4096;
 const ORDER_UPDATE_CHANNEL_CAPACITY: usize = 4096;
+const PARAM_UPDATE_CHANNEL_CAPACITY: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Shared position state
@@ -383,6 +384,16 @@ async fn main() -> Result<()> {
         );
     } // drop lock on strategy_engine_shared
 
+    // ----- (h1) Create parameter update channel for hot-updating strategies -----
+    let (param_update_tx, param_update_rx) =
+        mpsc::channel::<StrategyParamUpdate>(PARAM_UPDATE_CHANNEL_CAPACITY);
+
+    // Attach the receiver to the strategy engine so it can poll for updates.
+    {
+        let mut engine = strategy_engine_shared.lock().await;
+        engine.set_param_update_receiver(param_update_rx);
+    }
+
     // ----- (h2) Initialize strategy metrics tracker -----
     let mut strategy_metrics_tracker = StrategyMetricsTracker::new();
     for strat_cfg in &cfg.strategies {
@@ -426,10 +437,11 @@ async fn main() -> Result<()> {
 
     // ----- (j) Initialize gateway (REST API + WebSocket) -----
     let metrics = Arc::new(MetricsRegistry::new());
-    let api_state = ApiState::with_engine_and_kill_switch(
+    let api_state = ApiState::with_param_updates(
         Arc::clone(&metrics),
         Arc::clone(&strategy_engine_shared),
         Arc::clone(&kill_switch),
+        param_update_tx,
     );
 
     // Create the broadcaster externally so the main loop can publish events.
@@ -442,6 +454,7 @@ async fn main() -> Result<()> {
             port: cfg.gateway.port,
             cors_origins: cfg.gateway.cors_origins.clone(),
             api_token: cfg.gateway.api_token.clone(),
+            rate_limit_rps: Some(100),
         };
         let gw_state = Arc::clone(&api_state);
         let gw_broadcaster = Arc::clone(&broadcaster);
@@ -581,6 +594,9 @@ async fn main() -> Result<()> {
                     continue;
                 }
                 metrics.kill_switch_active.set(0.0);
+
+                // Apply any pending strategy parameter updates (hot-update).
+                strategy_engine_shared.lock().await.try_apply_updates();
 
                 // Build portfolio risk snapshot for risk checks.
                 let pos_snapshot = positions.read().await;

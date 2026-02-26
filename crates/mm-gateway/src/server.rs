@@ -13,7 +13,7 @@ use tower_http::{
 };
 use tracing::{info, warn};
 
-use crate::rest::{self, ApiState};
+use crate::rest::{self, ApiState, RateLimitConfig, RateLimiter};
 use crate::ws::{self, DashboardBroadcaster};
 
 // ---------------------------------------------------------------------------
@@ -38,6 +38,15 @@ pub struct GatewayConfig {
     /// Health and WebSocket endpoints are exempt from authentication.
     #[serde(default)]
     pub api_token: Option<String>,
+
+    /// Maximum API requests per second (global rate limit).
+    /// `None` or `0` disables rate limiting. Defaults to 100.
+    #[serde(default = "default_rate_limit_rps")]
+    pub rate_limit_rps: Option<u32>,
+}
+
+fn default_rate_limit_rps() -> Option<u32> {
+    Some(100)
 }
 
 impl Default for GatewayConfig {
@@ -50,6 +59,7 @@ impl Default for GatewayConfig {
                 "http://localhost:3000".to_string(),
             ],
             api_token: None,
+            rate_limit_rps: Some(100),
         }
     }
 }
@@ -77,7 +87,23 @@ impl GatewayServer {
     ///
     /// The `DashboardBroadcaster` is created internally — callers can obtain
     /// its sender via [`GatewayServer::broadcaster`].
-    pub fn new(config: GatewayConfig, state: Arc<ApiState>) -> Self {
+    pub fn new(config: GatewayConfig, mut state: Arc<ApiState>) -> Self {
+        // Configure rate limiting from the gateway config before the Arc is
+        // shared with handler tasks.  `Arc::get_mut` is safe here because this
+        // is the only reference at construction time.
+        if let Some(rps) = config.rate_limit_rps {
+            if rps > 0 {
+                if let Some(inner) = Arc::get_mut(&mut state) {
+                    let limiter = RateLimiter::from_config(&RateLimitConfig {
+                        requests_per_second: rps,
+                        burst_size: rps / 2, // default burst = half RPS
+                    });
+                    inner.rate_limit = Some(Arc::new(limiter));
+                    info!(rps = rps, burst = rps / 2, "API rate limiting enabled");
+                }
+            }
+        }
+
         let broadcaster = DashboardBroadcaster::new(
             4096, // mpsc buffer
             1024, // broadcast capacity

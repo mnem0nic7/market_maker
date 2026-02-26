@@ -25,6 +25,7 @@ futures = { workspace = true }
 bytes = { workspace = true }
 reqwest = { workspace = true }
 async-stream = { workspace = true }
+governor = "0.6"
 prometheus = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
