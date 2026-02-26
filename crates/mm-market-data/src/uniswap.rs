@@ -196,7 +196,7 @@ impl MarketDataConnector for UniswapConnector {
                             .collect();
 
                         let subscribe_msg = build_eth_subscribe_logs(&pool_addresses);
-                        if let Err(e) = write.send(Message::Text(subscribe_msg.into())).await {
+                        if let Err(e) = write.send(Message::Text(subscribe_msg)).await {
                             error!(error = %e, "Uniswap: failed to send eth_subscribe");
                             ws_connected.store(false, Ordering::SeqCst);
                             continue;

@@ -501,7 +501,7 @@ async fn handle_book_data(
         })
         .collect();
 
-    let sequence = data.checksum as u64;
+    let sequence = data.checksum;
 
     let _ = msg_type; // Both snapshot and update are forwarded; the local
                        // book manager distinguishes them based on context.
@@ -575,7 +575,7 @@ where
         message: format!("failed to serialize message: {}", e),
     })?;
 
-    sink.send(Message::Text(json.into())).await.map_err(|e| MmError::Exchange {
+    sink.send(Message::Text(json)).await.map_err(|e| MmError::Exchange {
         exchange: Exchange::Kraken,
         message: format!("failed to send WebSocket message: {}", e),
     })?;

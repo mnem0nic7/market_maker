@@ -957,6 +957,7 @@ async fn shutdown_signal() {
 
 /// Process an incoming order update: update the OMS, notify the strategy
 /// engine, and update positions on fills.
+#[allow(clippy::too_many_arguments)]
 async fn handle_order_update(
     update: &OrderUpdate,
     order_manager: &Arc<OrderManager>,

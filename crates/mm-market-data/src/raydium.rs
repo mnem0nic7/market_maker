@@ -243,7 +243,7 @@ impl MarketDataConnector for RaydiumConnector {
                             });
 
                             let msg_text = subscribe_msg.to_string();
-                            if let Err(e) = write.send(Message::Text(msg_text.into())).await {
+                            if let Err(e) = write.send(Message::Text(msg_text)).await {
                                 error!(
                                     error = %e,
                                     pool = %pool.pool_address,

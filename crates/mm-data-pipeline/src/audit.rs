@@ -269,7 +269,7 @@ impl AuditLogger {
             prev_hash = current_hash;
             stats.events_processed.fetch_add(1, Ordering::Relaxed);
 
-            if seq % 1000 == 0 {
+            if seq.is_multiple_of(1000) {
                 info!(
                     seq,
                     events = stats.events_processed(),

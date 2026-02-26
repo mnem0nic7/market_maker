@@ -484,6 +484,7 @@ impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceI
 // Enum conversion helpers
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::result_large_err)]
 fn map_exchange(pb_exchange: i32) -> Result<mm_core::Exchange, Status> {
     match pb_exchange {
         1 => Ok(mm_core::Exchange::Binance),

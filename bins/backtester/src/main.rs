@@ -423,8 +423,8 @@ fn run_optimization(cfg: &CliConfig, events: Vec<MarketEvent>) -> Result<()> {
     println!("============================================================");
     println!();
     println!(
-        "{:<5} {:<12} {:<12} {:<12} {:<12} {:<12}  {}",
-        "Rank", "Metric", "Net PnL", "Sharpe", "Win Rate", "Max DD", "Params"
+        "{:<5} {:<12} {:<12} {:<12} {:<12} {:<12}  Params",
+        "Rank", "Metric", "Net PnL", "Sharpe", "Win Rate", "Max DD"
     );
     println!("{}", "-".repeat(100));
 
@@ -708,7 +708,7 @@ fn generate_sample_data(num_events: usize) -> Vec<MarketEvent> {
         // Alternate between order book snapshots and trade events
         if i % 3 == 0 && i > 0 {
             // Trade event
-            let trade_side = if seed % 2 == 0 { Side::Buy } else { Side::Sell };
+            let trade_side = if seed.is_multiple_of(2) { Side::Buy } else { Side::Sell };
             let trade_price = if trade_side == Side::Buy {
                 best_ask
             } else {

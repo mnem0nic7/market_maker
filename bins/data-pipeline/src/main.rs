@@ -198,7 +198,7 @@ async fn run_persistence_consumer(
             );
         }
 
-        if count % 1000 == 0 {
+        if count.is_multiple_of(1000) {
             info!(events_persisted = count, "persistence consumer checkpoint");
         }
     }
