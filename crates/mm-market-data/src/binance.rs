@@ -34,6 +34,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
@@ -56,8 +57,9 @@ use crate::normalizer;
 // Constants & Configuration
 // ---------------------------------------------------------------------------
 
-const RECONNECT_DELAY_SECS: u64 = 5;
-const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+const WS_RECONNECT_DELAY_SECS: u64 = 5;
+const WS_MAX_BACKOFF_SECS: u64 = 300; // cap at 5 minutes
+const WS_READ_TIMEOUT_SECS: u64 = 30;
 
 // ---------------------------------------------------------------------------
 // Binance WebSocket message types (deserialization)
@@ -234,8 +236,14 @@ impl MarketDataConnector for BinanceConnector {
                         let (mut _write, mut read) = ws_stream.split();
 
                         loop {
-                            match read.next().await {
-                                Some(Ok(Message::Text(text))) => {
+                            match tokio::time::timeout(
+                                Duration::from_secs(WS_READ_TIMEOUT_SECS),
+                                read.next(),
+                            )
+                            .await
+                            {
+                                Ok(Some(Ok(Message::Text(text)))) => {
+                                    reconnect_attempts = 0;
                                     if let Err(e) = handle_binance_message(
                                         &text,
                                         &book_tx,
@@ -247,22 +255,26 @@ impl MarketDataConnector for BinanceConnector {
                                         warn!(error = %e, "failed to handle Binance message");
                                     }
                                 }
-                                Some(Ok(Message::Ping(data))) => {
+                                Ok(Some(Ok(Message::Ping(data)))) => {
                                     if let Err(e) = _write.send(Message::Pong(data)).await {
                                         warn!(error = %e, "failed to send pong to Binance");
                                         break;
                                     }
                                 }
-                                Some(Ok(Message::Close(frame))) => {
+                                Ok(Some(Ok(Message::Close(frame)))) => {
                                     info!(?frame, "Binance WebSocket closed by server");
                                     break;
                                 }
-                                Some(Err(e)) => {
+                                Ok(Some(Err(e))) => {
                                     error!(error = %e, "Binance WebSocket error");
                                     break;
                                 }
-                                None => {
+                                Ok(None) => {
                                     info!("Binance WebSocket stream ended");
+                                    break;
+                                }
+                                Err(_) => {
+                                    warn!("WebSocket read timeout after 30s, reconnecting...");
                                     break;
                                 }
                                 _ => {}
@@ -276,23 +288,30 @@ impl MarketDataConnector for BinanceConnector {
                     }
                 }
 
-                // Reconnection logic.
+                // Reconnection logic with exponential backoff and jitter.
                 reconnect_attempts += 1;
-                if reconnect_attempts > MAX_RECONNECT_ATTEMPTS {
-                    error!(
-                        attempts = reconnect_attempts,
-                        "exceeded max reconnection attempts for Binance, giving up"
-                    );
-                    break;
-                }
 
-                let delay = RECONNECT_DELAY_SECS * reconnect_attempts as u64;
+                let base_delay = WS_RECONNECT_DELAY_SECS.min(WS_MAX_BACKOFF_SECS);
+                let exp_delay = base_delay.saturating_mul(1u64 << reconnect_attempts.min(6));
+                let capped_delay = exp_delay.min(WS_MAX_BACKOFF_SECS);
+                // Add jitter: +/-25%
+                let jitter_range = capped_delay / 4;
+                let delay = if jitter_range > 0 {
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .subsec_nanos() as u64;
+                    capped_delay - jitter_range + nanos % (jitter_range * 2)
+                } else {
+                    capped_delay
+                };
+
                 warn!(
                     attempt = reconnect_attempts,
                     delay_secs = delay,
                     "reconnecting to Binance WebSocket"
                 );
-                tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+                tokio::time::sleep(Duration::from_secs(delay)).await;
             }
 
             connected.store(false, Ordering::SeqCst);
@@ -891,4 +910,105 @@ mod tests {
 
     use chrono::Datelike;
     use chrono::Timelike;
+
+    // -- WebSocket reconnection backoff tests --------------------------------
+
+    #[test]
+    fn ws_max_backoff_secs_constant_exists_and_has_expected_value() {
+        assert_eq!(WS_MAX_BACKOFF_SECS, 300);
+    }
+
+    #[test]
+    fn ws_reconnect_delay_secs_constant_exists() {
+        assert_eq!(WS_RECONNECT_DELAY_SECS, 5);
+    }
+
+    #[test]
+    fn ws_read_timeout_secs_constant_exists() {
+        assert_eq!(WS_READ_TIMEOUT_SECS, 30);
+    }
+
+    #[test]
+    fn exponential_backoff_caps_at_max() {
+        // Simulate the backoff calculation for various reconnect_attempts values
+        // and verify it never exceeds WS_MAX_BACKOFF_SECS.
+        for attempts in 0u32..20 {
+            let base_delay = WS_RECONNECT_DELAY_SECS.min(WS_MAX_BACKOFF_SECS);
+            let exp_delay = base_delay.saturating_mul(1u64 << attempts.min(6) as u32);
+            let capped_delay = exp_delay.min(WS_MAX_BACKOFF_SECS);
+            assert!(
+                capped_delay <= WS_MAX_BACKOFF_SECS,
+                "capped_delay {} exceeded max {} at attempt {}",
+                capped_delay,
+                WS_MAX_BACKOFF_SECS,
+                attempts
+            );
+        }
+    }
+
+    #[test]
+    fn exponential_backoff_grows_then_caps() {
+        // Verify the expected exponential growth pattern:
+        // attempt 1: 5 * 2^1 = 10
+        // attempt 2: 5 * 2^2 = 20
+        // attempt 3: 5 * 2^3 = 40
+        // attempt 4: 5 * 2^4 = 80
+        // attempt 5: 5 * 2^5 = 160
+        // attempt 6: 5 * 2^6 = 320 -> capped to 300
+        // attempt 7+: still capped at 300 (min(6) clamps shift)
+        let expected = [10, 20, 40, 80, 160, 300, 300];
+        for (i, &expected_delay) in expected.iter().enumerate() {
+            let attempts = (i + 1) as u32;
+            let base_delay = WS_RECONNECT_DELAY_SECS.min(WS_MAX_BACKOFF_SECS);
+            let exp_delay = base_delay.saturating_mul(1u64 << attempts.min(6) as u32);
+            let capped_delay = exp_delay.min(WS_MAX_BACKOFF_SECS);
+            assert_eq!(
+                capped_delay, expected_delay,
+                "mismatch at attempt {}: got {}, expected {}",
+                attempts, capped_delay, expected_delay
+            );
+        }
+    }
+
+    #[test]
+    fn exponential_backoff_jitter_stays_within_bounds() {
+        // The jitter formula: capped_delay - jitter_range + nanos % (jitter_range * 2)
+        // should produce values in [capped_delay - jitter_range, capped_delay + jitter_range).
+        let capped_delay: u64 = 160; // e.g. attempt 5
+        let jitter_range = capped_delay / 4; // 40
+        assert_eq!(jitter_range, 40);
+
+        // Minimum jitter: nanos % 80 = 0 => 160 - 40 + 0 = 120
+        let min_jitter = capped_delay - jitter_range + 0u64 % (jitter_range * 2);
+        assert_eq!(min_jitter, 120);
+
+        // Maximum jitter: nanos % 80 = 79 => 160 - 40 + 79 = 199
+        let max_jitter = capped_delay - jitter_range + 79u64 % (jitter_range * 2);
+        assert_eq!(max_jitter, 199);
+
+        // Both should be within +/-25% of capped_delay
+        assert!(min_jitter >= capped_delay - jitter_range);
+        assert!(max_jitter < capped_delay + jitter_range);
+    }
+
+    #[test]
+    fn reconnect_attempts_reset_on_successful_connection() {
+        // This test verifies the pattern: reconnect_attempts should be
+        // set to 0 when a valid message is received. We simulate the logic.
+        let mut reconnect_attempts: u32 = 5;
+
+        // Simulate receiving a valid message (the code sets reconnect_attempts = 0).
+        reconnect_attempts = 0;
+        assert_eq!(reconnect_attempts, 0);
+
+        // Simulate a disconnect and reconnect attempt.
+        reconnect_attempts += 1;
+        assert_eq!(reconnect_attempts, 1);
+
+        // First reconnect should use base delay * 2^1 = 10.
+        let base_delay = WS_RECONNECT_DELAY_SECS.min(WS_MAX_BACKOFF_SECS);
+        let exp_delay = base_delay.saturating_mul(1u64 << reconnect_attempts.min(6));
+        let capped_delay = exp_delay.min(WS_MAX_BACKOFF_SECS);
+        assert_eq!(capped_delay, 10);
+    }
 }

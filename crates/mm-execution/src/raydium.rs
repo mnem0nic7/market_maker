@@ -772,102 +772,132 @@ impl ExecutionConnector for RaydiumExecutionConnector {
         Ok(())
     }
 
+    #[allow(unused_variables)]
     async fn submit_order(&self, order: &NewOrder) -> MmResult<String> {
-        warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
+        // SAFETY GATE: This DEX connector uses placeholder transaction signing
+        // that would submit malformed transactions and lose real funds. Block all
+        // order submission until a production-grade signing implementation exists.
+        return Err(MmError::DexNotReady {
+            exchange: Exchange::Raydium,
+            message: "Raydium connector is experimental — transaction signing is not \
+                      production-ready. Submitting orders is disabled to prevent loss of funds."
+                .into(),
+        });
 
-        if !self.connected.load(Ordering::SeqCst) {
-            return Err(MmError::Exchange {
-                exchange: Exchange::Raydium,
-                message: "not connected".into(),
-            });
-        }
+        // ---- Original implementation below (retained for future completion) ----
 
-        let client_order_id = Uuid::new_v4().to_string();
-
-        info!(
-            client_order_id = %client_order_id,
-            symbol = %order.symbol,
-            side = %order.side,
-            quantity = %order.quantity,
-            price = ?order.price,
-            "Raydium: submitting swap order"
-        );
-
-        // Send initial "Submitted" status.
-        if let Some(ref tx) = self.update_tx {
-            let update = OrderUpdate {
-                client_order_id: client_order_id.clone(),
-                exchange_order_id: None,
-                exchange: Exchange::Raydium,
-                symbol: order.symbol.clone(),
-                status: OrderStatus::Submitted,
-                filled_quantity: Decimal::ZERO,
-                remaining_quantity: order.quantity,
-                average_fill_price: Decimal::ZERO,
-                last_fill_price: None,
-                last_fill_quantity: None,
-                fee: None,
-                fee_currency: None,
-                timestamp: Utc::now(),
-            };
-            let _ = tx.send(update).await;
-        }
-
-        // Build and submit the swap transaction.
-        let signature = self.build_and_submit_swap(order).await?;
-
-        info!(
-            client_order_id = %client_order_id,
-            signature = %signature,
-            "Raydium: swap transaction submitted"
-        );
-
-        // Track the pending transaction for confirmation polling.
+        #[allow(unreachable_code, unused_variables)]
         {
-            let mut pending = self.pending_txs.lock().await;
-            pending.push(PendingTransaction {
-                signature: signature.clone(),
-                client_order_id: client_order_id.clone(),
-                symbol: order.symbol.clone(),
-                _side: order.side,
-                quantity: order.quantity,
-                expected_price: order.price,
-                polls: 0,
-            });
-        }
+            warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
 
-        // Send "New" status with the transaction signature.
-        if let Some(ref tx) = self.update_tx {
-            let update = OrderUpdate {
-                client_order_id: client_order_id.clone(),
-                exchange_order_id: Some(signature),
-                exchange: Exchange::Raydium,
-                symbol: order.symbol.clone(),
-                status: OrderStatus::New,
-                filled_quantity: Decimal::ZERO,
-                remaining_quantity: order.quantity,
-                average_fill_price: Decimal::ZERO,
-                last_fill_price: None,
-                last_fill_quantity: None,
-                fee: None,
-                fee_currency: None,
-                timestamp: Utc::now(),
-            };
-            let _ = tx.send(update).await;
-        }
+            if !self.connected.load(Ordering::SeqCst) {
+                return Err(MmError::Exchange {
+                    exchange: Exchange::Raydium,
+                    message: "not connected".into(),
+                });
+            }
 
-        Ok(client_order_id)
+            let client_order_id = Uuid::new_v4().to_string();
+
+            info!(
+                client_order_id = %client_order_id,
+                symbol = %order.symbol,
+                side = %order.side,
+                quantity = %order.quantity,
+                price = ?order.price,
+                "Raydium: submitting swap order"
+            );
+
+            // Send initial "Submitted" status.
+            if let Some(ref tx) = self.update_tx {
+                let update = OrderUpdate {
+                    client_order_id: client_order_id.clone(),
+                    exchange_order_id: None,
+                    exchange: Exchange::Raydium,
+                    symbol: order.symbol.clone(),
+                    status: OrderStatus::Submitted,
+                    filled_quantity: Decimal::ZERO,
+                    remaining_quantity: order.quantity,
+                    average_fill_price: Decimal::ZERO,
+                    last_fill_price: None,
+                    last_fill_quantity: None,
+                    fee: None,
+                    fee_currency: None,
+                    timestamp: Utc::now(),
+                };
+                let _ = tx.send(update).await;
+            }
+
+            // Build and submit the swap transaction.
+            let signature = self.build_and_submit_swap(order).await?;
+
+            info!(
+                client_order_id = %client_order_id,
+                signature = %signature,
+                "Raydium: swap transaction submitted"
+            );
+
+            // Track the pending transaction for confirmation polling.
+            {
+                let mut pending = self.pending_txs.lock().await;
+                pending.push(PendingTransaction {
+                    signature: signature.clone(),
+                    client_order_id: client_order_id.clone(),
+                    symbol: order.symbol.clone(),
+                    _side: order.side,
+                    quantity: order.quantity,
+                    expected_price: order.price,
+                    polls: 0,
+                });
+            }
+
+            // Send "New" status with the transaction signature.
+            if let Some(ref tx) = self.update_tx {
+                let update = OrderUpdate {
+                    client_order_id: client_order_id.clone(),
+                    exchange_order_id: Some(signature),
+                    exchange: Exchange::Raydium,
+                    symbol: order.symbol.clone(),
+                    status: OrderStatus::New,
+                    filled_quantity: Decimal::ZERO,
+                    remaining_quantity: order.quantity,
+                    average_fill_price: Decimal::ZERO,
+                    last_fill_price: None,
+                    last_fill_quantity: None,
+                    fee: None,
+                    fee_currency: None,
+                    timestamp: Utc::now(),
+                };
+                let _ = tx.send(update).await;
+            }
+
+            Ok(client_order_id)
+        } // end #[allow(unreachable_code)] block
     }
 
+    #[allow(unused_variables)]
     async fn cancel_order(&self, cancel: &CancelOrder) -> MmResult<()> {
-        warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
-        // Solana transactions are atomic — once submitted, they either confirm
-        // or expire. There is no way to cancel a pending transaction.
-        info!(
-            client_order_id = %cancel.client_order_id,
-            "Raydium: cancel_order is a no-op (Solana transactions are atomic)"
-        );
-        Ok(())
+        // SAFETY GATE: Block cancel_order for the same reason as submit_order.
+        return Err(MmError::DexNotReady {
+            exchange: Exchange::Raydium,
+            message: "Raydium connector is experimental — transaction signing is not \
+                      production-ready. Order operations are disabled to prevent loss of funds."
+                .into(),
+        });
+
+        // ---- Original implementation below (retained for future completion) ----
+
+        #[allow(unreachable_code, unused_variables)]
+        {
+            warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
+            // Solana transactions are atomic — once submitted, they either confirm
+            // or expire. There is no way to cancel a pending transaction.
+            info!(
+                client_order_id = %cancel.client_order_id,
+                "Raydium: cancel_order is a no-op (Solana transactions are atomic)"
+            );
+            Ok(())
+        } // end #[allow(unreachable_code)] block
     }
 
     async fn cancel_all_orders(&self, _request: &CancelAllOrders) -> MmResult<u32> {
@@ -948,6 +978,7 @@ impl ExecutionConnector for RaydiumExecutionConnector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mm_core::{OrderType, TimeInForce};
 
     /// Helper to create a minimal test config.
     fn test_config() -> RaydiumExecutionConfig {
@@ -1169,5 +1200,83 @@ mod tests {
     fn test_tx_poll_constants() {
         assert_eq!(TX_POLL_INTERVAL_SECS, 2);
         assert_eq!(MAX_TX_POLLS, 30);
+    }
+
+    // -------------------------------------------------------------------
+    // Safety gate tests: DEX connector must refuse to submit real orders
+    // -------------------------------------------------------------------
+
+    /// Helper to build a test NewOrder for Raydium.
+    fn test_order() -> NewOrder {
+        NewOrder {
+            exchange: Exchange::Raydium,
+            symbol: Symbol::new("SOL", "USDC"),
+            side: Side::Buy,
+            order_type: OrderType::Market,
+            time_in_force: TimeInForce::IOC,
+            price: None,
+            quantity: Decimal::ONE,
+            strategy_id: "test-strategy".into(),
+            reduce_only: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_order_returns_dex_not_ready_error() {
+        let config = test_config();
+        let connector = RaydiumExecutionConnector::new(config);
+        // submit_order must fail even without connecting first — the safety
+        // gate fires before any connectivity check.
+        let result = connector.submit_order(&test_order()).await;
+        assert!(
+            result.is_err(),
+            "submit_order should return an error, not submit a real transaction"
+        );
+        let err = result.unwrap_err();
+        match &err {
+            MmError::DexNotReady { exchange, message } => {
+                assert_eq!(*exchange, Exchange::Raydium);
+                assert!(
+                    message.contains("experimental"),
+                    "error message should mention the connector is experimental, got: {}",
+                    message
+                );
+                assert!(
+                    message.contains("production-ready"),
+                    "error message should mention production-readiness, got: {}",
+                    message
+                );
+            }
+            other => panic!("expected DexNotReady error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_order_returns_dex_not_ready_error() {
+        let config = test_config();
+        let connector = RaydiumExecutionConnector::new(config);
+        let cancel = CancelOrder {
+            exchange: Exchange::Raydium,
+            symbol: Symbol::new("SOL", "USDC"),
+            client_order_id: "test-order-123".into(),
+            exchange_order_id: Some("5abc123def".into()),
+        };
+        let result = connector.cancel_order(&cancel).await;
+        assert!(
+            result.is_err(),
+            "cancel_order should return an error, not attempt a real cancellation"
+        );
+        let err = result.unwrap_err();
+        match &err {
+            MmError::DexNotReady { exchange, message } => {
+                assert_eq!(*exchange, Exchange::Raydium);
+                assert!(
+                    message.contains("experimental"),
+                    "error message should mention the connector is experimental, got: {}",
+                    message
+                );
+            }
+            other => panic!("expected DexNotReady error, got: {:?}", other),
+        }
     }
 }

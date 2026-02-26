@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -53,7 +54,10 @@ pub struct ClaudeClient {
 impl ClaudeClient {
     pub fn new(config: AssistantConfig) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
             config,
         }
     }
