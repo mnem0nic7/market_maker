@@ -9,7 +9,7 @@
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use mm_core::{CancelOrder, Exchange, NewOrder, Order, OrderStatus, OrderUpdate, Position};
+use mm_core::{CancelOrder, Exchange, NewOrder, Order, OrderStatus, OrderUpdate, Position, Symbol};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
@@ -245,6 +245,23 @@ impl OrderManager {
         self.orders
             .iter()
             .filter(|r| r.value().status.is_active())
+            .map(|r| r.value().clone())
+            .collect()
+    }
+
+    /// Return active orders filtered to a specific exchange and symbol.
+    ///
+    /// This is more efficient than [`get_open_orders`](Self::get_open_orders)
+    /// followed by a caller-side filter because it avoids cloning orders for
+    /// irrelevant instruments — the filter is applied at the `DashMap` iteration
+    /// level before any clone occurs.
+    pub fn get_open_orders_for(&self, exchange: &Exchange, symbol: &Symbol) -> Vec<Order> {
+        self.orders
+            .iter()
+            .filter(|r| {
+                let o = r.value();
+                o.status.is_active() && o.exchange == *exchange && o.symbol == *symbol
+            })
             .map(|r| r.value().clone())
             .collect()
     }
@@ -936,5 +953,102 @@ mod tests {
         assert_eq!(recon.drift, Decimal::ZERO);
         assert_eq!(recon.drift_pct, Decimal::ZERO);
         assert!(recon.is_reconciled, "both zero should be reconciled");
+    }
+
+    // -----------------------------------------------------------------------
+    // Tests for get_open_orders_for (per-exchange+symbol filtering)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_get_open_orders_for_filters_by_exchange_and_symbol() {
+        let oms = OrderManager::new();
+
+        // Register orders on different exchanges and symbols.
+        let mut binance_btc = sample_new_order();
+        binance_btc.exchange = Exchange::Binance;
+        binance_btc.symbol = Symbol::new("BTC", "USDT");
+
+        let mut binance_eth = sample_new_order();
+        binance_eth.exchange = Exchange::Binance;
+        binance_eth.symbol = Symbol::new("ETH", "USDT");
+
+        let mut coinbase_btc = sample_new_order();
+        coinbase_btc.exchange = Exchange::Coinbase;
+        coinbase_btc.symbol = Symbol::new("BTC", "USDT");
+
+        let o1 = oms.register_order(&binance_btc);
+        let o2 = oms.register_order(&binance_eth);
+        let o3 = oms.register_order(&coinbase_btc);
+
+        // Move all to Submitted (an active state).
+        oms.mark_submitted(&o1.client_order_id);
+        oms.mark_submitted(&o2.client_order_id);
+        oms.mark_submitted(&o3.client_order_id);
+
+        // Filter for Binance + BTC/USDT — should return only o1.
+        let result = oms.get_open_orders_for(&Exchange::Binance, &Symbol::new("BTC", "USDT"));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].client_order_id, o1.client_order_id);
+
+        // Filter for Binance + ETH/USDT — should return only o2.
+        let result = oms.get_open_orders_for(&Exchange::Binance, &Symbol::new("ETH", "USDT"));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].client_order_id, o2.client_order_id);
+
+        // Filter for Coinbase + BTC/USDT — should return only o3.
+        let result = oms.get_open_orders_for(&Exchange::Coinbase, &Symbol::new("BTC", "USDT"));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].client_order_id, o3.client_order_id);
+    }
+
+    #[test]
+    fn test_get_open_orders_for_excludes_terminal_orders() {
+        let oms = OrderManager::new();
+
+        let o1 = oms.register_order(&sample_new_order());
+        let o2 = oms.register_order(&sample_new_order());
+
+        // Move both to Submitted (active).
+        oms.mark_submitted(&o1.client_order_id);
+        oms.mark_submitted(&o2.client_order_id);
+
+        // Cancel o1 — it should no longer appear.
+        let cancel_update = OrderUpdate {
+            client_order_id: o1.client_order_id.clone(),
+            exchange_order_id: None,
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::Cancelled,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: dec!(0.1),
+            average_fill_price: Decimal::ZERO,
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+        oms.update_order(&cancel_update);
+
+        let result = oms.get_open_orders_for(&Exchange::Binance, &Symbol::new("BTC", "USDT"));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].client_order_id, o2.client_order_id);
+    }
+
+    #[test]
+    fn test_get_open_orders_for_returns_empty_when_no_match() {
+        let oms = OrderManager::new();
+
+        // Register an order on Binance BTC/USDT.
+        let o = oms.register_order(&sample_new_order());
+        oms.mark_submitted(&o.client_order_id);
+
+        // Query for a different exchange — should be empty.
+        let result = oms.get_open_orders_for(&Exchange::Kraken, &Symbol::new("BTC", "USDT"));
+        assert!(result.is_empty());
+
+        // Query for a different symbol on the same exchange — should be empty.
+        let result = oms.get_open_orders_for(&Exchange::Binance, &Symbol::new("SOL", "USDT"));
+        assert!(result.is_empty());
     }
 }
