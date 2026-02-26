@@ -697,3 +697,310 @@ impl ExecutionConnector for KrakenExecutionConnector {
         self.connected.load(Ordering::SeqCst)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    /// Build a config with a valid base64 secret key for signature tests.
+    /// The secret "dGVzdC1zZWNyZXQ=" decodes to "test-secret".
+    fn test_config() -> KrakenExecutionConfig {
+        KrakenExecutionConfig {
+            api_key: "test-api-key".into(),
+            secret_key: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"test-secret-bytes-here!!",
+            ),
+            base_url: default_base_url(),
+            ws_url: default_ws_url(),
+        }
+    }
+
+    fn test_connector() -> KrakenExecutionConnector {
+        KrakenExecutionConnector::new(test_config())
+    }
+
+    // -- Config defaults --
+
+    #[test]
+    fn test_config_defaults() {
+        let cfg = test_config();
+        assert_eq!(cfg.base_url, "https://api.kraken.com");
+        assert_eq!(cfg.ws_url, "wss://ws-auth.kraken.com/v2");
+    }
+
+    #[test]
+    fn test_config_deserialization_defaults() {
+        let json = r#"{"api_key":"k","secret_key":"s"}"#;
+        let cfg: KrakenExecutionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.base_url, "https://api.kraken.com");
+        assert_eq!(cfg.ws_url, "wss://ws-auth.kraken.com/v2");
+    }
+
+    // -- Nonce --
+
+    #[test]
+    fn test_nonce_monotonically_increasing() {
+        let connector = test_connector();
+        let n1 = connector.next_nonce();
+        let n2 = connector.next_nonce();
+        let n3 = connector.next_nonce();
+        assert!(n2 > n1, "nonce must increase: {} > {}", n2, n1);
+        assert!(n3 > n2, "nonce must increase: {} > {}", n3, n2);
+    }
+
+    #[test]
+    fn test_nonce_increments_by_one() {
+        let connector = test_connector();
+        let n1 = connector.next_nonce();
+        let n2 = connector.next_nonce();
+        assert_eq!(n2, n1 + 1);
+    }
+
+    // -- Signature --
+
+    #[test]
+    fn test_sign_produces_base64_string() {
+        let connector = test_connector();
+        let sig = connector
+            .sign(
+                "/0/private/AddOrder",
+                1234567890,
+                "nonce=1234567890&pair=BTCUSD",
+            )
+            .unwrap();
+
+        // HMAC-SHA512 = 64 bytes -> base64 encodes to 88 characters (with padding).
+        assert_eq!(
+            sig.len(),
+            88,
+            "HMAC-SHA512 base64 output should be 88 chars"
+        );
+        // Verify it is valid base64.
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &sig);
+        assert!(decoded.is_ok(), "signature must be valid base64");
+        assert_eq!(
+            decoded.unwrap().len(),
+            64,
+            "decoded HMAC-SHA512 must be 64 bytes"
+        );
+    }
+
+    #[test]
+    fn test_sign_deterministic() {
+        let connector = test_connector();
+        let a = connector
+            .sign("/0/private/Balance", 100, "nonce=100")
+            .unwrap();
+        let b = connector
+            .sign("/0/private/Balance", 100, "nonce=100")
+            .unwrap();
+        assert_eq!(a, b, "same inputs must produce same signature");
+    }
+
+    #[test]
+    fn test_sign_different_nonce_different_signature() {
+        let connector = test_connector();
+        let a = connector
+            .sign("/0/private/Balance", 100, "nonce=100")
+            .unwrap();
+        let b = connector
+            .sign("/0/private/Balance", 101, "nonce=101")
+            .unwrap();
+        assert_ne!(a, b, "different nonces must produce different signatures");
+    }
+
+    #[test]
+    fn test_sign_invalid_base64_secret_errors() {
+        let config = KrakenExecutionConfig {
+            api_key: "key".into(),
+            secret_key: "!!!not-valid-base64!!!".into(),
+            base_url: default_base_url(),
+            ws_url: default_ws_url(),
+        };
+        let connector = KrakenExecutionConnector::new(config);
+        let result = connector.sign("/path", 1, "nonce=1");
+        assert!(result.is_err(), "invalid base64 secret should fail");
+    }
+
+    // -- Symbol conversion --
+
+    #[test]
+    fn test_to_kraken_pair() {
+        let sym = Symbol::new("BTC", "USD");
+        assert_eq!(KrakenExecutionConnector::to_kraken_pair(&sym), "BTCUSD");
+    }
+
+    #[test]
+    fn test_from_kraken_pair_standard() {
+        // The function strips a leading 'X' if present, then matches known quote suffixes.
+        let cases = vec![
+            // No X prefix: "BTCUSDT" -> base="BTC", quote="USDT"
+            ("BTCUSDT", "BTC", "USDT"),
+            // No X prefix: "ETHUSD" -> base="ETH", quote="USD"
+            ("ETHUSD", "ETH", "USD"),
+            // X prefix: "XETHEUR" -> strip X -> "ETHEUR" -> suffix EUR -> base="ETH"
+            ("XETHEUR", "ETH", "EUR"),
+        ];
+        for (input, expected_base, expected_quote) in cases {
+            let sym = KrakenExecutionConnector::from_kraken_pair(input);
+            assert_eq!(sym.base, expected_base, "base mismatch for {}", input);
+            assert_eq!(sym.quote, expected_quote, "quote mismatch for {}", input);
+        }
+    }
+
+    #[test]
+    fn test_from_kraken_pair_xxbt_normalization() {
+        // "XXBTZUSD" -> strip leading X -> "XBTZUSD" -> suffix "ZUSD" -> base="XBT"
+        // -> base normalization: "XBT" -> "BTC", quote normalization: "ZUSD" -> "USD"
+        let sym = KrakenExecutionConnector::from_kraken_pair("XXBTZUSD");
+        assert_eq!(sym.base, "BTC", "XXBT base should normalize to BTC");
+        assert_eq!(sym.quote, "USD", "ZUSD quote should normalize to USD");
+    }
+
+    #[test]
+    fn test_from_kraken_pair_unknown_fallback() {
+        let sym = KrakenExecutionConnector::from_kraken_pair("UNKNOWN");
+        assert_eq!(sym.quote, "UNKNOWN");
+    }
+
+    // -- Side / OrderType mapping --
+
+    #[test]
+    fn test_side_to_str() {
+        assert_eq!(KrakenExecutionConnector::side_to_str(Side::Buy), "buy");
+        assert_eq!(KrakenExecutionConnector::side_to_str(Side::Sell), "sell");
+    }
+
+    #[test]
+    fn test_order_type_to_str() {
+        assert_eq!(
+            KrakenExecutionConnector::order_type_to_str(mm_core::OrderType::Market),
+            "market"
+        );
+        assert_eq!(
+            KrakenExecutionConnector::order_type_to_str(mm_core::OrderType::Limit),
+            "limit"
+        );
+        assert_eq!(
+            KrakenExecutionConnector::order_type_to_str(mm_core::OrderType::StopLimit),
+            "stop-loss-limit"
+        );
+        assert_eq!(
+            KrakenExecutionConnector::order_type_to_str(mm_core::OrderType::StopMarket),
+            "stop-loss"
+        );
+    }
+
+    // -- Execution parsing --
+
+    #[test]
+    fn test_parse_execution_filled() {
+        let item = serde_json::json!({
+            "order_id": "ORD-12345",
+            "cl_ord_id": "my-client-id",
+            "symbol": "BTCUSD",
+            "ord_status": "filled",
+            "cum_qty": "1.5",
+            "order_qty": "1.5",
+            "avg_price": "30000.00",
+            "last_price": "30000.00",
+            "last_qty": "0.5",
+            "fee_paid": "0.10",
+            "fee_paid_asset": "USD",
+            "timestamp": "2024-01-15T12:00:00Z"
+        });
+
+        let result = KrakenExecutionConnector::parse_execution(&item).unwrap();
+        let update = result.expect("should produce an OrderUpdate");
+
+        assert_eq!(update.client_order_id, "my-client-id");
+        assert_eq!(update.exchange_order_id, Some("ORD-12345".to_string()));
+        assert_eq!(update.exchange, Exchange::Kraken);
+        assert_eq!(update.status, OrderStatus::Filled);
+        assert_eq!(update.filled_quantity, dec!(1.5));
+        assert_eq!(update.remaining_quantity, dec!(0));
+        assert_eq!(update.average_fill_price, dec!(30000));
+        assert_eq!(update.last_fill_price, Some(dec!(30000)));
+        assert_eq!(update.last_fill_quantity, Some(dec!(0.5)));
+        assert_eq!(update.fee, Some(dec!(0.10)));
+        assert_eq!(update.fee_currency, Some("USD".to_string()));
+    }
+
+    #[test]
+    fn test_parse_execution_all_statuses() {
+        let statuses = vec![
+            ("new", OrderStatus::New),
+            ("partially_filled", OrderStatus::PartiallyFilled),
+            ("filled", OrderStatus::Filled),
+            ("canceled", OrderStatus::Cancelled),
+            ("cancelled", OrderStatus::Cancelled),
+            ("expired", OrderStatus::Expired),
+            ("pending", OrderStatus::Submitted),
+        ];
+
+        for (kraken_status, expected) in statuses {
+            let item = serde_json::json!({
+                "order_id": "O1",
+                "symbol": "BTCUSD",
+                "ord_status": kraken_status,
+                "cum_qty": "0",
+                "order_qty": "1",
+                "avg_price": "0"
+            });
+            let result = KrakenExecutionConnector::parse_execution(&item).unwrap();
+            let update = result.expect("should produce an OrderUpdate");
+            assert_eq!(
+                update.status, expected,
+                "status mismatch for Kraken status '{}'",
+                kraken_status
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_execution_unknown_status_returns_none() {
+        let item = serde_json::json!({
+            "order_id": "O1",
+            "symbol": "BTCUSD",
+            "ord_status": "something_weird",
+            "cum_qty": "0",
+            "order_qty": "1",
+            "avg_price": "0"
+        });
+        let result = KrakenExecutionConnector::parse_execution(&item).unwrap();
+        assert!(result.is_none(), "unknown status should return None");
+    }
+
+    #[test]
+    fn test_parse_execution_uses_order_id_when_no_cl_ord_id() {
+        let item = serde_json::json!({
+            "order_id": "FALLBACK-ID",
+            "symbol": "ETHUSD",
+            "ord_status": "new",
+            "cum_qty": "0",
+            "order_qty": "5",
+            "avg_price": "0"
+        });
+        let result = KrakenExecutionConnector::parse_execution(&item).unwrap();
+        let update = result.unwrap();
+        assert_eq!(
+            update.client_order_id, "FALLBACK-ID",
+            "should fall back to order_id when cl_ord_id is missing"
+        );
+    }
+
+    // -- Connector state --
+
+    #[test]
+    fn test_connector_initial_state() {
+        let connector = test_connector();
+        assert!(!connector.is_connected());
+        assert_eq!(connector.exchange(), Exchange::Kraken);
+    }
+}

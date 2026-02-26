@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import type { Exchange, Side, OrderType } from "@/lib/types";
+import { api } from "@/lib/api";
 
 const EXCHANGES: Exchange[] = ["Binance", "Coinbase", "Kraken", "Alpaca", "Simulated"];
 
@@ -12,22 +13,43 @@ export function OrderEntryPanel() {
   const [orderType, setOrderType] = useState<OrderType>("Limit");
   const [price, setPrice] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
-      const payload = {
-        exchange,
-        symbol,
-        side,
-        order_type: orderType,
-        price: orderType === "Limit" ? price : null,
-        quantity,
-      };
-      console.log("Order submitted:", payload);
-      setSubmitted(true);
-      setTimeout(() => setSubmitted(false), 2000);
+      setSubmitting(true);
+      setFeedback(null);
+
+      try {
+        const order = await api.placeOrder({
+          exchange: exchange.toLowerCase(),
+          symbol,
+          side,
+          order_type: orderType,
+          price: orderType === "Limit" ? price : null,
+          quantity,
+        });
+        setFeedback({
+          type: "success",
+          message: `Order placed: ${order.client_order_id}`,
+        });
+        // Reset quantity after successful submission
+        setQuantity("");
+        setPrice("");
+      } catch (err) {
+        setFeedback({
+          type: "error",
+          message: err instanceof Error ? err.message : "Failed to place order",
+        });
+      } finally {
+        setSubmitting(false);
+        setTimeout(() => setFeedback(null), 4000);
+      }
     },
     [exchange, symbol, side, orderType, price, quantity]
   );
@@ -149,18 +171,29 @@ export function OrderEntryPanel() {
       {/* Submit */}
       <button
         type="submit"
+        disabled={submitting}
         className={`py-2 rounded font-semibold transition-colors ${
-          side === "Buy"
-            ? "bg-accent-green text-bg-primary hover:bg-accent-green/80"
-            : "bg-accent-red text-bg-primary hover:bg-accent-red/80"
+          submitting
+            ? "bg-bg-hover text-text-muted cursor-not-allowed"
+            : side === "Buy"
+              ? "bg-accent-green text-bg-primary hover:bg-accent-green/80"
+              : "bg-accent-red text-bg-primary hover:bg-accent-red/80"
         }`}
       >
-        {side === "Buy" ? "BUY" : "SELL"} {symbol || "..."}
+        {submitting
+          ? "Submitting..."
+          : `${side === "Buy" ? "BUY" : "SELL"} ${symbol || "..."}`}
       </button>
 
-      {submitted && (
-        <p className="text-accent-green text-center">
-          Order logged to console (gateway POST not available)
+      {feedback && (
+        <p
+          className={`text-center ${
+            feedback.type === "success"
+              ? "text-accent-green"
+              : "text-accent-red"
+          }`}
+        >
+          {feedback.message}
         </p>
       )}
     </form>

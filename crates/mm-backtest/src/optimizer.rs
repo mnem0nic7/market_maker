@@ -820,4 +820,332 @@ mod tests {
         }
         assert!(progress_count > 0, "Expected at least one progress message");
     }
+
+    #[test]
+    fn cartesian_product_three_ranges() {
+        let ranges = vec![
+            ParameterRange {
+                name: "a".to_string(),
+                values: vec![serde_json::json!(1), serde_json::json!(2)],
+            },
+            ParameterRange {
+                name: "b".to_string(),
+                values: vec![
+                    serde_json::json!(10),
+                    serde_json::json!(20),
+                    serde_json::json!(30),
+                ],
+            },
+            ParameterRange {
+                name: "c".to_string(),
+                values: vec![serde_json::json!("x"), serde_json::json!("y")],
+            },
+        ];
+
+        let combos = cartesian_product(&ranges);
+        // 2 * 3 * 2 = 12
+        assert_eq!(combos.len(), 12);
+
+        for combo in &combos {
+            assert_eq!(combo.len(), 3);
+            assert_eq!(combo[0].0, "a");
+            assert_eq!(combo[1].0, "b");
+            assert_eq!(combo[2].0, "c");
+        }
+
+        // Verify a specific combination exists: (2, 30, "y")
+        let has_combo = combos.iter().any(|c| {
+            c[0].1 == serde_json::json!(2)
+                && c[1].1 == serde_json::json!(30)
+                && c[2].1 == serde_json::json!("y")
+        });
+        assert!(has_combo, "Expected combination (2, 30, 'y') to exist");
+    }
+
+    #[test]
+    fn cartesian_product_single_value_per_range() {
+        let ranges = vec![
+            ParameterRange {
+                name: "a".to_string(),
+                values: vec![serde_json::json!(1)],
+            },
+            ParameterRange {
+                name: "b".to_string(),
+                values: vec![serde_json::json!(2)],
+            },
+        ];
+
+        let combos = cartesian_product(&ranges);
+        assert_eq!(combos.len(), 1);
+        assert_eq!(combos[0][0].1, serde_json::json!(1));
+        assert_eq!(combos[0][1].1, serde_json::json!(2));
+    }
+
+    #[test]
+    fn merge_params_with_non_object_base_returns_clone() {
+        // When base is not an object, overrides are silently ignored.
+        let base = serde_json::json!(42);
+        let overrides = vec![("key".to_string(), serde_json::json!("value"))];
+        let merged = merge_params(&base, &overrides);
+        assert_eq!(merged, serde_json::json!(42));
+    }
+
+    #[test]
+    fn merge_params_empty_overrides() {
+        let base = serde_json::json!({ "a": 1, "b": 2 });
+        let merged = merge_params(&base, &[]);
+        assert_eq!(merged, base);
+    }
+
+    #[test]
+    fn create_strategy_grid() {
+        let params = serde_json::json!({
+            "grid_spacing": 100,
+            "num_grids": 3,
+            "order_size": "0.01",
+            "center_price": 50000
+        });
+        let strategy = create_strategy("grid", &params);
+        assert!(strategy.is_some(), "grid strategy should be created");
+        let name = strategy.unwrap().into_inner().name().to_string();
+        assert!(
+            name.to_lowercase().contains("grid"),
+            "Expected strategy name to contain 'grid', got '{}'",
+            name
+        );
+    }
+
+    #[test]
+    fn create_strategy_avellaneda() {
+        let params = serde_json::json!({
+            "gamma": "0.1",
+            "sigma": "0.02",
+            "kappa": "1.5",
+            "order_size": "0.01"
+        });
+        let strategy = create_strategy("avellaneda", &params);
+        assert!(strategy.is_some(), "avellaneda strategy should be created");
+    }
+
+    #[test]
+    fn create_strategy_twap() {
+        let params = serde_json::json!({
+            "target_quantity": "1.0",
+            "duration_secs": 3600,
+            "slice_interval_secs": 60
+        });
+        let strategy = create_strategy("twap", &params);
+        assert!(strategy.is_some(), "twap strategy should be created");
+    }
+
+    #[test]
+    fn create_strategy_vwap() {
+        let params = serde_json::json!({
+            "target_quantity": "1.0",
+            "duration_secs": 3600
+        });
+        let strategy = create_strategy("vwap", &params);
+        assert!(strategy.is_some(), "vwap strategy should be created");
+    }
+
+    #[test]
+    fn create_strategy_momentum() {
+        let params = serde_json::json!({
+            "lookback_periods": 5,
+            "entry_threshold_bps": 50,
+            "order_size": "0.01"
+        });
+        let strategy = create_strategy("momentum", &params);
+        assert!(strategy.is_some(), "momentum strategy should be created");
+    }
+
+    #[test]
+    fn create_strategy_mean_reversion() {
+        let params = serde_json::json!({
+            "window_periods": 10,
+            "num_std_dev": 2,
+            "order_size": "0.05"
+        });
+        let strategy = create_strategy("mean_reversion", &params);
+        assert!(
+            strategy.is_some(),
+            "mean_reversion strategy should be created"
+        );
+    }
+
+    #[test]
+    fn create_strategy_stat_arb() {
+        let params = serde_json::json!({
+            "lookback_periods": 10,
+            "entry_z_score": 2,
+            "exit_z_score": "0.5",
+            "order_size": "0.01"
+        });
+        let strategy = create_strategy("stat_arb", &params);
+        assert!(strategy.is_some(), "stat_arb strategy should be created");
+    }
+
+    #[test]
+    fn create_strategy_case_insensitive() {
+        let params = serde_json::json!({ "order_size": "0.01" });
+        assert!(create_strategy("SPREAD", &params).is_some());
+        assert!(create_strategy("Spread", &params).is_some());
+        assert!(create_strategy("GRID", &params).is_some());
+    }
+
+    #[test]
+    fn create_strategy_with_custom_exchange_and_symbol() {
+        let params = serde_json::json!({
+            "exchange": "Binance",
+            "symbol": { "base": "ETH", "quote": "USDT" },
+            "spread_bps": 15,
+            "order_size": "0.1"
+        });
+        let strategy = create_strategy("spread", &params);
+        assert!(strategy.is_some());
+    }
+
+    #[test]
+    fn optimizer_single_parameter_sweep() {
+        let events = generate_test_events(150);
+
+        let config = OptimizationConfig {
+            strategy_type: "spread".to_string(),
+            base_params: serde_json::json!({
+                "order_size": "0.01",
+                "num_levels": 2
+            }),
+            param_ranges: vec![ParameterRange {
+                name: "spread_bps".to_string(),
+                values: vec![
+                    serde_json::json!(5),
+                    serde_json::json!(10),
+                    serde_json::json!(15),
+                    serde_json::json!(20),
+                ],
+            }],
+            backtest_config: BacktestConfig::default(),
+            metric: OptimizationMetric::TotalPnl,
+            top_n: 10,
+        };
+
+        let results = ParameterOptimizer::run(&config, events, None);
+
+        // Should produce exactly 4 results (one per spread_bps value)
+        assert_eq!(
+            results.len(),
+            4,
+            "Expected 4 results for 4 parameter values"
+        );
+
+        // Each result should have the spread_bps parameter set
+        for result in &results {
+            assert!(
+                result.params.get("spread_bps").is_some(),
+                "Each result should contain the swept parameter"
+            );
+        }
+
+        // Results are sorted descending by TotalPnl
+        for window in results.windows(2) {
+            assert!(window[0].metric_value >= window[1].metric_value);
+        }
+    }
+
+    #[test]
+    fn optimizer_top_n_truncation() {
+        let events = generate_test_events(100);
+
+        let config = OptimizationConfig {
+            strategy_type: "spread".to_string(),
+            base_params: serde_json::json!({
+                "order_size": "0.01"
+            }),
+            param_ranges: vec![ParameterRange {
+                name: "spread_bps".to_string(),
+                values: vec![
+                    serde_json::json!(5),
+                    serde_json::json!(10),
+                    serde_json::json!(15),
+                    serde_json::json!(20),
+                    serde_json::json!(25),
+                ],
+            }],
+            backtest_config: BacktestConfig::default(),
+            metric: OptimizationMetric::Sharpe,
+            top_n: 2,
+        };
+
+        let results = ParameterOptimizer::run(&config, events, None);
+
+        // 5 combinations, top_n = 2, so at most 2 results
+        assert!(
+            results.len() <= 2,
+            "Expected at most 2 results with top_n=2, got {}",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn optimizer_skips_unknown_strategy_type() {
+        let events = generate_test_events(50);
+
+        let config = OptimizationConfig {
+            strategy_type: "nonexistent_strategy".to_string(),
+            base_params: serde_json::json!({}),
+            param_ranges: vec![ParameterRange {
+                name: "param".to_string(),
+                values: vec![serde_json::json!(1), serde_json::json!(2)],
+            }],
+            backtest_config: BacktestConfig::default(),
+            metric: OptimizationMetric::TotalPnl,
+            top_n: 10,
+        };
+
+        let results = ParameterOptimizer::run(&config, events, None);
+
+        // All combinations should be skipped because the strategy is unknown
+        assert!(
+            results.is_empty(),
+            "Expected no results for unknown strategy type"
+        );
+    }
+
+    #[test]
+    fn optimizer_results_contain_backtest_data() {
+        let events = generate_test_events(100);
+
+        let config = OptimizationConfig {
+            strategy_type: "spread".to_string(),
+            base_params: serde_json::json!({
+                "spread_bps": 10,
+                "order_size": "0.01",
+                "num_levels": 2
+            }),
+            param_ranges: vec![ParameterRange {
+                name: "spread_bps".to_string(),
+                values: vec![serde_json::json!(10)],
+            }],
+            backtest_config: BacktestConfig {
+                initial_capital: dec!(50_000),
+                ..BacktestConfig::default()
+            },
+            metric: OptimizationMetric::TotalPnl,
+            top_n: 1,
+        };
+
+        let results = ParameterOptimizer::run(&config, events, None);
+        assert_eq!(results.len(), 1);
+
+        let result = &results[0];
+        // The backtest result should have meaningful data (num_fills is usize, always >= 0)
+        let _ = result.backtest_result.num_fills;
+        // metric_value should match the extracted metric
+        let expected_metric =
+            extract_metric(&result.backtest_result, &OptimizationMetric::TotalPnl);
+        assert!(
+            (result.metric_value - expected_metric).abs() < 1e-10,
+            "metric_value should match extracted TotalPnl"
+        );
+    }
 }
