@@ -448,3 +448,375 @@ impl Strategy for GridStrategy {
         vec![self.cancel_all_action()]
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use mm_core::traits::Strategy;
+    use mm_core::types::{
+        Exchange, MarketSnapshot, OrderAction, OrderBook, Position, PriceLevel, Side, Symbol,
+    };
+    use rust_decimal_macros::dec;
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    /// Build a default arithmetic GridConfig for testing.
+    fn make_config() -> GridConfig {
+        GridConfig {
+            strategy_id: "test-grid".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            upper_price: dec!(70000),
+            lower_price: dec!(60000),
+            num_grids: 5,
+            order_size: dec!(0.01),
+            grid_type: GridType::Arithmetic,
+        }
+    }
+
+    /// Build a MarketSnapshot with the given mid price.
+    /// Uses bid = mid - 1, ask = mid + 1 so that mid_price() = mid exactly.
+    fn make_snapshot(mid: Decimal) -> MarketSnapshot {
+        let ts = Utc::now();
+        MarketSnapshot {
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            order_book: OrderBook {
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: mid - dec!(1),
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: mid + dec!(1),
+                    quantity: dec!(10),
+                }],
+                timestamp: ts,
+                sequence: 1,
+            },
+            last_trade: None,
+            position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
+            open_orders: vec![],
+            timestamp: ts,
+        }
+    }
+
+    /// Build a MarketSnapshot with an empty order book (no bids, no asks).
+    fn make_empty_snapshot() -> MarketSnapshot {
+        let ts = Utc::now();
+        MarketSnapshot {
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            order_book: OrderBook {
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![],
+                asks: vec![],
+                timestamp: ts,
+                sequence: 1,
+            },
+            last_trade: None,
+            position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
+            open_orders: vec![],
+            timestamp: ts,
+        }
+    }
+
+    /// Extract the price from a Place action, panicking if it is not a Place.
+    fn extract_place_price(action: &OrderAction) -> Decimal {
+        match action {
+            OrderAction::Place(new_order) => new_order.price.expect("limit order must have price"),
+            other => panic!("expected OrderAction::Place, got: {:?}", other),
+        }
+    }
+
+    /// Extract the side from a Place action.
+    fn extract_place_side(action: &OrderAction) -> Side {
+        match action {
+            OrderAction::Place(new_order) => new_order.side,
+            other => panic!("expected OrderAction::Place, got: {:?}", other),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 1. Arithmetic grid levels
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_arithmetic_grid_levels() {
+        // lower=60000, upper=70000, num_grids=5
+        // step = (70000 - 60000) / 5 = 2000
+        // Levels: 60000, 62000, 64000, 66000, 68000, 70000 (6 levels)
+        let config = make_config();
+        let strategy = GridStrategy::new(config);
+
+        assert_eq!(strategy.levels.len(), 6);
+        assert_eq!(strategy.levels[0].price, dec!(60000));
+        assert_eq!(strategy.levels[1].price, dec!(62000));
+        assert_eq!(strategy.levels[2].price, dec!(64000));
+        assert_eq!(strategy.levels[3].price, dec!(66000));
+        assert_eq!(strategy.levels[4].price, dec!(68000));
+        assert_eq!(strategy.levels[5].price, dec!(70000));
+
+        // Verify indices are correct
+        for (i, level) in strategy.levels.iter().enumerate() {
+            assert_eq!(level.index, i, "level index mismatch at position {}", i);
+            assert!(level.active_side.is_none());
+            assert!(level.active_order_id.is_none());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Geometric grid levels
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_geometric_grid_levels() {
+        // lower=100, upper=400, num_grids=2
+        // ratio = (400/100)^(1/2) = 4^0.5 = 2.0
+        // Levels: 100, 200, 400 (3 levels)
+        let config = GridConfig {
+            strategy_id: "geo-grid".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            upper_price: dec!(400),
+            lower_price: dec!(100),
+            num_grids: 2,
+            order_size: dec!(1),
+            grid_type: GridType::Geometric,
+        };
+
+        let strategy = GridStrategy::new(config);
+
+        assert_eq!(strategy.levels.len(), 3);
+        assert_eq!(strategy.levels[0].price, dec!(100));
+        // Level 1 should be approximately 200 (geometric mean of 100 and 400).
+        // Geometric computation uses f64 so we check within a tolerance.
+        let level1 = strategy.levels[1].price;
+        let diff = (level1 - dec!(200)).abs();
+        assert!(
+            diff < dec!(0.01),
+            "level 1 should be ~200, got {} (diff={})",
+            level1,
+            diff
+        );
+        assert_eq!(strategy.levels[2].price, dec!(400));
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Initial placement: buys below mid, sells above mid
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_initial_placement_buys_below_sells_above() {
+        // Levels: 60000, 62000, 64000, 66000, 68000, 70000
+        // Mid = 65000: buys at 60k, 62k, 64k; sells at 66k, 68k, 70k
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_snapshot(dec!(65000));
+        let actions = strategy.on_tick(&snapshot);
+
+        // Separate buys and sells
+        let buys: Vec<_> = actions
+            .iter()
+            .filter(|a| extract_place_side(a) == Side::Buy)
+            .collect();
+        let sells: Vec<_> = actions
+            .iter()
+            .filter(|a| extract_place_side(a) == Side::Sell)
+            .collect();
+
+        assert_eq!(buys.len(), 3, "expected 3 buy orders below mid");
+        assert_eq!(sells.len(), 3, "expected 3 sell orders above mid");
+
+        // Verify buy prices (below mid)
+        let mut buy_prices: Vec<Decimal> = buys.iter().map(|a| extract_place_price(a)).collect();
+        buy_prices.sort();
+        assert_eq!(buy_prices, vec![dec!(60000), dec!(62000), dec!(64000)]);
+
+        // Verify sell prices (above mid)
+        let mut sell_prices: Vec<Decimal> = sells.iter().map(|a| extract_place_price(a)).collect();
+        sell_prices.sort();
+        assert_eq!(sell_prices, vec![dec!(66000), dec!(68000), dec!(70000)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. Initial placement order count
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_initial_placement_order_count() {
+        // num_grids=5 means 6 levels. With mid between levels (not matching any),
+        // all 6 levels get orders: 3 buys + 3 sells = 6 orders.
+        // However, if mid doesn't match any level price, we get one order per level.
+        // With mid=65000 (not a level price), we expect all 6 levels to have orders.
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_snapshot(dec!(65000));
+        let actions = strategy.on_tick(&snapshot);
+
+        // 6 levels total, mid=65000 doesn't match any level, so all 6 get orders
+        assert_eq!(
+            actions.len(),
+            6,
+            "expected 6 orders (one per level since mid matches no level)"
+        );
+
+        // All should be Place actions
+        for action in &actions {
+            assert!(
+                matches!(action, OrderAction::Place(_)),
+                "expected Place action"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Second tick returns no actions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_second_tick_no_action() {
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_snapshot(dec!(65000));
+
+        // First tick: initial placement
+        let actions1 = strategy.on_tick(&snapshot);
+        assert!(!actions1.is_empty(), "first tick should produce actions");
+
+        // Second tick: already initialized, should return empty
+        let actions2 = strategy.on_tick(&snapshot);
+        assert!(
+            actions2.is_empty(),
+            "second tick should return empty (grid is event-driven after init)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. No mid price returns empty
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_no_mid_price_returns_empty() {
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_empty_snapshot();
+        let actions = strategy.on_tick(&snapshot);
+
+        assert!(
+            actions.is_empty(),
+            "empty order book (no mid price) should return no actions"
+        );
+        // Strategy should NOT be marked initialized since it couldn't place orders
+        assert!(!strategy.initialized);
+    }
+
+    // -----------------------------------------------------------------------
+    // 7. stop() returns CancelAll, clears state, sets active=false
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_stop_returns_cancel_all() {
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        // Initialize with first tick
+        let snapshot = make_snapshot(dec!(65000));
+        let _ = strategy.on_tick(&snapshot);
+        assert!(strategy.is_active());
+
+        // Stop the strategy
+        let actions = strategy.stop();
+
+        assert_eq!(actions.len(), 1, "stop should return exactly one action");
+        match &actions[0] {
+            OrderAction::CancelAll(cancel) => {
+                assert_eq!(cancel.exchange, Some(Exchange::Simulated));
+                assert_eq!(cancel.symbol, Some(Symbol::new("BTC", "USDT")));
+                assert_eq!(cancel.strategy_id, Some("test-grid".to_string()));
+            }
+            other => panic!("expected CancelAll, got: {:?}", other),
+        }
+
+        // State should be cleared
+        assert!(!strategy.is_active());
+        assert!(strategy.order_to_level.is_empty());
+        for level in &strategy.levels {
+            assert!(
+                level.active_side.is_none(),
+                "level {} active_side should be None after stop",
+                level.index
+            );
+            assert!(
+                level.active_order_id.is_none(),
+                "level {} active_order_id should be None after stop",
+                level.index
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. Inactive strategy returns empty on tick
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_inactive_returns_empty() {
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        // Initialize, then stop
+        let snapshot = make_snapshot(dec!(65000));
+        let _ = strategy.on_tick(&snapshot);
+        let _ = strategy.stop();
+
+        assert!(!strategy.is_active());
+
+        // Tick after stop should return empty
+        let actions = strategy.on_tick(&snapshot);
+        assert!(
+            actions.is_empty(),
+            "inactive strategy should return no actions"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 9. Constructor assertions (should_panic tests)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    #[should_panic(expected = "upper_price must be greater than lower_price")]
+    fn test_grid_constructor_panics_upper_le_lower() {
+        let mut config = make_config();
+        config.upper_price = dec!(50000); // less than lower_price (60000)
+        GridStrategy::new(config);
+    }
+
+    #[test]
+    #[should_panic(expected = "upper_price must be greater than lower_price")]
+    fn test_grid_constructor_panics_upper_eq_lower() {
+        let mut config = make_config();
+        config.upper_price = dec!(60000); // equal to lower_price
+        GridStrategy::new(config);
+    }
+
+    #[test]
+    #[should_panic(expected = "num_grids must be at least 1")]
+    fn test_grid_constructor_panics_zero_grids() {
+        let mut config = make_config();
+        config.num_grids = 0;
+        GridStrategy::new(config);
+    }
+}

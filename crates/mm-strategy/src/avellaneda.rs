@@ -349,3 +349,434 @@ impl Strategy for AvellanedaStoikovStrategy {
         vec![self.cancel_all_action()]
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use mm_core::traits::Strategy;
+    use mm_core::types::{
+        Exchange, Fill, MarketSnapshot, OrderAction, OrderBook, Position, PriceLevel, Side, Symbol,
+    };
+    use rust_decimal_macros::dec;
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    fn make_config() -> AvellanedaStoikovConfig {
+        AvellanedaStoikovConfig {
+            strategy_id: "test-as".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            gamma: dec!(0.1),
+            sigma: dec!(0.02),
+            kappa: dec!(1.5),
+            order_size: dec!(0.01),
+            max_position: dec!(1.0),
+            session_duration_secs: 3600, // 1 hour
+        }
+    }
+
+    /// Build a MarketSnapshot with the given mid price and timestamp.
+    /// The order book is set with bid = mid - 1, ask = mid + 1.
+    fn make_snapshot_at(mid: Decimal, ts: DateTime<Utc>) -> MarketSnapshot {
+        let bid = mid - dec!(1);
+        let ask = mid + dec!(1);
+        MarketSnapshot {
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            order_book: OrderBook {
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
+                bids: vec![PriceLevel {
+                    price: bid,
+                    quantity: dec!(10),
+                }],
+                asks: vec![PriceLevel {
+                    price: ask,
+                    quantity: dec!(10),
+                }],
+                timestamp: ts,
+                sequence: 1,
+            },
+            last_trade: None,
+            position: Position::new(Exchange::Simulated, Symbol::new("BTC", "USDT")),
+            open_orders: vec![],
+            timestamp: ts,
+        }
+    }
+
+    /// Build a Fill for the given side, price, and quantity.
+    fn make_fill(side: Side, price: Decimal, quantity: Decimal) -> Fill {
+        Fill {
+            fill_id: "fill-1".to_string(),
+            client_order_id: "order-1".to_string(),
+            exchange_order_id: "exch-1".to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            side,
+            price,
+            quantity,
+            fee: Decimal::ZERO,
+            fee_currency: "USDT".to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Create a strategy whose session started at `start` and has zero inventory.
+    fn make_strategy(start: DateTime<Utc>) -> AvellanedaStoikovStrategy {
+        AvellanedaStoikovStrategy::new(make_config()).with_session_start(start)
+    }
+
+    /// Create a strategy whose session started at `start` with a given inventory.
+    fn make_strategy_with_inventory(
+        start: DateTime<Utc>,
+        inventory: Decimal,
+    ) -> AvellanedaStoikovStrategy {
+        AvellanedaStoikovStrategy::new(make_config())
+            .with_session_start(start)
+            .with_inventory(inventory)
+    }
+
+    // -----------------------------------------------------------------------
+    // 1. Initialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_new_initializes_correctly() {
+        let strategy = AvellanedaStoikovStrategy::new(make_config());
+
+        assert_eq!(strategy.name(), "AvellanedaStoikov");
+        assert_eq!(strategy.strategy_id(), "test-as");
+        assert!(strategy.is_active());
+        assert_eq!(strategy.inventory, Decimal::ZERO);
+        assert!(strategy.live_order_ids.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Reservation price with zero inventory
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_reservation_price_zero_inventory() {
+        // r = mid - q * gamma * sigma^2 * (T-t)
+        // With q = 0 the adjustment term vanishes, so r = mid.
+        let start = Utc::now();
+        let strategy = make_strategy(start);
+
+        let mid = dec!(50000);
+        let time_remaining = dec!(0.5); // half the session left
+
+        let reservation = strategy.reservation_price(mid, time_remaining);
+        assert_eq!(reservation, mid);
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Reservation price with positive (long) inventory
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_reservation_price_long_inventory() {
+        // With q > 0, the reservation price should be BELOW mid (incentivize selling).
+        // r = mid - q * gamma * sigma^2 * (T-t)
+        // q=2, gamma=0.1, sigma=0.02, T-t=0.5
+        // adjustment = 2 * 0.1 * 0.0004 * 0.5 = 0.00004
+        // r = 50000 - 0.00004 = 49999.99996
+        let start = Utc::now();
+        let strategy = make_strategy_with_inventory(start, dec!(2));
+
+        let mid = dec!(50000);
+        let time_remaining = dec!(0.5);
+        let reservation = strategy.reservation_price(mid, time_remaining);
+
+        assert!(
+            reservation < mid,
+            "With long inventory, reservation price ({}) should be below mid ({})",
+            reservation,
+            mid
+        );
+
+        // Verify the exact math:
+        // q * gamma * sigma^2 * (T-t) = 2 * 0.1 * 0.0004 * 0.5 = 0.00004
+        let expected = mid - dec!(2) * dec!(0.1) * dec!(0.0004) * dec!(0.5);
+        assert_eq!(reservation, expected);
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. Reservation price with negative (short) inventory
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_reservation_price_short_inventory() {
+        // With q < 0, the reservation price should be ABOVE mid (incentivize buying).
+        // r = mid - (-2) * gamma * sigma^2 * (T-t) = mid + 2 * gamma * sigma^2 * (T-t)
+        let start = Utc::now();
+        let strategy = make_strategy_with_inventory(start, dec!(-2));
+
+        let mid = dec!(50000);
+        let time_remaining = dec!(0.5);
+        let reservation = strategy.reservation_price(mid, time_remaining);
+
+        assert!(
+            reservation > mid,
+            "With short inventory, reservation price ({}) should be above mid ({})",
+            reservation,
+            mid
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Optimal spread is always positive
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_optimal_spread_positive() {
+        // delta = gamma * sigma^2 * (T-t) + (2/gamma) * ln(1 + gamma/kappa)
+        // Both terms should be positive for reasonable params, so delta > 0.
+        let start = Utc::now();
+        let strategy = make_strategy(start);
+
+        // Test at various time_remaining fractions
+        for tr in [dec!(0.01), dec!(0.1), dec!(0.5), dec!(1.0)] {
+            let spread = strategy.optimal_spread(tr);
+            assert!(
+                spread > Decimal::ZERO,
+                "Optimal spread should be positive at time_remaining={}, got {}",
+                tr,
+                spread
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Places both bid and ask on first tick with zero inventory
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_places_bid_and_ask() {
+        let start = Utc::now();
+        let mut strategy = make_strategy(start);
+
+        // Tick 30 minutes into the session (half-way)
+        let ts = start + Duration::minutes(30);
+        let mid = dec!(50000);
+        let snapshot = make_snapshot_at(mid, ts);
+        let actions = strategy.on_tick(&snapshot);
+
+        // Should have exactly 2 Place actions (bid + ask), no CancelAll since no
+        // live orders exist yet.
+        let places: Vec<&NewOrder> = actions
+            .iter()
+            .filter_map(|a| match a {
+                OrderAction::Place(o) => Some(o),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(places.len(), 2, "Expected 2 Place actions, got {}", places.len());
+
+        let bid_order = places.iter().find(|o| o.side == Side::Buy).unwrap();
+        let ask_order = places.iter().find(|o| o.side == Side::Sell).unwrap();
+
+        assert!(
+            bid_order.price.unwrap() < mid,
+            "Bid price ({}) should be below mid ({})",
+            bid_order.price.unwrap(),
+            mid
+        );
+        assert!(
+            ask_order.price.unwrap() > mid,
+            "Ask price ({}) should be above mid ({})",
+            ask_order.price.unwrap(),
+            mid
+        );
+
+        // Verify order sizes
+        assert_eq!(bid_order.quantity, dec!(0.01));
+        assert_eq!(ask_order.quantity, dec!(0.01));
+    }
+
+    // -----------------------------------------------------------------------
+    // 7. Max position blocks buy when at max long
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_max_position_blocks_buy() {
+        // max_position = 1.0, order_size = 0.01
+        // inventory = 1.0, buying 0.01 more would make 1.01 > 1.0, so bid blocked.
+        let start = Utc::now();
+        let mut strategy = make_strategy_with_inventory(start, dec!(1.0));
+
+        let ts = start + Duration::minutes(30);
+        let snapshot = make_snapshot_at(dec!(50000), ts);
+        let actions = strategy.on_tick(&snapshot);
+
+        let places: Vec<&NewOrder> = actions
+            .iter()
+            .filter_map(|a| match a {
+                OrderAction::Place(o) => Some(o),
+                _ => None,
+            })
+            .collect();
+
+        // Should only have the ask (sell side)
+        assert_eq!(places.len(), 1, "Expected 1 Place action (ask only), got {}", places.len());
+        assert_eq!(places[0].side, Side::Sell, "The only order should be a sell");
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. Max position blocks sell when at max short
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_max_position_blocks_sell() {
+        // inventory = -1.0, selling 0.01 more would make -1.01 < -1.0, so ask blocked.
+        let start = Utc::now();
+        let mut strategy = make_strategy_with_inventory(start, dec!(-1.0));
+
+        let ts = start + Duration::minutes(30);
+        let snapshot = make_snapshot_at(dec!(50000), ts);
+        let actions = strategy.on_tick(&snapshot);
+
+        let places: Vec<&NewOrder> = actions
+            .iter()
+            .filter_map(|a| match a {
+                OrderAction::Place(o) => Some(o),
+                _ => None,
+            })
+            .collect();
+
+        // Should only have the bid (buy side)
+        assert_eq!(places.len(), 1, "Expected 1 Place action (bid only), got {}", places.len());
+        assert_eq!(places[0].side, Side::Buy, "The only order should be a buy");
+    }
+
+    // -----------------------------------------------------------------------
+    // 9. Session expiry cancels all and deactivates
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_session_expiry_cancels_all() {
+        let start = Utc::now() - Duration::hours(2); // session started 2 hours ago
+        let mut strategy = make_strategy(start);
+
+        // Tick at now (well past the 1-hour session)
+        let ts = Utc::now();
+        let snapshot = make_snapshot_at(dec!(50000), ts);
+        let actions = strategy.on_tick(&snapshot);
+
+        // Should return a single CancelAll action
+        assert_eq!(actions.len(), 1, "Expected exactly 1 action on session expiry");
+        assert!(
+            matches!(&actions[0], OrderAction::CancelAll(_)),
+            "Action should be CancelAll, got {:?}",
+            actions[0]
+        );
+
+        // Strategy should now be inactive
+        assert!(
+            !strategy.is_active(),
+            "Strategy should be inactive after session expiry"
+        );
+
+        // Further ticks should return empty
+        let actions2 = strategy.on_tick(&snapshot);
+        assert!(
+            actions2.is_empty(),
+            "Ticks after session expiry should return empty"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 10. on_fill updates inventory
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_on_fill_updates_inventory() {
+        let start = Utc::now();
+        let mut strategy = make_strategy(start);
+
+        assert_eq!(strategy.inventory, Decimal::ZERO);
+
+        // Buy fill increases inventory
+        strategy.on_fill(&make_fill(Side::Buy, dec!(50000), dec!(0.5)));
+        assert_eq!(
+            strategy.inventory,
+            dec!(0.5),
+            "Buy fill should increase inventory"
+        );
+
+        // Another buy
+        strategy.on_fill(&make_fill(Side::Buy, dec!(50100), dec!(0.3)));
+        assert_eq!(
+            strategy.inventory,
+            dec!(0.8),
+            "Second buy fill should further increase inventory"
+        );
+
+        // Sell fill decreases inventory
+        strategy.on_fill(&make_fill(Side::Sell, dec!(50200), dec!(1.0)));
+        assert_eq!(
+            strategy.inventory,
+            dec!(-0.2),
+            "Sell fill should decrease inventory"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 11. stop() deactivates and returns CancelAll
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_stop_deactivates_and_cancels() {
+        let start = Utc::now();
+        let mut strategy = make_strategy(start);
+        assert!(strategy.is_active());
+
+        let actions = strategy.stop();
+
+        // Should be inactive
+        assert!(!strategy.is_active(), "Strategy should be inactive after stop");
+
+        // Should return a single CancelAll
+        assert_eq!(actions.len(), 1, "stop() should return exactly 1 action");
+        match &actions[0] {
+            OrderAction::CancelAll(cancel) => {
+                assert_eq!(cancel.exchange, Some(Exchange::Simulated));
+                assert_eq!(cancel.symbol, Some(Symbol::new("BTC", "USDT")));
+                assert_eq!(cancel.strategy_id, Some("test-as".to_string()));
+            }
+            other => panic!("Expected CancelAll, got {:?}", other),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 12. Inactive strategy returns empty on tick
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_inactive_returns_empty() {
+        let start = Utc::now();
+        let mut strategy = make_strategy(start);
+
+        // Stop the strategy
+        let _ = strategy.stop();
+        assert!(!strategy.is_active());
+
+        // Subsequent ticks should return empty
+        let ts = start + Duration::minutes(10);
+        let snapshot = make_snapshot_at(dec!(50000), ts);
+        let actions = strategy.on_tick(&snapshot);
+
+        assert!(
+            actions.is_empty(),
+            "Inactive strategy should return empty actions, got {} actions",
+            actions.len()
+        );
+    }
+}
