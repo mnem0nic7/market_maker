@@ -515,23 +515,7 @@ impl ExecutionConnector for BinanceExecutionConnector {
         let tif = Self::tif_to_str(order.time_in_force);
         let quantity = order.quantity.to_string();
 
-        let mut params: Vec<(&str, &str)> = vec![
-            ("symbol", &symbol),
-            ("side", side),
-            ("type", order_type),
-            ("quantity", &quantity),
-            ("newOrderRespType", "ACK"),
-        ];
-
-        let price_str;
-        if let Some(ref price) = order.price {
-            price_str = price.to_string();
-            params.push(("timeInForce", tif));
-            params.push(("price", &price_str));
-        }
-
-        let signed_query = self.sign_params(&params);
-        let url = format!("{}/api/v3/order?{}", self.config.base_url, signed_query);
+        let price_str = order.price.as_ref().map(|p| p.to_string());
 
         debug!(
             symbol = %symbol,
@@ -541,90 +525,204 @@ impl ExecutionConnector for BinanceExecutionConnector {
             "Binance: submitting order"
         );
 
-        let resp = self
-            .http
-            .post(&url)
-            .header("X-MBX-APIKEY", &self.config.api_key)
-            .send()
-            .await
-            .map_err(|e| MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("submit_order HTTP error: {}", e),
-            })?;
+        const MAX_RETRIES: u32 = 3;
+        let mut last_error = None;
 
-        let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("submit_order parse error: {}", e),
-            })?;
+        for attempt in 0..=MAX_RETRIES {
+            // Rebuild signed query each attempt (timestamp refreshes).
+            let mut params: Vec<(&str, &str)> = vec![
+                ("symbol", &symbol),
+                ("side", side),
+                ("type", order_type),
+                ("quantity", &quantity),
+                ("newOrderRespType", "ACK"),
+            ];
 
-        if !status.is_success() {
-            let code = body["code"].as_i64().unwrap_or(0);
-            let msg = body["msg"].as_str().unwrap_or("unknown error");
-            return Err(MmError::OrderRejected {
-                reason: format!("Binance error {}: {}", code, msg),
-            });
+            if let Some(ref ps) = price_str {
+                params.push(("timeInForce", tif));
+                params.push(("price", ps));
+            }
+
+            let signed_query = self.sign_params(&params);
+            let url = format!("{}/api/v3/order?{}", self.config.base_url, signed_query);
+
+            let resp = match self
+                .http
+                .post(&url)
+                .header("X-MBX-APIKEY", &self.config.api_key)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_error = Some(MmError::Exchange {
+                        exchange: Exchange::Binance,
+                        message: format!("submit_order HTTP error: {}", e),
+                    });
+                    if attempt < MAX_RETRIES {
+                        warn!(
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            error = %e,
+                            "Binance: submit_order request failed, retrying"
+                        );
+                        tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                        continue;
+                    }
+                    return Err(last_error.unwrap());
+                }
+            };
+
+            let status = resp.status();
+
+            // Retry on 429 (rate limited) or 5xx (server error).
+            if status.as_u16() == 429 || status.is_server_error() {
+                let body_text = resp.text().await.unwrap_or_default();
+                warn!(
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    status = %status,
+                    body = %body_text,
+                    "Binance: submit_order rate limited or server error, retrying"
+                );
+                last_error = Some(MmError::Exchange {
+                    exchange: Exchange::Binance,
+                    message: format!("submit_order HTTP {} : {}", status, body_text),
+                });
+                if attempt < MAX_RETRIES {
+                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    continue;
+                }
+                return Err(last_error.unwrap());
+            }
+
+            let body: serde_json::Value =
+                resp.json().await.map_err(|e| MmError::Exchange {
+                    exchange: Exchange::Binance,
+                    message: format!("submit_order parse error: {}", e),
+                })?;
+
+            if !status.is_success() {
+                let code = body["code"].as_i64().unwrap_or(0);
+                let msg = body["msg"].as_str().unwrap_or("unknown error");
+                return Err(MmError::OrderRejected {
+                    reason: format!("Binance error {}: {}", code, msg),
+                });
+            }
+
+            let order_id = body["orderId"]
+                .as_u64()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| body["orderId"].to_string());
+
+            info!(
+                exchange_order_id = %order_id,
+                symbol = %symbol,
+                side = %side,
+                "Binance: order submitted"
+            );
+
+            return Ok(order_id);
         }
 
-        let order_id = body["orderId"]
-            .as_u64()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| body["orderId"].to_string());
-
-        info!(
-            exchange_order_id = %order_id,
-            symbol = %symbol,
-            side = %side,
-            "Binance: order submitted"
-        );
-
-        Ok(order_id)
+        Err(last_error.unwrap_or_else(|| MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: "submit_order failed after retries".into(),
+        }))
     }
 
     async fn cancel_order(&self, cancel: &CancelOrder) -> MmResult<()> {
         let symbol = Self::to_binance_symbol(&cancel.symbol);
 
-        let mut params: Vec<(&str, &str)> = vec![("symbol", &symbol)];
+        let exch_id = cancel.exchange_order_id.clone();
 
-        let exch_id;
-        if let Some(ref eid) = cancel.exchange_order_id {
-            exch_id = eid.clone();
-            params.push(("orderId", &exch_id));
-        } else {
-            params.push(("origClientOrderId", &cancel.client_order_id));
+        const MAX_RETRIES: u32 = 3;
+        let mut last_error = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            // Rebuild signed query each attempt (timestamp refreshes).
+            let mut params: Vec<(&str, &str)> = vec![("symbol", &symbol)];
+
+            if let Some(ref eid) = exch_id {
+                params.push(("orderId", eid));
+            } else {
+                params.push(("origClientOrderId", &cancel.client_order_id));
+            }
+
+            let signed_query = self.sign_params(&params);
+            let url = format!("{}/api/v3/order?{}", self.config.base_url, signed_query);
+
+            let resp = match self
+                .http
+                .delete(&url)
+                .header("X-MBX-APIKEY", &self.config.api_key)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_error = Some(MmError::Exchange {
+                        exchange: Exchange::Binance,
+                        message: format!("cancel_order HTTP error: {}", e),
+                    });
+                    if attempt < MAX_RETRIES {
+                        warn!(
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            error = %e,
+                            "Binance: cancel_order request failed, retrying"
+                        );
+                        tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                        continue;
+                    }
+                    return Err(last_error.unwrap());
+                }
+            };
+
+            let status = resp.status();
+
+            // Retry on 429 (rate limited) or 5xx (server error).
+            if status.as_u16() == 429 || status.is_server_error() {
+                let body_text = resp.text().await.unwrap_or_default();
+                warn!(
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    status = %status,
+                    body = %body_text,
+                    "Binance: cancel_order rate limited or server error, retrying"
+                );
+                last_error = Some(MmError::Exchange {
+                    exchange: Exchange::Binance,
+                    message: format!("cancel_order HTTP {} : {}", status, body_text),
+                });
+                if attempt < MAX_RETRIES {
+                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    continue;
+                }
+                return Err(last_error.unwrap());
+            }
+
+            if !status.is_success() {
+                let body: serde_json::Value =
+                    resp.json().await.unwrap_or(serde_json::Value::Null);
+                let msg = body["msg"].as_str().unwrap_or("unknown error");
+                return Err(MmError::Exchange {
+                    exchange: Exchange::Binance,
+                    message: format!("cancel_order failed ({}): {}", status, msg),
+                });
+            }
+
+            info!(
+                client_order_id = %cancel.client_order_id,
+                "Binance: order cancelled"
+            );
+            return Ok(());
         }
 
-        let signed_query = self.sign_params(&params);
-        let url = format!("{}/api/v3/order?{}", self.config.base_url, signed_query);
-
-        let resp = self
-            .http
-            .delete(&url)
-            .header("X-MBX-APIKEY", &self.config.api_key)
-            .send()
-            .await
-            .map_err(|e| MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("cancel_order HTTP error: {}", e),
-            })?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body: serde_json::Value =
-                resp.json().await.unwrap_or(serde_json::Value::Null);
-            let msg = body["msg"].as_str().unwrap_or("unknown error");
-            return Err(MmError::Exchange {
-                exchange: Exchange::Binance,
-                message: format!("cancel_order failed ({}): {}", status, msg),
-            });
-        }
-
-        info!(
-            client_order_id = %cancel.client_order_id,
-            "Binance: order cancelled"
-        );
-        Ok(())
+        Err(last_error.unwrap_or_else(|| MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: "cancel_order failed after retries".into(),
+        }))
     }
 
     async fn cancel_all_orders(&self, request: &CancelAllOrders) -> MmResult<u32> {
