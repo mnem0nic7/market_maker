@@ -246,7 +246,9 @@ impl ReplayEngine {
                 symbol: symbol.clone(),
                 order_book: book.clone(),
                 last_trade: last_trade.clone(),
-                position: position.clone().unwrap(),
+                position: position
+                    .clone()
+                    .unwrap_or_else(|| Position::new(exchange, symbol.clone())),
                 open_orders: sim_exchange.open_orders(),
                 timestamp: ts,
             };

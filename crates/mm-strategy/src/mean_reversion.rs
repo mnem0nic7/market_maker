@@ -251,7 +251,10 @@ impl Strategy for MeanReversionStrategy {
             };
 
             if should_exit {
-                let exit = self.exit_side().unwrap();
+                let exit = match self.exit_side() {
+                    Some(s) => s,
+                    None => return Vec::new(),
+                };
                 info!(
                     strategy_id = %self.config.strategy_id,
                     exit_side = %exit,

@@ -288,7 +288,10 @@ impl Strategy for MomentumStrategy {
 
             // Check trailing stop
             if self.trailing_stop_triggered(mid) {
-                let exit = self.exit_side().unwrap();
+                let exit = match self.exit_side() {
+                    Some(s) => s,
+                    None => return Vec::new(),
+                };
                 info!(
                     strategy_id = %self.config.strategy_id,
                     exit_side = %exit,
@@ -302,7 +305,10 @@ impl Strategy for MomentumStrategy {
 
             // Check mean reversion exit
             if self.mean_reversion_exit(momentum) {
-                let exit = self.exit_side().unwrap();
+                let exit = match self.exit_side() {
+                    Some(s) => s,
+                    None => return Vec::new(),
+                };
                 info!(
                     strategy_id = %self.config.strategy_id,
                     exit_side = %exit,

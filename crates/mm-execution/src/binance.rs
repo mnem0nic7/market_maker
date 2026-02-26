@@ -548,7 +548,9 @@ impl ExecutionConnector for BinanceExecutionConnector {
                         tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
                         continue;
                     }
-                    return Err(last_error.unwrap());
+                    return Err(last_error.unwrap_or_else(|| {
+                        MmError::Internal("retry loop exhausted without error".into())
+                    }));
                 }
             };
 
@@ -572,7 +574,9 @@ impl ExecutionConnector for BinanceExecutionConnector {
                     tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
                     continue;
                 }
-                return Err(last_error.unwrap());
+                return Err(last_error.unwrap_or_else(|| {
+                    MmError::Internal("retry loop exhausted without error".into())
+                }));
             }
 
             let body: serde_json::Value = resp.json().await.map_err(|e| MmError::Exchange {
@@ -653,7 +657,9 @@ impl ExecutionConnector for BinanceExecutionConnector {
                         tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
                         continue;
                     }
-                    return Err(last_error.unwrap());
+                    return Err(last_error.unwrap_or_else(|| {
+                        MmError::Internal("retry loop exhausted without error".into())
+                    }));
                 }
             };
 
@@ -677,7 +683,9 @@ impl ExecutionConnector for BinanceExecutionConnector {
                     tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
                     continue;
                 }
-                return Err(last_error.unwrap());
+                return Err(last_error.unwrap_or_else(|| {
+                    MmError::Internal("retry loop exhausted without error".into())
+                }));
             }
 
             if !status.is_success() {

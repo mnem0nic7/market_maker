@@ -124,9 +124,15 @@ impl StrategyMetricsTracker {
             self.register_strategy(strategy_id);
         }
 
-        let metrics = self.metrics.get_mut(strategy_id).unwrap();
-        let avg_entry = self.avg_entry_prices.get_mut(strategy_id).unwrap();
-        let position = self.positions.get_mut(strategy_id).unwrap();
+        let Some(metrics) = self.metrics.get_mut(strategy_id) else {
+            return;
+        };
+        let Some(avg_entry) = self.avg_entry_prices.get_mut(strategy_id) else {
+            return;
+        };
+        let Some(position) = self.positions.get_mut(strategy_id) else {
+            return;
+        };
 
         metrics.total_fills += 1;
         metrics.volume_traded += fill.quantity * fill.price;
@@ -175,10 +181,9 @@ impl StrategyMetricsTracker {
         if !self.metrics.contains_key(strategy_id) {
             self.register_strategy(strategy_id);
         }
-        self.metrics
-            .get_mut(strategy_id)
-            .unwrap()
-            .total_orders_placed += 1;
+        if let Some(m) = self.metrics.get_mut(strategy_id) {
+            m.total_orders_placed += 1;
+        }
     }
 
     /// Record that an order was cancelled for the given strategy.
@@ -186,10 +191,9 @@ impl StrategyMetricsTracker {
         if !self.metrics.contains_key(strategy_id) {
             self.register_strategy(strategy_id);
         }
-        self.metrics
-            .get_mut(strategy_id)
-            .unwrap()
-            .total_orders_cancelled += 1;
+        if let Some(m) = self.metrics.get_mut(strategy_id) {
+            m.total_orders_cancelled += 1;
+        }
     }
 
     /// Record that an order was rejected for the given strategy.
@@ -197,10 +201,9 @@ impl StrategyMetricsTracker {
         if !self.metrics.contains_key(strategy_id) {
             self.register_strategy(strategy_id);
         }
-        self.metrics
-            .get_mut(strategy_id)
-            .unwrap()
-            .total_orders_rejected += 1;
+        if let Some(m) = self.metrics.get_mut(strategy_id) {
+            m.total_orders_rejected += 1;
+        }
     }
 
     /// Set the current unrealized PnL for a strategy (computed externally

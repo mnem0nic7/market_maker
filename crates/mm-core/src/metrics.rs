@@ -196,8 +196,11 @@ impl MetricsRegistry {
         let encoder = TextEncoder::new();
         let metric_families = self.registry.gather();
         let mut buffer = Vec::new();
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        String::from_utf8(buffer).unwrap()
+        if let Err(_e) = encoder.encode(&metric_families, &mut buffer) {
+            eprintln!("metrics: failed to encode Prometheus metrics: {}", _e);
+            return String::new();
+        }
+        String::from_utf8(buffer).unwrap_or_default()
     }
 }
 

@@ -493,4 +493,330 @@ mod tests {
         assert_eq!(oms.get_orders_by_strategy("strat-a").len(), 1);
         assert_eq!(oms.cancel_all_for_strategy("strat-a").len(), 1);
     }
+
+    // -----------------------------------------------------------------------
+    // Test 1: register_order creates a Pending order with correct fields
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_register_order_creates_pending() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+
+        assert_eq!(order.status, OrderStatus::Pending);
+        // client_order_id should be a valid non-empty UUID
+        assert!(!order.client_order_id.is_empty());
+        assert!(Uuid::parse_str(&order.client_order_id).is_ok());
+        // Quantity should match the request
+        assert_eq!(order.quantity, dec!(0.1));
+        // Filled quantity should be zero
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+        // Remaining should equal the full quantity
+        assert_eq!(order.remaining_quantity, dec!(0.1));
+        // Exchange order id should not be set yet
+        assert!(order.exchange_order_id.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 2: mark_submitted transitions state from Pending to Submitted
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_mark_submitted_transitions_state() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+        let cid = order.client_order_id.clone();
+
+        let submitted = oms
+            .mark_submitted(&cid)
+            .expect("mark_submitted should succeed");
+
+        assert_eq!(submitted.status, OrderStatus::Submitted);
+        // Other fields should remain unchanged
+        assert_eq!(submitted.exchange, Exchange::Binance);
+        assert_eq!(submitted.symbol, Symbol::new("BTC", "USDT"));
+        assert_eq!(submitted.side, Side::Buy);
+        assert_eq!(submitted.order_type, OrderType::Limit);
+        assert_eq!(submitted.quantity, dec!(0.1));
+        assert_eq!(submitted.filled_quantity, Decimal::ZERO);
+        assert_eq!(submitted.remaining_quantity, dec!(0.1));
+        assert_eq!(submitted.strategy_id, "test-strategy");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 3: update_order with Filled status applies fill data
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_update_order_fills() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+        let cid = order.client_order_id.clone();
+
+        // Pending -> Submitted
+        oms.mark_submitted(&cid);
+
+        // Submitted -> Filled
+        let update = OrderUpdate {
+            client_order_id: cid.clone(),
+            exchange_order_id: Some("BINANCE-FILL-001".into()),
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::Filled,
+            filled_quantity: dec!(0.1),
+            remaining_quantity: Decimal::ZERO,
+            average_fill_price: dec!(50100),
+            last_fill_price: Some(dec!(50100)),
+            last_fill_quantity: Some(dec!(0.1)),
+            fee: Some(dec!(0.00001)),
+            fee_currency: Some("BTC".into()),
+            timestamp: Utc::now(),
+        };
+
+        let filled = oms.update_order(&update).expect("update should succeed");
+
+        assert_eq!(filled.status, OrderStatus::Filled);
+        assert_eq!(filled.filled_quantity, dec!(0.1));
+        assert_eq!(filled.remaining_quantity, Decimal::ZERO);
+        assert_eq!(filled.average_fill_price, dec!(50100));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 4: partial fill updates quantities correctly
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_partial_fill_update() {
+        let oms = OrderManager::new();
+        let mut new_order = sample_new_order();
+        new_order.quantity = dec!(1.0);
+        let order = oms.register_order(&new_order);
+        let cid = order.client_order_id.clone();
+
+        // Pending -> Submitted
+        oms.mark_submitted(&cid);
+
+        // Submitted -> PartiallyFilled (0.3 of 1.0)
+        let update = OrderUpdate {
+            client_order_id: cid.clone(),
+            exchange_order_id: Some("BINANCE-PF-001".into()),
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::PartiallyFilled,
+            filled_quantity: dec!(0.3),
+            remaining_quantity: dec!(0.7),
+            average_fill_price: dec!(49950),
+            last_fill_price: Some(dec!(49950)),
+            last_fill_quantity: Some(dec!(0.3)),
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+
+        let partial = oms
+            .update_order(&update)
+            .expect("partial fill should succeed");
+
+        assert_eq!(partial.status, OrderStatus::PartiallyFilled);
+        assert_eq!(partial.filled_quantity, dec!(0.3));
+        assert_eq!(partial.remaining_quantity, dec!(0.7));
+        assert_eq!(partial.average_fill_price, dec!(49950));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 5: cancel order transitions state and removes from open orders
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_cancel_order() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+        let cid = order.client_order_id.clone();
+
+        // Pending -> Submitted
+        oms.mark_submitted(&cid);
+
+        // Submitted -> Cancelled
+        let update = OrderUpdate {
+            client_order_id: cid.clone(),
+            exchange_order_id: None,
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::Cancelled,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: dec!(0.1),
+            average_fill_price: Decimal::ZERO,
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+
+        let cancelled = oms.update_order(&update).expect("cancel should succeed");
+
+        assert_eq!(cancelled.status, OrderStatus::Cancelled);
+        // Cancelled orders should NOT appear in open orders
+        let open = oms.get_open_orders();
+        assert!(
+            !open.iter().any(|o| o.client_order_id == cid),
+            "cancelled order should not be in open orders"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 6: get_open_orders filters correctly across multiple states
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_get_open_orders_filters_correctly() {
+        let oms = OrderManager::new();
+
+        // Register 3 orders
+        let o1 = oms.register_order(&sample_new_order());
+        let o2 = oms.register_order(&sample_new_order());
+        let o3 = oms.register_order(&sample_new_order());
+
+        // Mark all as submitted (Submitted is an active state)
+        oms.mark_submitted(&o1.client_order_id);
+        oms.mark_submitted(&o2.client_order_id);
+        oms.mark_submitted(&o3.client_order_id);
+
+        // Fill order 1
+        let fill_update = OrderUpdate {
+            client_order_id: o1.client_order_id.clone(),
+            exchange_order_id: None,
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::Filled,
+            filled_quantity: dec!(0.1),
+            remaining_quantity: Decimal::ZERO,
+            average_fill_price: dec!(50000),
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+        oms.update_order(&fill_update);
+
+        // Cancel order 2
+        let cancel_update = OrderUpdate {
+            client_order_id: o2.client_order_id.clone(),
+            exchange_order_id: None,
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::Cancelled,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: dec!(0.1),
+            average_fill_price: Decimal::ZERO,
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+        oms.update_order(&cancel_update);
+
+        // Only order 3 should remain open (Submitted is active)
+        let open = oms.get_open_orders();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].client_order_id, o3.client_order_id);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 7: get_order by client_order_id (found and not found)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_get_order_by_client_id() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+
+        // Should find the order by its client_order_id
+        let found = oms.get_order(&order.client_order_id);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().client_order_id, order.client_order_id);
+
+        // Should return None for a random ID
+        let not_found = oms.get_order(&Uuid::new_v4().to_string());
+        assert!(not_found.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 8: dual index consistency (client_order_id ↔ exchange_order_id)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_dual_index_consistency() {
+        let oms = OrderManager::new();
+        let order = oms.register_order(&sample_new_order());
+        let cid = order.client_order_id.clone();
+
+        // Pending -> Submitted
+        oms.mark_submitted(&cid);
+
+        // Submitted -> New, with exchange_order_id set
+        let exchange_id = "BINANCE-DUAL-999";
+        let update = OrderUpdate {
+            client_order_id: cid.clone(),
+            exchange_order_id: Some(exchange_id.into()),
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::New,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: dec!(0.1),
+            average_fill_price: Decimal::ZERO,
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+        oms.update_order(&update);
+
+        // Look up by client_order_id
+        let by_client = oms.get_order(&cid).expect("should find by client_order_id");
+
+        // Look up by exchange_order_id
+        let by_exchange = oms
+            .get_by_exchange_id(exchange_id)
+            .expect("should find by exchange_order_id");
+
+        // Both lookups should return the same order
+        assert_eq!(by_client.client_order_id, by_exchange.client_order_id);
+        assert_eq!(by_client.status, by_exchange.status);
+        assert_eq!(
+            by_client.exchange_order_id, by_exchange.exchange_order_id,
+            "exchange_order_id should match via both lookups"
+        );
+        assert_eq!(by_client.exchange_order_id, Some(exchange_id.to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 9: mark_submitted on nonexistent order returns None
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_mark_submitted_nonexistent_returns_none() {
+        let oms = OrderManager::new();
+        let result = oms.mark_submitted(&Uuid::new_v4().to_string());
+        assert!(result.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 10: update_order on nonexistent order returns None
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_update_nonexistent_order_returns_none() {
+        let oms = OrderManager::new();
+        let update = OrderUpdate {
+            client_order_id: Uuid::new_v4().to_string(),
+            exchange_order_id: None,
+            exchange: Exchange::Binance,
+            symbol: Symbol::new("BTC", "USDT"),
+            status: OrderStatus::New,
+            filled_quantity: Decimal::ZERO,
+            remaining_quantity: dec!(0.1),
+            average_fill_price: Decimal::ZERO,
+            last_fill_price: None,
+            last_fill_quantity: None,
+            fee: None,
+            fee_currency: None,
+            timestamp: Utc::now(),
+        };
+        let result = oms.update_order(&update);
+        assert!(result.is_none());
+    }
 }

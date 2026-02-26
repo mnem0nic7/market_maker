@@ -170,8 +170,7 @@ impl LocalOrderBook {
             return true;
         }
         let age = Utc::now() - self.timestamp;
-        let max_age_chrono =
-            chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::MAX);
+        let max_age_chrono = chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::MAX);
         age > max_age_chrono
     }
 

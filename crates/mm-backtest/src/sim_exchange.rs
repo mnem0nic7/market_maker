@@ -374,8 +374,14 @@ impl SimulatedExchange {
         }
 
         let fill_price = match order.side {
-            Side::Buy => book.best_ask().unwrap().price,
-            Side::Sell => book.best_bid().unwrap().price,
+            Side::Buy => match book.best_ask() {
+                Some(level) => level.price,
+                None => return false,
+            },
+            Side::Sell => match book.best_bid() {
+                Some(level) => level.price,
+                None => return false,
+            },
         };
 
         let slipped_price = self.slippage_model.apply(fill_price, order.side);
