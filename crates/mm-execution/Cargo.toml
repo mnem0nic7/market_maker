@@ -61,3 +61,8 @@ p256 = { version = "0.13", features = ["pem"] }
 
 [dev-dependencies]
 rust_decimal_macros = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "oms_bench"
+harness = false

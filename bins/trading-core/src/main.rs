@@ -17,7 +17,7 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
 use mm_core::{
@@ -1337,6 +1337,26 @@ async fn shutdown_signal() {
 /// Process an incoming order update: update the OMS, notify the strategy
 /// engine, and update positions on fills.
 #[allow(clippy::too_many_arguments)]
+#[instrument(
+    skip(
+        order_manager,
+        strategy_engine,
+        positions,
+        daily_pnl,
+        _api_state,
+        event_publisher,
+        strategy_metrics_tracker,
+        pnl_limit_check,
+        metrics,
+        broadcast_tx
+    ),
+    fields(
+        exchange = %update.exchange,
+        symbol = %update.symbol,
+        client_order_id = %update.client_order_id,
+        status = %update.status
+    )
+)]
 async fn handle_order_update(
     update: &OrderUpdate,
     order_manager: &Arc<OrderManager>,

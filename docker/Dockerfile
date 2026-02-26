@@ -1,11 +1,22 @@
 # =============================================================================
 # Stage 1: Build the Rust binaries
 # =============================================================================
-FROM rust:latest AS builder
+FROM rust:1.84-slim AS builder
 
 WORKDIR /app
 
-# Copy the workspace manifest and lock file first for better layer caching.
+# Install only minimal build dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build optimizations: thin LTO for faster link times, parallel codegen units.
+ENV CARGO_PROFILE_RELEASE_LTO=thin
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+
+# ---------------------------------------------------------------------------
+# Copy manifests first (changes less often) for better layer caching.
+# ---------------------------------------------------------------------------
 COPY Cargo.toml Cargo.lock ./
 
 # Copy all crate manifests so cargo can resolve the dependency graph.
@@ -21,9 +32,12 @@ COPY bins/trading-core/Cargo.toml bins/trading-core/Cargo.toml
 COPY bins/data-pipeline/Cargo.toml bins/data-pipeline/Cargo.toml
 COPY bins/gateway/Cargo.toml bins/gateway/Cargo.toml
 COPY bins/backtester/Cargo.toml bins/backtester/Cargo.toml
+COPY bins/connection-test/Cargo.toml bins/connection-test/Cargo.toml
 
-# Create stub source files so the initial dependency-only build can succeed.
+# ---------------------------------------------------------------------------
+# Create stub source files for dependency resolution.
 # This layer is cached as long as Cargo.toml / Cargo.lock don't change.
+# ---------------------------------------------------------------------------
 RUN mkdir -p crates/mm-core/src && echo "pub fn _stub() {}" > crates/mm-core/src/lib.rs && \
     mkdir -p crates/mm-market-data/src && echo "pub fn _stub() {}" > crates/mm-market-data/src/lib.rs && \
     mkdir -p crates/mm-strategy/src && echo "pub fn _stub() {}" > crates/mm-strategy/src/lib.rs && \
@@ -35,19 +49,25 @@ RUN mkdir -p crates/mm-core/src && echo "pub fn _stub() {}" > crates/mm-core/src
     mkdir -p bins/trading-core/src && echo "fn main() {}" > bins/trading-core/src/main.rs && \
     mkdir -p bins/data-pipeline/src && echo "fn main() {}" > bins/data-pipeline/src/main.rs && \
     mkdir -p bins/gateway/src && echo "fn main() {}" > bins/gateway/src/main.rs && \
-    mkdir -p bins/backtester/src && echo "fn main() {}" > bins/backtester/src/main.rs
+    mkdir -p bins/backtester/src && echo "fn main() {}" > bins/backtester/src/main.rs && \
+    mkdir -p bins/connection-test/src && echo "fn main() {}" > bins/connection-test/src/main.rs && \
+    mkdir -p src && echo "" > src/lib.rs
 
-# Build dependencies only (this layer is cached).
-RUN cargo build --release 2>/dev/null || true
+# Build dependencies only (cached if Cargo.toml/Cargo.lock unchanged).
+RUN cargo build --release --workspace 2>/dev/null || true
 
-# Now copy the real source code.
+# ---------------------------------------------------------------------------
+# Now copy actual source and rebuild.
+# ---------------------------------------------------------------------------
 COPY crates/ crates/
 COPY bins/ bins/
+COPY config/ config/
+COPY src/ src/
 
-# Touch all source files to invalidate the build cache for the actual code.
-RUN find crates bins -name "*.rs" -exec touch {} +
+# Touch source files to invalidate only code compilation.
+RUN find crates bins src -name "*.rs" -exec touch {} +
 
-# Build all binaries in release mode.
+# Full release build of all deployable binaries.
 RUN cargo build --release \
     --bin trading-core \
     --bin data-pipeline \
@@ -59,28 +79,35 @@ RUN cargo build --release \
 # =============================================================================
 FROM debian:bookworm-slim AS runtime
 
-# Install required runtime libraries.
+LABEL org.opencontainers.image.title="Market Maker"
+LABEL org.opencontainers.image.description="Multi-market automated trading platform"
+
+# Install only runtime dependencies (no dev headers).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 \
-    ca-certificates \
-    curl \
+    libssl3 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user to run the application.
-RUN groupadd --gid 1000 app && \
-    useradd --uid 1000 --gid app --create-home app
+RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app
 
-# Copy the compiled binaries from the builder stage.
-COPY --from=builder /app/target/release/trading-core /usr/local/bin/trading-core
-COPY --from=builder /app/target/release/data-pipeline /usr/local/bin/data-pipeline
-COPY --from=builder /app/target/release/gateway /usr/local/bin/gateway
-COPY --from=builder /app/target/release/backtester /usr/local/bin/backtester
+# Copy the compiled binaries from the builder stage with proper ownership.
+COPY --from=builder --chown=app:app /app/target/release/trading-core /usr/local/bin/
+COPY --from=builder --chown=app:app /app/target/release/data-pipeline /usr/local/bin/
+COPY --from=builder --chown=app:app /app/target/release/gateway /usr/local/bin/
+COPY --from=builder --chown=app:app /app/target/release/backtester /usr/local/bin/
 
-# Create directories for config and data.
-RUN mkdir -p /app/config /app/data && chown -R app:app /app
+# Copy default configuration.
+COPY --chown=app:app config/ /app/config/
 
-WORKDIR /app
+# Create data directory for runtime artifacts.
+RUN mkdir -p /app/data && chown -R app:app /app
+
 USER app
+WORKDIR /app
+
+# Health check targeting the gateway endpoint.
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:8080/api/v1/health || exit 1
 
 # Default: run the trading-core binary.
 CMD ["trading-core"]

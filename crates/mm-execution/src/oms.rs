@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use mm_core::{CancelOrder, Exchange, NewOrder, Order, OrderStatus, OrderUpdate, Position};
 use rust_decimal::Decimal;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -92,6 +92,7 @@ impl OrderManager {
     ///
     /// Assigns a fresh `client_order_id`, sets status to `Pending`, and
     /// inserts the order into the primary index.
+    #[instrument(skip(self, new_order), fields(exchange = %new_order.exchange, symbol = %new_order.symbol, side = %new_order.side, strategy_id = %new_order.strategy_id))]
     pub fn register_order(&self, new_order: &NewOrder) -> Order {
         let now = Utc::now();
         let client_order_id = Uuid::new_v4().to_string();
@@ -140,6 +141,7 @@ impl OrderManager {
     ///
     /// Returns the updated `Order` if the update was applied successfully, or
     /// `None` if the order was not found or the state transition is invalid.
+    #[instrument(skip(self), fields(client_order_id = %update.client_order_id, exchange_order_id = ?update.exchange_order_id, status = %update.status))]
     pub fn update_order(&self, update: &OrderUpdate) -> Option<Order> {
         // Look up by client_order_id first; fall back to exchange_order_id.
         let client_id = if self.orders.contains_key(&update.client_order_id) {

@@ -43,3 +43,8 @@ url = { workspace = true }
 
 [dev-dependencies]
 rust_decimal_macros = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "normalizer_bench"
+harness = false
