@@ -165,69 +165,123 @@ impl KrakenExecutionConnector {
     }
 
     /// Execute an authenticated POST request to a Kraken private endpoint.
+    ///
+    /// Retries on HTTP 429 (rate limited) and 5xx (server error) with
+    /// exponential backoff (1s, 2s, 4s), up to 3 retries.
     async fn private_post(
         &self,
         path: &str,
         params: &[(&str, String)],
     ) -> MmResult<serde_json::Value> {
-        let nonce = self.next_nonce();
-
-        let mut form_params: Vec<(&str, String)> = vec![("nonce", nonce.to_string())];
-        form_params.extend(params.iter().map(|(k, v)| (*k, v.clone())));
-
-        let post_data: String = form_params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let signature = self.sign(path, nonce, &post_data)?;
-
+        const MAX_RETRIES: u32 = 3;
         let url = format!("{}{}", self.config.base_url, path);
-        let resp = self
-            .http
-            .post(&url)
-            .header("API-Key", &self.config.api_key)
-            .header("API-Sign", &signature)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(post_data)
-            .send()
-            .await
-            .map_err(|e| MmError::Exchange {
-                exchange: Exchange::Kraken,
-                message: format!("HTTP error: {}", e),
-            })?;
+        let mut last_error = None;
 
-        let status = resp.status();
-        let body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Kraken,
-                message: format!("parse error: {}", e),
-            })?;
+        for attempt in 0..=MAX_RETRIES {
+            // Generate a fresh nonce and signature each attempt.
+            let nonce = self.next_nonce();
 
-        if !status.is_success() {
-            return Err(MmError::Exchange {
-                exchange: Exchange::Kraken,
-                message: format!("HTTP {} : {}", status, body),
-            });
-        }
+            let mut form_params: Vec<(&str, String)> = vec![("nonce", nonce.to_string())];
+            form_params.extend(params.iter().map(|(k, v)| (*k, v.clone())));
 
-        // Kraken wraps errors in the "error" array.
-        if let Some(errors) = body["error"].as_array() {
-            let real_errors: Vec<&str> = errors
+            let post_data: String = form_params
                 .iter()
-                .filter_map(|e| e.as_str())
-                .filter(|e| !e.starts_with("W")) // "W" prefix = warnings
-                .collect();
-            if !real_errors.is_empty() {
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join("&");
+
+            let signature = self.sign(path, nonce, &post_data)?;
+
+            let resp = match self
+                .http
+                .post(&url)
+                .header("API-Key", &self.config.api_key)
+                .header("API-Sign", &signature)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(post_data)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_error = Some(MmError::Exchange {
+                        exchange: Exchange::Kraken,
+                        message: format!("HTTP error: {}", e),
+                    });
+                    if attempt < MAX_RETRIES {
+                        warn!(
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            error = %e,
+                            path = %path,
+                            "Kraken: request failed, retrying"
+                        );
+                        tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                        continue;
+                    }
+                    return Err(last_error.unwrap());
+                }
+            };
+
+            let status = resp.status();
+
+            // Retry on 429 (rate limited) or 5xx (server error).
+            if status.as_u16() == 429 || status.is_server_error() {
+                let body_text = resp.text().await.unwrap_or_default();
+                warn!(
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    status = %status,
+                    body = %body_text,
+                    path = %path,
+                    "Kraken: rate limited or server error, retrying"
+                );
+                last_error = Some(MmError::Exchange {
+                    exchange: Exchange::Kraken,
+                    message: format!("HTTP {} : {}", status, body_text),
+                });
+                if attempt < MAX_RETRIES {
+                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    continue;
+                }
+                return Err(last_error.unwrap());
+            }
+
+            let body: serde_json::Value =
+                resp.json().await.map_err(|e| MmError::Exchange {
+                    exchange: Exchange::Kraken,
+                    message: format!("parse error: {}", e),
+                })?;
+
+            if !status.is_success() {
                 return Err(MmError::Exchange {
                     exchange: Exchange::Kraken,
-                    message: real_errors.join("; "),
+                    message: format!("HTTP {} : {}", status, body),
                 });
             }
+
+            // Kraken wraps errors in the "error" array.
+            if let Some(errors) = body["error"].as_array() {
+                let real_errors: Vec<&str> = errors
+                    .iter()
+                    .filter_map(|e| e.as_str())
+                    .filter(|e| !e.starts_with("W")) // "W" prefix = warnings
+                    .collect();
+                if !real_errors.is_empty() {
+                    return Err(MmError::Exchange {
+                        exchange: Exchange::Kraken,
+                        message: real_errors.join("; "),
+                    });
+                }
+            }
+
+            return Ok(body["result"].clone());
         }
 
-        Ok(body["result"].clone())
+        Err(last_error.unwrap_or_else(|| MmError::Exchange {
+            exchange: Exchange::Kraken,
+            message: "request failed after retries".into(),
+        }))
     }
 
     // -----------------------------------------------------------------------

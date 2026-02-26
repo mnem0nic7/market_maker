@@ -545,49 +545,99 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
 
         let body_str = body.to_string();
         let path = "/api/v3/brokerage/orders";
-        let headers = self.auth_headers("POST", path, &body_str)?;
         let url = format!("{}{}", self.config.base_url, path);
 
-        let mut req = self.http.post(&url).body(body_str);
-        for (k, v) in &headers {
-            req = req.header(k, v);
-        }
+        const MAX_RETRIES: u32 = 3;
+        let mut last_error = None;
 
-        let resp = req.send().await.map_err(|e| MmError::Exchange {
-            exchange: Exchange::Coinbase,
-            message: format!("submit_order HTTP error: {}", e),
-        })?;
+        for attempt in 0..=MAX_RETRIES {
+            // Regenerate auth headers each attempt (JWT includes a fresh timestamp).
+            let headers = self.auth_headers("POST", path, &body_str)?;
 
-        let status = resp.status();
-        let resp_body: serde_json::Value =
-            resp.json().await.map_err(|e| MmError::Exchange {
-                exchange: Exchange::Coinbase,
-                message: format!("submit_order parse error: {}", e),
-            })?;
+            let mut req = self.http.post(&url).body(body_str.clone());
+            for (k, v) in &headers {
+                req = req.header(k, v);
+            }
 
-        if !status.is_success() {
-            let error_msg = resp_body["error"]
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    last_error = Some(MmError::Exchange {
+                        exchange: Exchange::Coinbase,
+                        message: format!("submit_order HTTP error: {}", e),
+                    });
+                    if attempt < MAX_RETRIES {
+                        warn!(
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            error = %e,
+                            "Coinbase: submit_order request failed, retrying"
+                        );
+                        tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                        continue;
+                    }
+                    return Err(last_error.unwrap());
+                }
+            };
+
+            let status = resp.status();
+
+            // Retry on 429 (rate limited) or 5xx (server error).
+            if status.as_u16() == 429 || status.is_server_error() {
+                let resp_text = resp.text().await.unwrap_or_default();
+                warn!(
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    status = %status,
+                    body = %resp_text,
+                    "Coinbase: submit_order rate limited or server error, retrying"
+                );
+                last_error = Some(MmError::Exchange {
+                    exchange: Exchange::Coinbase,
+                    message: format!("submit_order HTTP {} : {}", status, resp_text),
+                });
+                if attempt < MAX_RETRIES {
+                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    continue;
+                }
+                return Err(last_error.unwrap());
+            }
+
+            let resp_body: serde_json::Value =
+                resp.json().await.map_err(|e| MmError::Exchange {
+                    exchange: Exchange::Coinbase,
+                    message: format!("submit_order parse error: {}", e),
+                })?;
+
+            if !status.is_success() {
+                let error_msg = resp_body["error"]
+                    .as_str()
+                    .or_else(|| resp_body["message"].as_str())
+                    .unwrap_or("unknown error");
+                return Err(MmError::OrderRejected {
+                    reason: format!("Coinbase error: {}", error_msg),
+                });
+            }
+
+            let order_id = resp_body["success_response"]["order_id"]
                 .as_str()
-                .or_else(|| resp_body["message"].as_str())
-                .unwrap_or("unknown error");
-            return Err(MmError::OrderRejected {
-                reason: format!("Coinbase error: {}", error_msg),
-            });
+                .unwrap_or(&client_order_id)
+                .to_string();
+
+            info!(
+                exchange_order_id = %order_id,
+                %product_id,
+                side = %side,
+                "Coinbase: order submitted"
+            );
+
+            return Ok(order_id);
         }
 
-        let order_id = resp_body["success_response"]["order_id"]
-            .as_str()
-            .unwrap_or(&client_order_id)
-            .to_string();
-
-        info!(
-            exchange_order_id = %order_id,
-            %product_id,
-            side = %side,
-            "Coinbase: order submitted"
-        );
-
-        Ok(order_id)
+        Err(last_error.unwrap_or_else(|| MmError::Exchange {
+            exchange: Exchange::Coinbase,
+            message: "submit_order failed after retries".into(),
+        }))
     }
 
     async fn cancel_order(&self, cancel: &CancelOrder) -> MmResult<()> {
@@ -602,37 +652,87 @@ impl ExecutionConnector for CoinbaseExecutionConnector {
 
         let body_str = body.to_string();
         let path = "/api/v3/brokerage/orders/batch_cancel";
-        let headers = self.auth_headers("POST", path, &body_str)?;
         let url = format!("{}{}", self.config.base_url, path);
 
-        let mut req = self.http.post(&url).body(body_str);
-        for (k, v) in &headers {
-            req = req.header(k, v);
+        const MAX_RETRIES: u32 = 3;
+        let mut last_error = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            // Regenerate auth headers each attempt (JWT includes a fresh timestamp).
+            let headers = self.auth_headers("POST", path, &body_str)?;
+
+            let mut req = self.http.post(&url).body(body_str.clone());
+            for (k, v) in &headers {
+                req = req.header(k, v);
+            }
+
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    last_error = Some(MmError::Exchange {
+                        exchange: Exchange::Coinbase,
+                        message: format!("cancel_order HTTP error: {}", e),
+                    });
+                    if attempt < MAX_RETRIES {
+                        warn!(
+                            attempt = attempt + 1,
+                            max_retries = MAX_RETRIES,
+                            error = %e,
+                            "Coinbase: cancel_order request failed, retrying"
+                        );
+                        tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                        continue;
+                    }
+                    return Err(last_error.unwrap());
+                }
+            };
+
+            let status = resp.status();
+
+            // Retry on 429 (rate limited) or 5xx (server error).
+            if status.as_u16() == 429 || status.is_server_error() {
+                let resp_text = resp.text().await.unwrap_or_default();
+                warn!(
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    status = %status,
+                    body = %resp_text,
+                    "Coinbase: cancel_order rate limited or server error, retrying"
+                );
+                last_error = Some(MmError::Exchange {
+                    exchange: Exchange::Coinbase,
+                    message: format!("cancel_order HTTP {} : {}", status, resp_text),
+                });
+                if attempt < MAX_RETRIES {
+                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    continue;
+                }
+                return Err(last_error.unwrap());
+            }
+
+            if !status.is_success() {
+                let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+                let msg = body["error"]
+                    .as_str()
+                    .or_else(|| body["message"].as_str())
+                    .unwrap_or("unknown error");
+                return Err(MmError::Exchange {
+                    exchange: Exchange::Coinbase,
+                    message: format!("cancel_order failed: {}", msg),
+                });
+            }
+
+            info!(
+                client_order_id = %cancel.client_order_id,
+                "Coinbase: order cancelled"
+            );
+            return Ok(());
         }
 
-        let resp = req.send().await.map_err(|e| MmError::Exchange {
+        Err(last_error.unwrap_or_else(|| MmError::Exchange {
             exchange: Exchange::Coinbase,
-            message: format!("cancel_order HTTP error: {}", e),
-        })?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
-            let msg = body["error"]
-                .as_str()
-                .or_else(|| body["message"].as_str())
-                .unwrap_or("unknown error");
-            return Err(MmError::Exchange {
-                exchange: Exchange::Coinbase,
-                message: format!("cancel_order failed: {}", msg),
-            });
-        }
-
-        info!(
-            client_order_id = %cancel.client_order_id,
-            "Coinbase: order cancelled"
-        );
-        Ok(())
+            message: "cancel_order failed after retries".into(),
+        }))
     }
 
     async fn cancel_all_orders(&self, request: &CancelAllOrders) -> MmResult<u32> {
