@@ -5,7 +5,7 @@ use mm_core::traits::Strategy;
 use mm_core::types::{Fill, MarketSnapshot, OrderAction};
 use mm_core::StrategyConfig;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::build_strategy_from_config;
 
@@ -94,6 +94,7 @@ impl StrategyEngine {
     /// Run a single tick across all active strategies. Each strategy receives the
     /// market snapshot and returns order actions. All actions are collected and
     /// returned in a flat list.
+    #[instrument(skip(self, snapshot), fields(strategy_count = self.strategies.len()))]
     pub fn tick(&mut self, snapshot: &MarketSnapshot) -> Vec<OrderAction> {
         let mut all_actions = Vec::new();
 
@@ -180,6 +181,7 @@ impl StrategyEngine {
     /// updates. For each update, builds a new strategy instance from the config.
     /// If the build succeeds, the old strategy is replaced. If it fails, the old
     /// strategy is kept and a warning is logged.
+    #[instrument(skip(self))]
     pub fn try_apply_updates(&mut self) {
         let rx = match self.param_update_rx.as_mut() {
             Some(rx) => rx,

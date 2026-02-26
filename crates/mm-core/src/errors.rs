@@ -79,7 +79,116 @@ pub enum MmError {
 
     #[error("{0}")]
     Internal(String),
+
+    // -- Contextual wrapper --
+    /// Wraps an existing `MmError` with additional context, preserving the
+    /// full error source chain via `std::error::Error::source()`.
+    #[error("{context}")]
+    WithContext {
+        context: String,
+        #[source]
+        source: Box<MmError>,
+    },
+}
+
+impl MmError {
+    /// Wrap this error with additional context. The original error is
+    /// preserved as the `source` of the returned `WithContext` variant,
+    /// enabling callers to walk the full error chain via
+    /// `std::error::Error::source()`.
+    pub fn with_context(self, context: impl Into<String>) -> Self {
+        MmError::WithContext {
+            context: context.into(),
+            source: Box::new(self),
+        }
+    }
 }
 
 /// Convenience type alias for results throughout the market maker platform.
 pub type MmResult<T> = Result<T, MmError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_with_context_preserves_source() {
+        let inner = MmError::OrderNotFound {
+            order_id: "abc-123".to_string(),
+        };
+        let outer = inner.with_context("failed to cancel order");
+
+        // The outer error should be a WithContext variant.
+        match &outer {
+            MmError::WithContext { context, source } => {
+                assert_eq!(context, "failed to cancel order");
+                // The inner source should be the original OrderNotFound.
+                match source.as_ref() {
+                    MmError::OrderNotFound { order_id } => {
+                        assert_eq!(order_id, "abc-123");
+                    }
+                    other => panic!("expected OrderNotFound, got: {other:?}"),
+                }
+            }
+            other => panic!("expected WithContext, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_error_display_shows_context() {
+        let inner = MmError::Exchange {
+            exchange: Exchange::Binance,
+            message: "timeout".to_string(),
+        };
+        let outer = inner.with_context("placing limit order");
+
+        // Display should show the context string, not the inner error.
+        assert_eq!(outer.to_string(), "placing limit order");
+    }
+
+    #[test]
+    fn test_error_source_chain() {
+        use std::error::Error;
+
+        let inner = MmError::RiskLimitBreached {
+            reason: "position too large".to_string(),
+        };
+        let mid = inner.with_context("evaluating new order");
+        let outer = mid.with_context("strategy tick failed");
+
+        // Walk the chain: outer -> mid -> inner
+        assert_eq!(outer.to_string(), "strategy tick failed");
+
+        let mid_err = outer.source().expect("outer should have a source");
+        assert_eq!(mid_err.to_string(), "evaluating new order");
+
+        let inner_err = mid_err.source().expect("mid should have a source");
+        assert_eq!(
+            inner_err.to_string(),
+            "risk limit breached: position too large"
+        );
+
+        // The innermost error should have no further source.
+        assert!(inner_err.source().is_none());
+    }
+
+    #[test]
+    fn test_error_with_context_multiple_levels() {
+        let base = MmError::Database("connection refused".to_string());
+        let wrapped = base
+            .with_context("persisting fill")
+            .with_context("processing order update");
+
+        assert_eq!(wrapped.to_string(), "processing order update");
+
+        // Verify the full chain is 3 levels deep.
+        use std::error::Error;
+        let level1 = wrapped.source().unwrap();
+        assert_eq!(level1.to_string(), "persisting fill");
+
+        let level2 = level1.source().unwrap();
+        assert_eq!(level2.to_string(), "database error: connection refused");
+
+        assert!(level2.source().is_none());
+    }
+}

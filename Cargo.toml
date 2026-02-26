@@ -108,6 +108,7 @@ bytes = "1"
 async-stream = "0.3"
 clap = { version = "4", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 # Workspace crates
 mm-core = { path = "crates/mm-core" }
