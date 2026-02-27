@@ -102,6 +102,11 @@ pub trait Strategy: Send + Sync {
     /// Unique identifier for this running strategy instance.
     fn strategy_id(&self) -> &str;
 
+    /// The exchange this strategy is configured to trade on.
+    fn exchange(&self) -> Exchange;
+    /// The symbol (trading pair) this strategy is configured to trade.
+    fn symbol(&self) -> Symbol;
+
     /// Called on each tick with the current market state.
     /// Returns a list of order actions to execute.
     fn on_tick(&mut self, snapshot: &MarketSnapshot) -> Vec<OrderAction>;

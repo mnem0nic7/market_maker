@@ -104,6 +104,11 @@ impl StrategyEngine {
         let mut all_actions = Vec::new();
 
         for strategy in self.strategies.iter_mut() {
+            // Skip strategies that don't match this snapshot's exchange+symbol
+            if strategy.exchange() != snapshot.exchange || strategy.symbol() != snapshot.symbol {
+                continue;
+            }
+
             if !strategy.is_active() {
                 debug!(
                     strategy_id = %strategy.strategy_id(),
@@ -315,6 +320,8 @@ mod tests {
         id: String,
         name: String,
         active: bool,
+        exchange: Exchange,
+        symbol: Symbol,
         tick_count: usize,
         fill_count: usize,
         update_count: usize,
@@ -328,6 +335,8 @@ mod tests {
                 id: id.to_string(),
                 name: name.to_string(),
                 active,
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
                 tick_count: 0,
                 fill_count: 0,
                 update_count: 0,
@@ -345,6 +354,12 @@ mod tests {
             self.stop_actions = actions;
             self
         }
+
+        fn with_exchange_symbol(mut self, exchange: Exchange, symbol: Symbol) -> Self {
+            self.exchange = exchange;
+            self.symbol = symbol;
+            self
+        }
     }
 
     impl Strategy for MockStrategy {
@@ -354,6 +369,14 @@ mod tests {
 
         fn strategy_id(&self) -> &str {
             &self.id
+        }
+
+        fn exchange(&self) -> Exchange {
+            self.exchange
+        }
+
+        fn symbol(&self) -> Symbol {
+            self.symbol.clone()
         }
 
         fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
@@ -724,6 +747,14 @@ mod tests {
             &self.id
         }
 
+        fn exchange(&self) -> Exchange {
+            Exchange::Simulated
+        }
+
+        fn symbol(&self) -> Symbol {
+            Symbol::new("BTC", "USDT")
+        }
+
         fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
             panic!("test panic");
         }
@@ -765,6 +796,14 @@ mod tests {
 
         fn strategy_id(&self) -> &str {
             &self.id
+        }
+
+        fn exchange(&self) -> Exchange {
+            Exchange::Simulated
+        }
+
+        fn symbol(&self) -> Symbol {
+            Symbol::new("BTC", "USDT")
         }
 
         fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
@@ -846,5 +885,123 @@ mod tests {
         // but the engine remains stable.
         let actions2 = engine.tick(&snapshot);
         assert_eq!(actions2.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Exchange+symbol filtering tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tick_filters_by_exchange_symbol() {
+        let mut engine = StrategyEngine::new();
+
+        // Strategy for BTC/USDT on Simulated exchange
+        let btc_strategy = MockStrategy::new("btc_strat", "BtcMM", true)
+            .with_exchange_symbol(Exchange::Simulated, Symbol::new("BTC", "USDT"))
+            .with_tick_actions(vec![make_place_action("btc_strat")]);
+
+        // Strategy for ETH/USDT on Simulated exchange
+        let eth_strategy = MockStrategy::new("eth_strat", "EthMM", true)
+            .with_exchange_symbol(Exchange::Simulated, Symbol::new("ETH", "USDT"))
+            .with_tick_actions(vec![make_place_action("eth_strat")]);
+
+        engine.add_strategy(Box::new(btc_strategy)).unwrap();
+        engine.add_strategy(Box::new(eth_strategy)).unwrap();
+
+        // Tick with a BTC/USDT snapshot (which make_snapshot() produces).
+        let snapshot = make_snapshot(); // Exchange::Simulated, BTC/USDT
+        let actions = engine.tick(&snapshot);
+
+        // Only the BTC strategy should have been ticked.
+        assert_eq!(
+            actions.len(),
+            1,
+            "Only the BTC strategy should produce actions for a BTC snapshot"
+        );
+
+        // Verify the action came from the BTC strategy.
+        match &actions[0] {
+            OrderAction::Place(order) => {
+                assert_eq!(order.strategy_id, "btc_strat");
+            }
+            _ => panic!("expected Place action from btc_strat"),
+        }
+
+        // Now tick with an ETH/USDT snapshot.
+        let eth_sym = Symbol::new("ETH", "USDT");
+        let now = Utc::now();
+        let eth_snapshot = MarketSnapshot {
+            exchange: Exchange::Simulated,
+            symbol: eth_sym.clone(),
+            order_book: std::sync::Arc::new(OrderBook {
+                exchange: Exchange::Simulated,
+                symbol: eth_sym.clone(),
+                bids: vec![PriceLevel {
+                    price: dec!(3000),
+                    quantity: dec!(1),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(3001),
+                    quantity: dec!(1),
+                }],
+                timestamp: now,
+                sequence: 1,
+            }),
+            last_trade: None,
+            position: Position::new(Exchange::Simulated, eth_sym),
+            open_orders: vec![],
+            timestamp: now,
+        };
+
+        let eth_actions = engine.tick(&eth_snapshot);
+
+        // Only the ETH strategy should have been ticked.
+        assert_eq!(
+            eth_actions.len(),
+            1,
+            "Only the ETH strategy should produce actions for an ETH snapshot"
+        );
+
+        match &eth_actions[0] {
+            OrderAction::Place(order) => {
+                assert_eq!(order.strategy_id, "eth_strat");
+            }
+            _ => panic!("expected Place action from eth_strat"),
+        }
+    }
+
+    #[test]
+    fn test_tick_filters_by_exchange() {
+        let mut engine = StrategyEngine::new();
+
+        // Two strategies for BTC/USDT but on different exchanges.
+        let binance_strategy = MockStrategy::new("binance_strat", "BinanceMM", true)
+            .with_exchange_symbol(Exchange::Binance, Symbol::new("BTC", "USDT"))
+            .with_tick_actions(vec![make_place_action("binance_strat")]);
+
+        let simulated_strategy = MockStrategy::new("sim_strat", "SimMM", true)
+            .with_exchange_symbol(Exchange::Simulated, Symbol::new("BTC", "USDT"))
+            .with_tick_actions(vec![make_place_action("sim_strat")]);
+
+        engine.add_strategy(Box::new(binance_strategy)).unwrap();
+        engine.add_strategy(Box::new(simulated_strategy)).unwrap();
+
+        // Tick with a Simulated exchange BTC/USDT snapshot.
+        let snapshot = make_snapshot(); // Exchange::Simulated, BTC/USDT
+        let actions = engine.tick(&snapshot);
+
+        // Only the Simulated strategy should fire.
+        assert_eq!(
+            actions.len(),
+            1,
+            "Only the Simulated exchange strategy should produce actions"
+        );
+
+        match &actions[0] {
+            OrderAction::Place(order) => {
+                assert_eq!(order.strategy_id, "sim_strat");
+            }
+            _ => panic!("expected Place action from sim_strat"),
+        }
     }
 }
