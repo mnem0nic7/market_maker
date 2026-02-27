@@ -120,7 +120,6 @@ struct KrakenSubscribeParams {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct KrakenWsMessage {
     channel: Option<String>,
     #[serde(rename = "type")]
@@ -128,7 +127,8 @@ struct KrakenWsMessage {
     data: Option<Vec<serde_json::Value>>,
     /// Method responses (subscribe confirmations, errors).
     method: Option<String>,
-    result: Option<serde_json::Value>,
+    #[serde(rename = "result")]
+    _result: Option<serde_json::Value>,
     error: Option<String>,
     success: Option<bool>,
 }
@@ -154,7 +154,6 @@ struct KrakenBookLevel {
 
 /// A single trade data entry.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct KrakenTradeData {
     symbol: String,
     side: String,
@@ -162,8 +161,8 @@ struct KrakenTradeData {
     qty: Decimal,
     trade_id: u64,
     timestamp: Option<String>,
-    #[serde(default)]
-    ord_type: Option<String>,
+    #[serde(default, rename = "ord_type")]
+    _ord_type: Option<String>,
 }
 
 /// REST order book response.
@@ -756,7 +755,7 @@ mod tests {
         assert_eq!(data.price, dec!(25000.15));
         assert_eq!(data.qty, dec!(0.1));
         assert_eq!(data.trade_id, 12345);
-        assert_eq!(data.ord_type.as_deref(), Some("limit"));
+        assert_eq!(data._ord_type.as_deref(), Some("limit"));
     }
 
     #[test]
@@ -772,7 +771,7 @@ mod tests {
         let data: KrakenTradeData = serde_json::from_str(json).unwrap();
         assert_eq!(data.side, "sell");
         assert_eq!(data.price, dec!(1800.00));
-        assert!(data.ord_type.is_none());
+        assert!(data._ord_type.is_none());
     }
 
     #[test]

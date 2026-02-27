@@ -89,12 +89,15 @@ async fn main() -> anyhow::Result<()> {
 
         let outcome: Result<usize, String> = match ex.name {
             "BINANCE" => {
-                test_exchange(BinanceExecutionConnector::new(BinanceExecutionConfig {
-                    api_key,
-                    secret_key,
-                    base_url: ex.base_url.into(),
-                    ws_url: ex.ws_url.into(),
-                }))
+                test_exchange(
+                    BinanceExecutionConnector::new(BinanceExecutionConfig {
+                        api_key,
+                        secret_key,
+                        base_url: ex.base_url.into(),
+                        ws_url: ex.ws_url.into(),
+                    })
+                    .expect("failed to create Binance connector"),
+                )
                 .await
             }
             "COINBASE" => {

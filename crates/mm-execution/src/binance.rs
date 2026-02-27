@@ -100,18 +100,18 @@ pub struct BinanceExecutionConnector {
 }
 
 impl BinanceExecutionConnector {
-    pub fn new(config: BinanceExecutionConfig) -> Self {
+    pub fn new(config: BinanceExecutionConfig) -> MmResult<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .expect("failed to build HTTP client");
+            .map_err(|e| MmError::Internal(format!("failed to build HTTP client: {e}")))?;
 
-        Self {
+        Ok(Self {
             config,
             http,
             connected: Arc::new(AtomicBool::new(false)),
             ws_handle: None,
-        }
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -884,7 +884,7 @@ mod tests {
     }
 
     fn test_connector() -> BinanceExecutionConnector {
-        BinanceExecutionConnector::new(test_config())
+        BinanceExecutionConnector::new(test_config()).unwrap()
     }
 
     // -- Config defaults --

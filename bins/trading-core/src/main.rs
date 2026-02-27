@@ -296,7 +296,7 @@ async fn main() -> Result<()> {
                         base_url: "https://api.binance.us".into(),
                         ws_url: "wss://stream.binance.us:9443".into(),
                     },
-                )));
+                )?));
             }
             Exchange::Coinbase => {
                 md_manager.register_connector(Box::new(CoinbaseConnector::new()));

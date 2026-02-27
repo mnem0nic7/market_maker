@@ -394,53 +394,55 @@ impl MarketDataConnector for RaydiumConnector {
 
 /// Solana WebSocket subscription confirmation response.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct RpcSubscriptionResponse {
-    jsonrpc: String,
+    #[serde(rename = "jsonrpc")]
+    _jsonrpc: String,
     result: Option<u64>,
-    id: Option<u64>,
+    #[serde(rename = "id")]
+    _id: Option<u64>,
 }
 
 /// Solana WebSocket account notification.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct RpcAccountNotification {
-    jsonrpc: String,
-    method: Option<String>,
+    #[serde(rename = "jsonrpc")]
+    _jsonrpc: String,
+    #[serde(rename = "method")]
+    _method: Option<String>,
     params: Option<AccountNotificationParams>,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct AccountNotificationParams {
     result: AccountNotificationResult,
     subscription: u64,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct AccountNotificationResult {
-    context: RpcContext,
+    #[serde(rename = "context")]
+    _context: RpcContext,
     value: AccountValue,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct RpcContext {
-    slot: u64,
+    #[serde(rename = "slot")]
+    _slot: u64,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct AccountValue {
     /// Account data as [base64_string, "base64"] tuple.
     data: Vec<String>,
     #[serde(rename = "lamports")]
-    lamports: u64,
-    owner: String,
-    executable: bool,
+    _lamports: u64,
+    #[serde(rename = "owner")]
+    _owner: String,
+    #[serde(rename = "executable")]
+    _executable: bool,
     #[serde(rename = "rentEpoch")]
-    rent_epoch: u64,
+    _rent_epoch: u64,
 }
 
 async fn handle_solana_ws_message(
