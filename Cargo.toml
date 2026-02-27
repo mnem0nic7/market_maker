@@ -15,6 +15,7 @@ members = [
     "crates/mm-data-pipeline",
     "crates/mm-backtest",
     "crates/mm-gateway",
+    "crates/mm-research",
     "bins/trading-core",
     "bins/data-pipeline",
     "bins/gateway",
@@ -119,3 +120,4 @@ mm-risk = { path = "crates/mm-risk" }
 mm-data-pipeline = { path = "crates/mm-data-pipeline" }
 mm-backtest = { path = "crates/mm-backtest" }
 mm-gateway = { path = "crates/mm-gateway" }
+mm-research = { path = "crates/mm-research" }
