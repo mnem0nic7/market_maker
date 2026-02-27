@@ -46,12 +46,12 @@ impl Tool for PerplexitySearchTool {
     }
 
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
-        let query = params
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
         if query.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: query"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: query",
+            ));
         }
 
         let body = serde_json::json!({

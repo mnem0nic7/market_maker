@@ -248,9 +248,6 @@ mod tests {
             serde_json::to_string(&LlmRole::Assistant).unwrap(),
             "\"assistant\""
         );
-        assert_eq!(
-            serde_json::to_string(&LlmRole::User).unwrap(),
-            "\"user\""
-        );
+        assert_eq!(serde_json::to_string(&LlmRole::User).unwrap(), "\"user\"");
     }
 }

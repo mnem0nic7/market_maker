@@ -29,10 +29,8 @@ impl SkillLoader {
                 Ok(entries) => {
                     for entry in entries.flatten() {
                         let file_path = entry.path();
-                        let file_name = file_path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("");
+                        let file_name =
+                            file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
                         if file_name.ends_with(".skill.md") || file_name == "SKILL.md" {
                             match Self::parse_skill_file(&file_path) {
@@ -157,8 +155,7 @@ description: Run a discounted cash flow analysis
 3. Project future cash flows
 "#;
 
-        let skill =
-            SkillLoader::parse_with_frontmatter(content, "skills/dcf.skill.md").unwrap();
+        let skill = SkillLoader::parse_with_frontmatter(content, "skills/dcf.skill.md").unwrap();
         assert_eq!(skill.name, "dcf_valuation");
         assert_eq!(skill.description, "Run a discounted cash flow analysis");
         assert!(skill.body.contains("DCF Valuation Workflow"));

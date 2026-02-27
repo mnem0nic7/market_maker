@@ -682,9 +682,18 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         // AI assistant
         .route("/api/v1/assistant/chat", post(assistant_chat))
         // Research agent
-        .route("/api/v1/research/query", post(crate::research::research_query))
-        .route("/api/v1/research/tools", get(crate::research::research_tools))
-        .route("/api/v1/research/skills", get(crate::research::research_skills))
+        .route(
+            "/api/v1/research/query",
+            post(crate::research::research_query),
+        )
+        .route(
+            "/api/v1/research/tools",
+            get(crate::research::research_tools),
+        )
+        .route(
+            "/api/v1/research/skills",
+            get(crate::research::research_skills),
+        )
         // Metrics middleware — records request count and latency for every request.
         .layer(middleware::from_fn_with_state(
             state.clone(),

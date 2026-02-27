@@ -111,7 +111,11 @@ impl AnthropicProvider {
         for attempt in 0..MAX_RETRIES {
             if attempt > 0 {
                 let delay = Duration::from_secs(1 << attempt); // 2s, 4s
-                debug!(attempt, delay_secs = delay.as_secs(), "Retrying Anthropic API");
+                debug!(
+                    attempt,
+                    delay_secs = delay.as_secs(),
+                    "Retrying Anthropic API"
+                );
                 tokio::time::sleep(delay).await;
             }
 

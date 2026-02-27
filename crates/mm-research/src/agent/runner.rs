@@ -280,14 +280,10 @@ fn build_system_message(
     if !skills.is_empty() {
         let mut skills_section = String::from("\n\n## Available Skills\n");
         for skill in skills {
-            skills_section.push_str(&format!(
-                "- **{}**: {}\n",
-                skill.name, skill.description
-            ));
+            skills_section.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
         }
-        skills_section.push_str(
-            "\nYou can reference these skills when performing specialized analysis.",
-        );
+        skills_section
+            .push_str("\nYou can reference these skills when performing specialized analysis.");
         parts.push(skills_section);
     }
 
@@ -301,9 +297,7 @@ fn build_system_message(
 
     // Add trading context if available
     if let Some(ctx) = trading_context {
-        parts.push(format!(
-            "\n\n## Live Trading Context\n{ctx}"
-        ));
+        parts.push(format!("\n\n## Live Trading Context\n{ctx}"));
     }
 
     parts.join("")
@@ -393,11 +387,11 @@ mod tests {
                 required: vec![],
             }
         }
-        async fn invoke(
-            &self,
-            _params: serde_json::Value,
-        ) -> anyhow::Result<ToolOutput> {
-            Ok(ToolOutput::success("mock_tool", r#"{"result": "mock data"}"#))
+        async fn invoke(&self, _params: serde_json::Value) -> anyhow::Result<ToolOutput> {
+            Ok(ToolOutput::success(
+                "mock_tool",
+                r#"{"result": "mock data"}"#,
+            ))
         }
     }
 
@@ -454,11 +448,7 @@ mod tests {
         let turn1 = LlmResponse {
             content: vec![
                 ContentBlock::text("Let me look that up."),
-                ContentBlock::tool_use(
-                    "tc_1",
-                    "mock_tool",
-                    serde_json::json!({"q": "AAPL"}),
-                ),
+                ContentBlock::tool_use("tc_1", "mock_tool", serde_json::json!({"q": "AAPL"})),
             ],
             stop_reason: StopReason::ToolUse,
             usage: Usage {
@@ -489,12 +479,12 @@ mod tests {
             .collect()
             .await;
 
-        let has_tool_start = events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::ToolStart { tool_name, .. } if tool_name == "mock_tool"));
-        let has_tool_end = events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::ToolEnd { tool_name, .. } if tool_name == "mock_tool"));
+        let has_tool_start = events.iter().any(
+            |e| matches!(e, AgentEvent::ToolStart { tool_name, .. } if tool_name == "mock_tool"),
+        );
+        let has_tool_end = events.iter().any(
+            |e| matches!(e, AgentEvent::ToolEnd { tool_name, .. } if tool_name == "mock_tool"),
+        );
 
         assert!(has_tool_start);
         assert!(has_tool_end);
@@ -527,10 +517,7 @@ mod tests {
         let tools = Arc::new(registry);
 
         let runner = AgentRunner::new(llm, tools, vec![], test_config());
-        let events: Vec<AgentEvent> = runner
-            .run("Analyze AAPL".into(), None)
-            .collect()
-            .await;
+        let events: Vec<AgentEvent> = runner.run("Analyze AAPL".into(), None).collect().await;
 
         // Should still get a final answer even when max iterations hit
         let has_answer = events

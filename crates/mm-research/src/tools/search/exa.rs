@@ -46,12 +46,12 @@ impl Tool for ExaSearchTool {
     }
 
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
-        let query = params
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
         if query.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: query"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: query",
+            ));
         }
 
         let num_results = params
@@ -79,11 +79,17 @@ impl Tool for ExaSearchTool {
 
         if !response.status().is_success() {
             let text = response.text().await.unwrap_or_default();
-            return Ok(ToolOutput::error(self.name(), format!("Exa API error: {text}")));
+            return Ok(ToolOutput::error(
+                self.name(),
+                format!("Exa API error: {text}"),
+            ));
         }
 
         let data: Value = response.json().await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 

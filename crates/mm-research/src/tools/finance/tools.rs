@@ -12,10 +12,7 @@ use crate::tools::{Tool, ToolOutput, ToolSchema};
 // ---------------------------------------------------------------------------
 
 fn param_str<'a>(params: &'a Value, key: &str, default: &'a str) -> &'a str {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
+    params.get(key).and_then(|v| v.as_str()).unwrap_or(default)
 }
 
 fn param_u32(params: &Value, key: &str, default: u32) -> u32 {
@@ -54,12 +51,18 @@ impl Tool for IncomeStatementsTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
         let period = param_str(&params, "period", "annual");
         let limit = param_u32(&params, "limit", 4);
         let data = self.0.income_statements(ticker, period, limit).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -91,10 +94,23 @@ impl Tool for BalanceSheetsTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
-        let data = self.0.balance_sheets(ticker, param_str(&params, "period", "annual"), param_u32(&params, "limit", 4)).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .balance_sheets(
+                ticker,
+                param_str(&params, "period", "annual"),
+                param_u32(&params, "limit", 4),
+            )
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -126,10 +142,23 @@ impl Tool for CashFlowStatementsTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
-        let data = self.0.cash_flow_statements(ticker, param_str(&params, "period", "annual"), param_u32(&params, "limit", 4)).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .cash_flow_statements(
+                ticker,
+                param_str(&params, "period", "annual"),
+                param_u32(&params, "limit", 4),
+            )
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -161,10 +190,23 @@ impl Tool for KeyRatiosTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
-        let data = self.0.financial_metrics(ticker, param_str(&params, "period", "ttm"), param_u32(&params, "limit", 4)).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .financial_metrics(
+                ticker,
+                param_str(&params, "period", "ttm"),
+                param_u32(&params, "limit", 4),
+            )
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -196,11 +238,20 @@ impl Tool for FilingsTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
         let filing_type = params.get("filing_type").and_then(|v| v.as_str());
-        let data = self.0.filings(ticker, filing_type, param_u32(&params, "limit", 10)).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .filings(ticker, filing_type, param_u32(&params, "limit", 10))
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -231,10 +282,19 @@ impl Tool for InsiderTradesTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
-        let data = self.0.insider_trades(ticker, param_u32(&params, "limit", 10)).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .insider_trades(ticker, param_u32(&params, "limit", 10))
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -265,11 +325,17 @@ impl Tool for NewsTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
         let limit = param_u32(&params, "limit", 5).min(10);
         let data = self.0.news(ticker, limit).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -300,10 +366,19 @@ impl Tool for AnalystEstimatesTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
-        let data = self.0.analyst_estimates(ticker, param_str(&params, "period", "annual")).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .analyst_estimates(ticker, param_str(&params, "period", "annual"))
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -335,10 +410,23 @@ impl Tool for SegmentedRevenuesTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
-        let data = self.0.segmented_revenues(ticker, param_str(&params, "period", "annual"), param_u32(&params, "limit", 4)).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .segmented_revenues(
+                ticker,
+                param_str(&params, "period", "annual"),
+                param_u32(&params, "limit", 4),
+            )
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -368,10 +456,16 @@ impl Tool for CryptoSnapshotTool {
     async fn invoke(&self, params: Value) -> anyhow::Result<ToolOutput> {
         let ticker = param_str(&params, "ticker", "");
         if ticker.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameter: ticker"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameter: ticker",
+            ));
         }
         let data = self.0.crypto_snapshot(ticker).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -406,10 +500,19 @@ impl Tool for CryptoPricesTool {
         let start = param_str(&params, "start_date", "");
         let end = param_str(&params, "end_date", "");
         if ticker.is_empty() || start.is_empty() || end.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameters: ticker, start_date, end_date"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameters: ticker, start_date, end_date",
+            ));
         }
-        let data = self.0.crypto_prices(ticker, param_str(&params, "interval", "day"), start, end).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .crypto_prices(ticker, param_str(&params, "interval", "day"), start, end)
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 
@@ -444,10 +547,19 @@ impl Tool for StockPricesTool {
         let start = param_str(&params, "start_date", "");
         let end = param_str(&params, "end_date", "");
         if ticker.is_empty() || start.is_empty() || end.is_empty() {
-            return Ok(ToolOutput::error(self.name(), "Missing required parameters: ticker, start_date, end_date"));
+            return Ok(ToolOutput::error(
+                self.name(),
+                "Missing required parameters: ticker, start_date, end_date",
+            ));
         }
-        let data = self.0.stock_prices(ticker, param_str(&params, "interval", "day"), start, end).await?;
-        Ok(ToolOutput::success(self.name(), serde_json::to_string(&data)?))
+        let data = self
+            .0
+            .stock_prices(ticker, param_str(&params, "interval", "day"), start, end)
+            .await?;
+        Ok(ToolOutput::success(
+            self.name(),
+            serde_json::to_string(&data)?,
+        ))
     }
 }
 

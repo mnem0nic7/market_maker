@@ -107,7 +107,10 @@ mod tests {
                 .get("query")
                 .and_then(|v| v.as_str())
                 .unwrap_or("none");
-            Ok(ToolOutput::success(&self.tool_name, format!("Result for: {query}")))
+            Ok(ToolOutput::success(
+                &self.tool_name,
+                format!("Result for: {query}"),
+            ))
         }
     }
 

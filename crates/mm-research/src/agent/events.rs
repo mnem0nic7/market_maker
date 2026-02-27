@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
     /// A new iteration of the agent loop has started.
-    IterationStart {
-        iteration: u32,
-        max_iterations: u32,
-    },
+    IterationStart { iteration: u32, max_iterations: u32 },
 
     /// The agent is thinking (text from the LLM before tool calls).
     Thinking { text: String },

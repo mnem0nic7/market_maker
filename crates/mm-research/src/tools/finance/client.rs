@@ -120,21 +120,14 @@ impl FinancialDataClient {
         limit: u32,
     ) -> anyhow::Result<Value> {
         let limit_str = limit.to_string();
-        let mut params: Vec<(&str, &str)> = vec![
-            ("ticker", ticker),
-            ("limit", &limit_str),
-        ];
+        let mut params: Vec<(&str, &str)> = vec![("ticker", ticker), ("limit", &limit_str)];
         if let Some(ft) = filing_type {
             params.push(("filing_type", ft));
         }
         self.get("/filings/", &params).await
     }
 
-    pub async fn insider_trades(
-        &self,
-        ticker: &str,
-        limit: u32,
-    ) -> anyhow::Result<Value> {
+    pub async fn insider_trades(&self, ticker: &str, limit: u32) -> anyhow::Result<Value> {
         let limit_str = limit.to_string();
         self.get(
             "/insider-trades/",
@@ -149,11 +142,7 @@ impl FinancialDataClient {
             .await
     }
 
-    pub async fn analyst_estimates(
-        &self,
-        ticker: &str,
-        period: &str,
-    ) -> anyhow::Result<Value> {
+    pub async fn analyst_estimates(&self, ticker: &str, period: &str) -> anyhow::Result<Value> {
         self.get(
             "/analyst-estimates/",
             &[("ticker", ticker), ("period", period)],
@@ -170,7 +159,11 @@ impl FinancialDataClient {
         let limit_str = limit.to_string();
         self.get(
             "/financials/segmented-revenues/",
-            &[("ticker", ticker), ("period", period), ("limit", &limit_str)],
+            &[
+                ("ticker", ticker),
+                ("period", period),
+                ("limit", &limit_str),
+            ],
         )
         .await
     }

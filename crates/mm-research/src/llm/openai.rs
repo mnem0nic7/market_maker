@@ -51,9 +51,10 @@ impl OpenAiProvider {
             match msg.role {
                 LlmRole::User => {
                     // User messages: may contain text or tool_result blocks
-                    let has_tool_results = msg.content.iter().any(|b| {
-                        matches!(b, ContentBlock::ToolResult { .. })
-                    });
+                    let has_tool_results = msg
+                        .content
+                        .iter()
+                        .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
                     if has_tool_results {
                         // Each tool result becomes a separate "tool" role message
@@ -104,16 +105,14 @@ impl OpenAiProvider {
                         .content
                         .iter()
                         .filter_map(|b| match b {
-                            ContentBlock::ToolUse { id, name, input } => {
-                                Some(serde_json::json!({
-                                    "id": id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": name,
-                                        "arguments": serde_json::to_string(input).unwrap_or_default(),
-                                    }
-                                }))
-                            }
+                            ContentBlock::ToolUse { id, name, input } => Some(serde_json::json!({
+                                "id": id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": serde_json::to_string(input).unwrap_or_default(),
+                                }
+                            })),
                             _ => None,
                         })
                         .collect();
@@ -321,10 +320,8 @@ impl OpenAiResponse {
 
         // Add tool calls
         for tool_call in choice.message.tool_calls {
-            let input: Value =
-                serde_json::from_str(&tool_call.function.arguments).unwrap_or(Value::Object(
-                    serde_json::Map::new(),
-                ));
+            let input: Value = serde_json::from_str(&tool_call.function.arguments)
+                .unwrap_or(Value::Object(serde_json::Map::new()));
             content.push(ContentBlock::ToolUse {
                 id: tool_call.id,
                 name: tool_call.function.name,
