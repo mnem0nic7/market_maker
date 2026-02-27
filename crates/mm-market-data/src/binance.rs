@@ -313,8 +313,6 @@ impl MarketDataConnector for BinanceConnector {
                 );
                 tokio::time::sleep(Duration::from_secs(delay)).await;
             }
-
-            connected.store(false, Ordering::SeqCst);
         });
 
         self.task_handle = Some(handle);

@@ -394,6 +394,7 @@ impl MarketDataConnector for RaydiumConnector {
 
 /// Solana WebSocket subscription confirmation response.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct RpcSubscriptionResponse {
     #[serde(rename = "jsonrpc")]
     _jsonrpc: String,

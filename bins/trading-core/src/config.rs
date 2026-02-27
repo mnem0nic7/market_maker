@@ -138,6 +138,56 @@ impl TradingConfig {
             }
         }
 
+        // 9. Strategy types must be known
+        const KNOWN_STRATEGY_TYPES: &[&str] = &[
+            "spread",
+            "avellaneda",
+            "grid",
+            "twap",
+            "vwap",
+            "momentum",
+            "mean_reversion",
+            "stat_arb",
+        ];
+        for strat in &self.strategies {
+            if !strat.enabled {
+                continue;
+            }
+            if !KNOWN_STRATEGY_TYPES.contains(&strat.strategy_type.as_str()) {
+                errors.push(format!(
+                    "strategies[{}]: unknown strategy_type '{}' (known: {})",
+                    strat.strategy_id,
+                    strat.strategy_type,
+                    KNOWN_STRATEGY_TYPES.join(", "),
+                ));
+            }
+        }
+
+        // 10. Enabled strategies must reference an enabled exchange
+        for strat in &self.strategies {
+            if !strat.enabled {
+                continue;
+            }
+            let exchange_key = strat.exchange.to_lowercase();
+            match self.exchanges.get(&exchange_key) {
+                None => {
+                    errors.push(format!(
+                        "strategies[{}]: exchange '{}' not found in exchanges config",
+                        strat.strategy_id, strat.exchange,
+                    ));
+                }
+                Some(ec) if !ec.enabled => {
+                    // Warn rather than error — user might intend to enable the exchange later
+                    tracing::warn!(
+                        "strategies[{}]: exchange '{}' is not enabled",
+                        strat.strategy_id,
+                        strat.exchange,
+                    );
+                }
+                _ => {}
+            }
+        }
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -1058,5 +1108,133 @@ mod tests {
         assert!(parse_symbol("BTCUSDT").is_none(), "no slash should fail");
         assert!(parse_symbol("BTC/USDT/extra").is_none(), "too many slashes");
         assert!(parse_symbol("").is_none(), "empty string");
+    }
+
+    // -----------------------------------------------------------------------
+    // 17. Unknown strategy type fails validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_unknown_strategy_type_fails() {
+        let mut cfg = make_config_with_enabled_exchange();
+        cfg.strategies.push(StrategyInstanceConfig {
+            strategy_id: "test-strat".to_string(),
+            strategy_type: "nonexistent".to_string(),
+            exchange: "binance".to_string(),
+            symbol: "BTC/USDT".to_string(),
+            enabled: true,
+            params: serde_json::json!({}),
+        });
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown strategy_type"),
+            "expected unknown strategy_type error, got: {msg}",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 18. All known strategy types pass validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_known_strategy_types_pass() {
+        let known_types = [
+            "spread",
+            "avellaneda",
+            "grid",
+            "twap",
+            "vwap",
+            "momentum",
+            "mean_reversion",
+            "stat_arb",
+        ];
+        let mut cfg = make_config_with_enabled_exchange();
+        for (i, strategy_type) in known_types.iter().enumerate() {
+            cfg.strategies.push(StrategyInstanceConfig {
+                strategy_id: format!("strat-{i}"),
+                strategy_type: strategy_type.to_string(),
+                exchange: "binance".to_string(),
+                symbol: "BTC/USDT".to_string(),
+                enabled: true,
+                params: serde_json::json!({}),
+            });
+        }
+        assert!(
+            cfg.validate().is_ok(),
+            "all known strategy types should pass validation: {:?}",
+            cfg.validate().err(),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 19. Strategy referencing missing exchange fails
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_strategy_references_missing_exchange_fails() {
+        let mut cfg = make_config_with_enabled_exchange();
+        cfg.strategies.push(StrategyInstanceConfig {
+            strategy_id: "test-strat".to_string(),
+            strategy_type: "spread".to_string(),
+            exchange: "doesnotexist".to_string(),
+            symbol: "BTC/USDT".to_string(),
+            enabled: true,
+            params: serde_json::json!({}),
+        });
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not found in exchanges config"),
+            "expected missing exchange error, got: {msg}",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 20. Strategy referencing disabled exchange warns but passes
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_strategy_references_disabled_exchange_warns_but_passes() {
+        let mut cfg = TradingConfig::default();
+        cfg.exchanges.insert(
+            "binance".to_string(),
+            ExchangeConfig {
+                api_key: String::new(),
+                secret_key: String::new(),
+                enabled: false, // disabled
+                symbols: vec!["BTC/USDT".to_string()],
+            },
+        );
+        cfg.strategies.push(StrategyInstanceConfig {
+            strategy_id: "test-strat".to_string(),
+            strategy_type: "spread".to_string(),
+            exchange: "binance".to_string(),
+            symbol: "BTC/USDT".to_string(),
+            enabled: true,
+            params: serde_json::json!({}),
+        });
+        assert!(
+            cfg.validate().is_ok(),
+            "strategy referencing disabled exchange should warn but pass: {:?}",
+            cfg.validate().err(),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 21. Disabled strategy skips all validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_disabled_strategy_skips_validation() {
+        let mut cfg = make_valid_config();
+        cfg.strategies.push(StrategyInstanceConfig {
+            strategy_id: "test-strat".to_string(),
+            strategy_type: "nonexistent".to_string(), // invalid type
+            exchange: "doesnotexist".to_string(),     // missing exchange
+            symbol: "BTC/USDT".to_string(),
+            enabled: false, // disabled — should skip all checks
+            params: serde_json::json!({}),
+        });
+        assert!(
+            cfg.validate().is_ok(),
+            "disabled strategy should skip all validation: {:?}",
+            cfg.validate().err(),
+        );
     }
 }

@@ -114,10 +114,12 @@ struct IbOrderResponse {
     order_id: Option<String>,
     /// Present when IB requires a confirmation.
     id: Option<String>,
-    /// Message (may be informational or error).
-    message: Option<Vec<String>>,
-    /// Alternate field for order status.
-    order_status: Option<String>,
+    /// Message (may be informational or error; parsed from API response).
+    #[serde(default)]
+    _message: Option<Vec<String>>,
+    /// Alternate field for order status (parsed from API response).
+    #[serde(rename = "order_status")]
+    _order_status: Option<String>,
 }
 
 /// Order status from GET `/iserver/account/orders`.
@@ -133,8 +135,9 @@ struct IbOpenOrder {
     #[serde(rename = "order_ref", default)]
     order_ref: Option<String>,
     conid: Option<u64>,
-    /// "BUY" or "SELL"
-    side: Option<String>,
+    /// "BUY" or "SELL" (parsed from API response; used in future order tracking)
+    #[serde(default)]
+    _side: Option<String>,
     /// Order status: Submitted, Filled, Cancelled, etc.
     status: Option<String>,
     /// Filled quantity.
@@ -607,8 +610,8 @@ impl ExecutionConnector for IbExecutionConnector {
                 serde_json::from_value(body.clone()).unwrap_or(IbOrderResponse {
                     order_id: None,
                     id: None,
-                    message: None,
-                    order_status: None,
+                    _message: None,
+                    _order_status: None,
                 }),
             ]
         };
