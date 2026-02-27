@@ -97,7 +97,6 @@ fn default_ws_url() -> String {
 ///
 /// Field keys are numeric strings. We capture the fields we care about.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct IbSnapshotEntry {
     /// Contract ID
     conid: Option<u64>,
@@ -172,7 +171,7 @@ impl IbConnector {
     }
 
     /// Reverse-lookup: find the canonical [`Symbol`] for a given contract ID.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn symbol_for_conid(&self, conid: &str) -> Option<Symbol> {
         for (base, cid) in &self.config.conid_map {
             if cid == conid {

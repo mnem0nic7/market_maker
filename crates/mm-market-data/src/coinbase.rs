@@ -96,20 +96,18 @@ struct CoinbaseSubscribeMsg {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct CoinbaseWsMessage {
     channel: Option<String>,
     events: Option<Vec<serde_json::Value>>,
     #[serde(rename = "type")]
-    msg_type: Option<String>,
+    _msg_type: Option<String>,
 }
 
 /// A single level2 event.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct CoinbaseL2Event {
     #[serde(rename = "type")]
-    event_type: String,
+    _event_type: String,
     product_id: String,
     updates: Vec<CoinbaseL2Update>,
 }
@@ -146,9 +144,9 @@ struct CoinbaseOrderBookResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct CoinbasePriceBook {
-    product_id: String,
+    #[serde(rename = "product_id")]
+    _product_id: String,
     bids: Vec<CoinbasePriceBookLevel>,
     asks: Vec<CoinbasePriceBookLevel>,
     time: Option<String>,
@@ -640,7 +638,7 @@ mod tests {
             ]
         }"#;
         let event: CoinbaseL2Event = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type, "update");
+        assert_eq!(event._event_type, "update");
         assert_eq!(event.product_id, "BTC-USD");
         assert_eq!(event.updates.len(), 2);
         assert_eq!(event.updates[0].side, "bid");
@@ -661,7 +659,7 @@ mod tests {
             ]
         }"#;
         let event: CoinbaseL2Event = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type, "snapshot");
+        assert_eq!(event._event_type, "snapshot");
         assert_eq!(event.product_id, "ETH-USD");
         assert_eq!(event.updates.len(), 3);
     }
@@ -749,7 +747,7 @@ mod tests {
             "channels": [{"name": "level2", "product_ids": ["BTC-USD"]}]
         }"#;
         let msg: CoinbaseWsMessage = serde_json::from_str(json).unwrap();
-        assert_eq!(msg.msg_type.as_deref(), Some("subscriptions"));
+        assert_eq!(msg._msg_type.as_deref(), Some("subscriptions"));
         // No channel field in subscription confirmations.
         assert!(msg.channel.is_none());
     }
@@ -770,7 +768,7 @@ mod tests {
             }
         }"#;
         let resp: CoinbaseOrderBookResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.pricebook.product_id, "BTC-USD");
+        assert_eq!(resp.pricebook._product_id, "BTC-USD");
         assert_eq!(resp.pricebook.bids.len(), 2);
         assert_eq!(resp.pricebook.asks.len(), 1);
         assert_eq!(resp.pricebook.bids[0].price, "25000.00");

@@ -98,11 +98,10 @@ fn default_data_ws_url() -> String {
 /// Alpaca sends arrays of messages; each element has a `T` field indicating
 /// the message type.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct AlpacaQuoteMsg {
     /// Message type ("q")
     #[serde(rename = "T")]
-    msg_type: String,
+    _msg_type: String,
     /// Symbol
     #[serde(rename = "S")]
     symbol: String,
@@ -124,11 +123,10 @@ struct AlpacaQuoteMsg {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct AlpacaTradeMsg {
     /// Message type ("t")
     #[serde(rename = "T")]
-    msg_type: String,
+    _msg_type: String,
     /// Symbol
     #[serde(rename = "S")]
     symbol: String,
@@ -680,7 +678,7 @@ mod tests {
         let (book_tx, mut book_rx) = tokio::sync::mpsc::channel::<OrderBook>(16);
 
         let quote = AlpacaQuoteMsg {
-            msg_type: "q".into(),
+            _msg_type: "q".into(),
             symbol: "AAPL".into(),
             bid_price: dec!(150.10),
             bid_size: dec!(100),
@@ -707,7 +705,7 @@ mod tests {
         let (trade_tx, mut trade_rx) = tokio::sync::mpsc::channel::<Trade>(16);
 
         let trade_msg = AlpacaTradeMsg {
-            msg_type: "t".into(),
+            _msg_type: "t".into(),
             symbol: "AAPL".into(),
             price: dec!(150.15),
             size: dec!(50),

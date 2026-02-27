@@ -208,8 +208,8 @@ impl EventPublisher for NatsEventPublisher {
 /// Consumes events from NATS JetStream by creating ephemeral or durable pull
 /// consumers against the event stream.
 pub struct NatsEventSubscriber {
-    #[allow(dead_code)]
-    jetstream: jetstream::Context,
+    /// Retained to keep the JetStream context alive for the connection lifetime.
+    _jetstream: jetstream::Context,
     stream: JsStream,
 }
 
@@ -238,7 +238,10 @@ impl NatsEventSubscriber {
             "NATS JetStream subscriber connected"
         );
 
-        Ok(Self { jetstream, stream })
+        Ok(Self {
+            _jetstream: jetstream,
+            stream,
+        })
     }
 
     /// Subscribe to events matching the given subject pattern (e.g. `"events.>"`,
