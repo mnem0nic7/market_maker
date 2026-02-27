@@ -36,4 +36,4 @@ prost-types = { workspace = true }
 rust_decimal_macros = { workspace = true }
 
 [build-dependencies]
-tonic-build = "0.14"
+tonic-build = "0.12"
