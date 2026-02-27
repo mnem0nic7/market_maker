@@ -98,20 +98,21 @@ fn default_ws_url() -> String {
 /// Field keys are numeric strings. We capture the fields we care about.
 #[derive(Debug, Deserialize)]
 struct IbSnapshotEntry {
-    /// Contract ID
-    conid: Option<u64>,
-    /// Last price (field 31)
+    /// Contract ID (present in API response; parsed but not directly used)
+    #[serde(rename = "conid")]
+    _conid: Option<u64>,
+    /// Last price (field 31; reserved for trade event support)
     #[serde(rename = "31", default)]
-    last_price: Option<String>,
+    _last_price: Option<String>,
     /// Bid price (field 84)
     #[serde(rename = "84", default)]
     bid_price: Option<String>,
     /// Ask price (field 85)
     #[serde(rename = "85", default)]
     ask_price: Option<String>,
-    /// Volume (field 86)
+    /// Volume (field 86; reserved for volume-weighted strategies)
     #[serde(rename = "86", default)]
-    volume: Option<String>,
+    _volume: Option<String>,
     /// Ask size (field 87)
     #[serde(rename = "87", default)]
     ask_size: Option<String>,

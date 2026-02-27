@@ -1749,7 +1749,7 @@ async fn list_stored_results(
         .ok_or_else(|| ApiResponse::error("backtest result store not configured".to_string()))?;
     store
         .list()
-        .map(|summaries| ApiResponse::ok(summaries))
+        .map(ApiResponse::ok)
         .map_err(|e| ApiResponse::error(format!("failed to list results: {e}")))
 }
 
@@ -1764,7 +1764,7 @@ async fn get_stored_result(
         .ok_or_else(|| ApiResponse::error("backtest result store not configured".to_string()))?;
     store
         .load(&id)
-        .map(|result| ApiResponse::ok(result))
+        .map(ApiResponse::ok)
         .map_err(|e| ApiResponse::error(format!("failed to load result '{}': {e}", id)))
 }
 
@@ -1781,7 +1781,7 @@ async fn compare_backtest_results(
         .ok_or_else(|| ApiResponse::error("backtest result store not configured".to_string()))?;
     store
         .compare(&params.a, &params.b)
-        .map(|comparison| ApiResponse::ok(comparison))
+        .map(ApiResponse::ok)
         .map_err(|e| ApiResponse::error(format!("comparison failed: {e}")))
 }
 

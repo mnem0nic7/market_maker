@@ -530,7 +530,7 @@ impl BacktestResultStore {
         let strategy_part = if result.strategy_name.is_empty() {
             "unknown".to_string()
         } else {
-            result.strategy_name.replace('/', "_").replace(' ', "_")
+            result.strategy_name.replace(['/', ' '], "_")
         };
         let now = chrono::Utc::now();
         let id = format!(
@@ -562,7 +562,7 @@ impl BacktestResultStore {
         for entry in std::fs::read_dir(&self.base_dir).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 let id = path
                     .file_stem()
                     .and_then(|s| s.to_str())

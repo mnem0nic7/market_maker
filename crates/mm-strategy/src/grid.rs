@@ -86,6 +86,8 @@ struct GridLevel {
     active_side: Option<Side>,
     /// The client_order_id of the active order, if any.
     active_order_id: Option<String>,
+    /// Whether this level needs a replacement order placed on the next tick.
+    pending_replacement: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +155,7 @@ impl GridStrategy {
                         index: i,
                         active_side: None,
                         active_order_id: None,
+                        pending_replacement: false,
                     });
                 }
             }
@@ -171,6 +174,7 @@ impl GridStrategy {
                         index: i,
                         active_side: None,
                         active_order_id: None,
+                        pending_replacement: false,
                     });
                 }
             }
@@ -296,9 +300,27 @@ impl Strategy for GridStrategy {
             return self.initial_placement(mid);
         }
 
-        // After initialization, the grid is event-driven via on_fill.
-        // Ticks are used only for monitoring / health checks.
-        Vec::new()
+        // After initialization, check for levels needing replacement orders
+        // (set by on_fill when a buy fills and marks a sell at the next level, etc.)
+        let mut actions = Vec::new();
+        for i in 0..self.levels.len() {
+            if self.levels[i].pending_replacement {
+                if let Some(side) = self.levels[i].active_side {
+                    if let Some(action) = self.place_order_at_level(i, side) {
+                        debug!(
+                            strategy_id = %self.config.strategy_id,
+                            level = i,
+                            price = %self.levels[i].price,
+                            side = ?side,
+                            "placing replacement grid order after fill"
+                        );
+                        actions.push(action);
+                    }
+                }
+                self.levels[i].pending_replacement = false;
+            }
+        }
+        actions
     }
 
     fn on_fill(&mut self, fill: &Fill) {
@@ -352,19 +374,25 @@ impl Strategy for GridStrategy {
                 // Filled a buy at level N -> place sell at N+1
                 let target = level_index + 1;
                 if target < self.levels.len() {
-                    debug!(
-                        strategy_id = %self.config.strategy_id,
-                        filled_level = level_index,
-                        target_level = target,
-                        target_price = %self.levels[target].price,
-                        "buy filled, placing sell at next level up"
-                    );
-                    self.levels[target].active_side = Some(Side::Sell);
-                    // Note: the actual order will be placed next time we can emit actions.
-                    // Since on_fill doesn't return actions, we mark the level and
-                    // on_tick will handle any re-placement if needed. However, a more
-                    // sophisticated implementation would use a channel. For now, we
-                    // set the pending state.
+                    // Only mark for replacement if the target doesn't already have an active order
+                    if self.levels[target].active_order_id.is_none() {
+                        debug!(
+                            strategy_id = %self.config.strategy_id,
+                            filled_level = level_index,
+                            target_level = target,
+                            target_price = %self.levels[target].price,
+                            "buy filled, marking sell at next level up for placement"
+                        );
+                        self.levels[target].active_side = Some(Side::Sell);
+                        self.levels[target].pending_replacement = true;
+                    } else {
+                        debug!(
+                            strategy_id = %self.config.strategy_id,
+                            filled_level = level_index,
+                            target_level = target,
+                            "buy filled, but target level already has active order"
+                        );
+                    }
                 } else {
                     debug!(
                         strategy_id = %self.config.strategy_id,
@@ -377,14 +405,25 @@ impl Strategy for GridStrategy {
                 // Filled a sell at level N -> place buy at N-1
                 if level_index > 0 {
                     let target = level_index - 1;
-                    debug!(
-                        strategy_id = %self.config.strategy_id,
-                        filled_level = level_index,
-                        target_level = target,
-                        target_price = %self.levels[target].price,
-                        "sell filled, placing buy at next level down"
-                    );
-                    self.levels[target].active_side = Some(Side::Buy);
+                    // Only mark for replacement if the target doesn't already have an active order
+                    if self.levels[target].active_order_id.is_none() {
+                        debug!(
+                            strategy_id = %self.config.strategy_id,
+                            filled_level = level_index,
+                            target_level = target,
+                            target_price = %self.levels[target].price,
+                            "sell filled, marking buy at next level down for placement"
+                        );
+                        self.levels[target].active_side = Some(Side::Buy);
+                        self.levels[target].pending_replacement = true;
+                    } else {
+                        debug!(
+                            strategy_id = %self.config.strategy_id,
+                            filled_level = level_index,
+                            target_level = target,
+                            "sell filled, but target level already has active order"
+                        );
+                    }
                 } else {
                     debug!(
                         strategy_id = %self.config.strategy_id,
@@ -473,6 +512,7 @@ impl Strategy for GridStrategy {
         for level in self.levels.iter_mut() {
             level.active_side = None;
             level.active_order_id = None;
+            level.pending_replacement = false;
         }
         vec![self.cancel_all_action()]
     }
@@ -901,5 +941,216 @@ mod tests {
         assert!(result
             .unwrap_err()
             .contains("num_grids must be greater than zero"));
+    }
+
+    // -----------------------------------------------------------------------
+    // on_fill helper
+    // -----------------------------------------------------------------------
+
+    /// Build a Fill struct for testing.
+    fn make_fill(side: Side, price: Decimal, client_order_id: &str) -> Fill {
+        Fill {
+            fill_id: uuid::Uuid::new_v4().to_string(),
+            exchange: Exchange::Simulated,
+            symbol: Symbol::new("BTC", "USDT"),
+            side,
+            price,
+            quantity: dec!(0.01),
+            fee: dec!(0),
+            fee_currency: "USDT".to_string(),
+            timestamp: Utc::now(),
+            client_order_id: client_order_id.to_string(),
+            exchange_order_id: "exch-1".to_string(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 10. Buy fill places sell at next level up
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_buy_fill_places_sell_at_next_level() {
+        // Levels: 60000(0), 62000(1), 64000(2), 66000(3), 68000(4), 70000(5)
+        // Mid = 65000 -> buys at 0,1,2; sells at 3,4,5
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_snapshot(dec!(65000));
+        let _initial = strategy.on_tick(&snapshot);
+
+        // Simulate a fill on the lowest buy level (level 0, price 60000).
+        // on_fill uses price-matching fallback since we have no order IDs tracked.
+        let fill = make_fill(Side::Buy, dec!(60000), "order-buy-0");
+        strategy.on_fill(&fill);
+
+        // Level 0 should be cleared, level 1 should be marked for sell replacement.
+        assert!(strategy.levels[0].active_side.is_none());
+        assert_eq!(strategy.levels[1].active_side, Some(Side::Sell));
+        assert!(strategy.levels[1].pending_replacement);
+
+        // Next tick should place a sell at level 1 (62000).
+        let actions = strategy.on_tick(&snapshot);
+        assert_eq!(actions.len(), 1, "expected 1 replacement order");
+
+        let price = extract_place_price(&actions[0]);
+        let side = extract_place_side(&actions[0]);
+        assert_eq!(price, dec!(62000));
+        assert_eq!(side, Side::Sell);
+
+        // pending_replacement should be cleared after tick
+        assert!(!strategy.levels[1].pending_replacement);
+    }
+
+    // -----------------------------------------------------------------------
+    // 11. Sell fill places buy at previous level down
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sell_fill_places_buy_at_prev_level() {
+        // Levels: 60000(0), 62000(1), 64000(2), 66000(3), 68000(4), 70000(5)
+        // Mid = 65000 -> buys at 0,1,2; sells at 3,4,5
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_snapshot(dec!(65000));
+        let _initial = strategy.on_tick(&snapshot);
+
+        // Simulate a fill on the highest sell level (level 5, price 70000).
+        let fill = make_fill(Side::Sell, dec!(70000), "order-sell-5");
+        strategy.on_fill(&fill);
+
+        // Level 5 should be cleared, level 4 should be marked for buy replacement.
+        assert!(strategy.levels[5].active_side.is_none());
+        assert_eq!(strategy.levels[4].active_side, Some(Side::Buy));
+        assert!(strategy.levels[4].pending_replacement);
+
+        // Next tick should place a buy at level 4 (68000).
+        let actions = strategy.on_tick(&snapshot);
+        assert_eq!(actions.len(), 1, "expected 1 replacement order");
+
+        let price = extract_place_price(&actions[0]);
+        let side = extract_place_side(&actions[0]);
+        assert_eq!(price, dec!(68000));
+        assert_eq!(side, Side::Buy);
+
+        // pending_replacement should be cleared after tick
+        assert!(!strategy.levels[4].pending_replacement);
+    }
+
+    // -----------------------------------------------------------------------
+    // 12. Fill at top of grid: no sell placed above top level
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_fill_at_top_no_sell_placed() {
+        // Levels: 60000(0), 62000(1), 64000(2), 66000(3), 68000(4), 70000(5)
+        // Mid = 65000 -> buys at 0,1,2; sells at 3,4,5
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_snapshot(dec!(65000));
+        let _initial = strategy.on_tick(&snapshot);
+
+        // Simulate buy fill at the HIGHEST level (level 5, price 70000).
+        // A buy fill at the highest level has no level above it.
+        let fill = make_fill(Side::Buy, dec!(70000), "order-buy-5");
+        strategy.on_fill(&fill);
+
+        // No level above 5 exists, so no pending_replacement should be set.
+        for level in &strategy.levels {
+            assert!(
+                !level.pending_replacement,
+                "level {} should not have pending_replacement",
+                level.index
+            );
+        }
+
+        // Next tick should produce no actions.
+        let actions = strategy.on_tick(&snapshot);
+        assert!(
+            actions.is_empty(),
+            "fill at top of grid should not produce replacement orders"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 13. Fill at bottom of grid: no buy placed below bottom level
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_fill_at_bottom_no_buy_placed() {
+        // Levels: 60000(0), 62000(1), 64000(2), 66000(3), 68000(4), 70000(5)
+        // Mid = 65000 -> buys at 0,1,2; sells at 3,4,5
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_snapshot(dec!(65000));
+        let _initial = strategy.on_tick(&snapshot);
+
+        // Simulate sell fill at the lowest level (level 0, price 60000).
+        // A sell fill at level 0 has no level below it.
+        let fill = make_fill(Side::Sell, dec!(60000), "order-sell-0");
+        strategy.on_fill(&fill);
+
+        // No level below 0 exists, so no pending_replacement should be set.
+        for level in &strategy.levels {
+            assert!(
+                !level.pending_replacement,
+                "level {} should not have pending_replacement",
+                level.index
+            );
+        }
+
+        // Next tick should produce no actions.
+        let actions = strategy.on_tick(&snapshot);
+        assert!(
+            actions.is_empty(),
+            "fill at bottom of grid should not produce replacement orders"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 14. Multiple fills: full buy-sell cycle
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_multiple_fills_cycle() {
+        // Levels: 60000(0), 62000(1), 64000(2), 66000(3), 68000(4), 70000(5)
+        // Mid = 65000 -> buys at 0,1,2; sells at 3,4,5
+        let config = make_config();
+        let mut strategy = GridStrategy::new(config);
+
+        let snapshot = make_snapshot(dec!(65000));
+        let _initial = strategy.on_tick(&snapshot);
+
+        // Step 1: Buy fill at level 0 (60000) -> should mark sell at level 1 (62000)
+        let fill1 = make_fill(Side::Buy, dec!(60000), "order-buy-0");
+        strategy.on_fill(&fill1);
+
+        let actions1 = strategy.on_tick(&snapshot);
+        assert_eq!(actions1.len(), 1);
+        assert_eq!(extract_place_price(&actions1[0]), dec!(62000));
+        assert_eq!(extract_place_side(&actions1[0]), Side::Sell);
+
+        // Step 2: Sell fill at level 1 (62000) -> should mark buy at level 0 (60000)
+        let fill2 = make_fill(Side::Sell, dec!(62000), "order-sell-1");
+        strategy.on_fill(&fill2);
+
+        let actions2 = strategy.on_tick(&snapshot);
+        assert_eq!(actions2.len(), 1);
+        assert_eq!(extract_place_price(&actions2[0]), dec!(60000));
+        assert_eq!(extract_place_side(&actions2[0]), Side::Buy);
+
+        // Step 3: Another buy fill at level 0 (60000) -> sell at level 1 again
+        let fill3 = make_fill(Side::Buy, dec!(60000), "order-buy-0b");
+        strategy.on_fill(&fill3);
+
+        let actions3 = strategy.on_tick(&snapshot);
+        assert_eq!(actions3.len(), 1);
+        assert_eq!(extract_place_price(&actions3[0]), dec!(62000));
+        assert_eq!(extract_place_side(&actions3[0]), Side::Sell);
+
+        // Verify the round-trip cycle works: the grid keeps bouncing between
+        // buy at 60000 and sell at 62000 as expected.
     }
 }
