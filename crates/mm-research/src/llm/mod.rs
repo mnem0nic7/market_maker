@@ -1,5 +1,7 @@
+pub mod anthropic;
 pub mod types;
 
+pub use anthropic::AnthropicProvider;
 pub use types::*;
 
 use async_trait::async_trait;
