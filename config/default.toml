@@ -204,6 +204,40 @@ api_token = ""
 rate_limit_rps = 100
 
 # =============================================================================
+# Research agent (autonomous financial research with tool calling)
+# =============================================================================
+# The research agent runs multi-step research queries using LLM + tools.
+# It can autonomously gather financial data, search the web, and produce
+# research reports with access to live trading state.
+
+[research]
+enabled = true
+# Maximum agentic iterations per query (each iteration may call one tool).
+max_iterations = 10
+# Maximum output tokens per LLM turn.
+max_tokens_per_turn = 4096
+# Estimated token count at which the agent compacts its scratchpad context.
+context_token_threshold = 80000
+# LLM provider: "anthropic" or "openai".
+llm_provider = "anthropic"
+# Model name (e.g. "claude-sonnet-4-20250514", "gpt-4o").
+llm_model = "claude-sonnet-4-20250514"
+# API keys — set via environment variables for security:
+#   MM_RESEARCH__ANTHROPIC_API_KEY, MM_RESEARCH__OPENAI_API_KEY
+anthropic_api_key = ""
+openai_api_key = ""
+# Financial data API key (financialdatasets.ai).
+#   MM_RESEARCH__FINANCIAL_DATA_API_KEY
+financial_data_api_key = ""
+# Web search API keys (first available is used: Exa > Perplexity > Tavily).
+#   MM_RESEARCH__EXA_API_KEY, MM_RESEARCH__PERPLEXITY_API_KEY, MM_RESEARCH__TAVILY_API_KEY
+exa_api_key = ""
+perplexity_api_key = ""
+tavily_api_key = ""
+# Directories to scan for SKILL.md / *.skill.md files.
+skill_dirs = ["skills"]
+
+# =============================================================================
 # Main trading loop
 # =============================================================================
 
