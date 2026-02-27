@@ -1,5 +1,7 @@
 pub mod finance;
 pub mod registry;
+pub mod search;
+pub mod trading;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
