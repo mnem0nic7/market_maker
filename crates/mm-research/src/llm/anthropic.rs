@@ -282,6 +282,7 @@ impl ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ToolSchema;
 
     #[test]
     fn test_build_request_body_with_tools() {
