@@ -122,6 +122,51 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
+  researchTools: () => fetchApi<Array<{ name: string; description: string }>>("/research/tools"),
+  researchSkills: () => fetchApi<Array<{ name: string; description: string }>>("/research/skills"),
+
+  researchQuery: async function* (
+    query: string,
+    includeTradingContext = true,
+  ): AsyncGenerator<{ type: string; [key: string]: unknown }> {
+    const res = await fetch(`${BASE}/research/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, include_trading_context: includeTradingContext }),
+    });
+    if (res.status === 503 || res.status === 400) {
+      const text = await res.text();
+      throw new Error(text || "Research agent not configured.");
+    }
+    if (!res.ok) {
+      throw new Error(`Research agent error: ${res.status}`);
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ")) {
+          try {
+            const event = JSON.parse(trimmed.slice(6));
+            yield event;
+          } catch {
+            // Skip malformed SSE lines
+          }
+        }
+      }
+    }
+  },
+
   assistantChat: async function* (
     messages: Array<{ role: string; content: string }>
   ): AsyncGenerator<string> {

@@ -10,6 +10,7 @@
 
 pub mod assistant;
 pub mod grpc;
+pub mod research;
 pub mod rest;
 pub mod server;
 pub mod ws;
