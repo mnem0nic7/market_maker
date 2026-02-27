@@ -98,6 +98,80 @@ function reducer(state: DashboardState, action: Action): DashboardState {
             },
             events,
           };
+        case "PositionUpdate": {
+          const posIdx = state.positions.findIndex(
+            (p) => p.exchange === msg.exchange && p.symbol.base === msg.symbol.base && p.symbol.quote === msg.symbol.quote,
+          );
+          let updatedPositions: Position[];
+          if (posIdx >= 0) {
+            updatedPositions = state.positions.map((p, i) =>
+              i === posIdx
+                ? { ...p, quantity: msg.quantity, unrealized_pnl: msg.unrealized_pnl, realized_pnl: msg.realized_pnl, updated_at: new Date().toISOString() }
+                : p,
+            );
+          } else {
+            updatedPositions = [
+              ...state.positions,
+              {
+                exchange: msg.exchange,
+                symbol: msg.symbol,
+                quantity: msg.quantity,
+                average_entry_price: "0",
+                unrealized_pnl: msg.unrealized_pnl,
+                realized_pnl: msg.realized_pnl,
+                updated_at: new Date().toISOString(),
+              },
+            ];
+          }
+          return { ...state, positions: updatedPositions, events };
+        }
+        case "OrderUpdate": {
+          const TERMINAL_STATUSES = ["Filled", "Cancelled", "Rejected", "Expired"];
+          const isTerminal = TERMINAL_STATUSES.includes(msg.status);
+
+          if (isTerminal) {
+            // Remove terminal orders from the active list.
+            return {
+              ...state,
+              orders: state.orders.filter((o) => o.client_order_id !== msg.client_order_id),
+              events,
+            };
+          }
+
+          const ordIdx = state.orders.findIndex((o) => o.client_order_id === msg.client_order_id);
+          let updatedOrders: Order[];
+          if (ordIdx >= 0) {
+            updatedOrders = state.orders.map((o, i) =>
+              i === ordIdx
+                ? { ...o, status: msg.status as Order["status"], filled_quantity: msg.filled_quantity, remaining_quantity: msg.remaining_quantity, updated_at: new Date().toISOString() }
+                : o,
+            );
+          } else {
+            updatedOrders = [
+              ...state.orders,
+              {
+                client_order_id: msg.client_order_id,
+                exchange_order_id: null,
+                exchange: msg.exchange,
+                symbol: msg.symbol,
+                side: "Buy" as const,
+                order_type: "Limit" as const,
+                time_in_force: "GTC" as const,
+                price: null,
+                quantity: msg.remaining_quantity,
+                status: msg.status as Order["status"],
+                filled_quantity: msg.filled_quantity,
+                remaining_quantity: msg.remaining_quantity,
+                average_fill_price: "0",
+                strategy_id: "",
+                reduce_only: false,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              },
+            ];
+          }
+          return { ...state, orders: updatedOrders, events };
+        }
         default:
           return { ...state, events };
       }

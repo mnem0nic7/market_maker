@@ -1378,6 +1378,16 @@ async fn handle_order_update(
             .await
             .route_order_update(&order.strategy_id, update);
 
+        // Broadcast order update to WebSocket dashboard clients.
+        let _ = broadcast_tx.try_send(ServerMessage::OrderUpdate {
+            client_order_id: update.client_order_id.clone(),
+            exchange: update.exchange,
+            symbol: update.symbol.clone(),
+            status: format!("{:?}", update.status),
+            filled_quantity: order.filled_quantity,
+            remaining_quantity: order.remaining_quantity,
+        });
+
         // Handle fills: update positions.
         if matches!(
             update.status,
