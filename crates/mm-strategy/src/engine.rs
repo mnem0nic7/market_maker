@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use mm_core::events::OrderUpdate;
 use mm_core::traits::Strategy;
 use mm_core::types::{Fill, MarketSnapshot, OrderAction};
 use mm_core::StrategyConfig;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::build_strategy_from_config;
 
@@ -27,6 +28,9 @@ pub struct StrategyEngine {
     id_index: HashMap<String, usize>,
     /// Receiver for hot parameter updates from the API layer.
     param_update_rx: Option<mpsc::Receiver<StrategyParamUpdate>>,
+    /// Strategy IDs that have panicked during `on_tick`. The caller can inspect
+    /// this set to decide whether to deactivate or remove the affected strategies.
+    panicked_strategies: HashSet<String>,
 }
 
 impl StrategyEngine {
@@ -36,6 +40,7 @@ impl StrategyEngine {
             strategies: Vec::new(),
             id_index: HashMap::new(),
             param_update_rx: None,
+            panicked_strategies: HashSet::new(),
         }
     }
 
@@ -94,10 +99,16 @@ impl StrategyEngine {
     /// Run a single tick across all active strategies. Each strategy receives the
     /// market snapshot and returns order actions. All actions are collected and
     /// returned in a flat list.
+    #[instrument(skip(self, snapshot), fields(strategy_count = self.strategies.len()))]
     pub fn tick(&mut self, snapshot: &MarketSnapshot) -> Vec<OrderAction> {
         let mut all_actions = Vec::new();
 
         for strategy in self.strategies.iter_mut() {
+            // Skip strategies that don't match this snapshot's exchange+symbol
+            if strategy.exchange() != snapshot.exchange || strategy.symbol() != snapshot.symbol {
+                continue;
+            }
+
             if !strategy.is_active() {
                 debug!(
                     strategy_id = %strategy.strategy_id(),
@@ -106,15 +117,39 @@ impl StrategyEngine {
                 continue;
             }
 
-            let actions = strategy.on_tick(snapshot);
-            if !actions.is_empty() {
-                debug!(
-                    strategy_id = %strategy.strategy_id(),
-                    action_count = actions.len(),
-                    "strategy produced order actions"
-                );
+            let strategy_id = strategy.strategy_id().to_string();
+
+            let result = catch_unwind(AssertUnwindSafe(|| strategy.on_tick(snapshot)));
+
+            match result {
+                Ok(actions) => {
+                    if !actions.is_empty() {
+                        debug!(
+                            strategy_id = %strategy_id,
+                            action_count = actions.len(),
+                            "strategy produced order actions"
+                        );
+                    }
+                    all_actions.extend(actions);
+                }
+                Err(panic_info) => {
+                    let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        (*s).to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown panic payload".to_string()
+                    };
+
+                    error!(
+                        strategy_id = %strategy_id,
+                        panic_message = %panic_msg,
+                        "strategy panicked during on_tick, skipping"
+                    );
+
+                    self.panicked_strategies.insert(strategy_id);
+                }
             }
-            all_actions.extend(actions);
         }
 
         all_actions
@@ -180,6 +215,7 @@ impl StrategyEngine {
     /// updates. For each update, builds a new strategy instance from the config.
     /// If the build succeeds, the old strategy is replaced. If it fails, the old
     /// strategy is kept and a warning is logged.
+    #[instrument(skip(self))]
     pub fn try_apply_updates(&mut self) {
         let rx = match self.param_update_rx.as_mut() {
             Some(rx) => rx,
@@ -249,6 +285,13 @@ impl StrategyEngine {
     pub fn strategy_ids(&self) -> Vec<String> {
         self.id_index.keys().cloned().collect()
     }
+
+    /// Return the set of strategy IDs that have panicked during `on_tick`.
+    /// The caller can use this to decide whether to deactivate or remove
+    /// the affected strategies.
+    pub fn panicked_strategies(&self) -> &HashSet<String> {
+        &self.panicked_strategies
+    }
 }
 
 impl Default for StrategyEngine {
@@ -277,6 +320,8 @@ mod tests {
         id: String,
         name: String,
         active: bool,
+        exchange: Exchange,
+        symbol: Symbol,
         tick_count: usize,
         fill_count: usize,
         update_count: usize,
@@ -290,6 +335,8 @@ mod tests {
                 id: id.to_string(),
                 name: name.to_string(),
                 active,
+                exchange: Exchange::Simulated,
+                symbol: Symbol::new("BTC", "USDT"),
                 tick_count: 0,
                 fill_count: 0,
                 update_count: 0,
@@ -307,6 +354,12 @@ mod tests {
             self.stop_actions = actions;
             self
         }
+
+        fn with_exchange_symbol(mut self, exchange: Exchange, symbol: Symbol) -> Self {
+            self.exchange = exchange;
+            self.symbol = symbol;
+            self
+        }
     }
 
     impl Strategy for MockStrategy {
@@ -316,6 +369,14 @@ mod tests {
 
         fn strategy_id(&self) -> &str {
             &self.id
+        }
+
+        fn exchange(&self) -> Exchange {
+            self.exchange
+        }
+
+        fn symbol(&self) -> Symbol {
+            self.symbol.clone()
         }
 
         fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
@@ -659,5 +720,288 @@ mod tests {
         let mut engine = StrategyEngine::new();
         // No receiver attached — should be a no-op.
         engine.try_apply_updates();
+    }
+
+    // -----------------------------------------------------------------------
+    // Panic isolation mocks
+    // -----------------------------------------------------------------------
+
+    /// A strategy that unconditionally panics in `on_tick`. Used to verify
+    /// that the engine's `catch_unwind` isolation works correctly.
+    struct PanickingStrategy {
+        id: String,
+    }
+
+    impl PanickingStrategy {
+        fn new(id: &str) -> Self {
+            Self { id: id.to_string() }
+        }
+    }
+
+    impl Strategy for PanickingStrategy {
+        fn name(&self) -> &str {
+            "panicking"
+        }
+
+        fn strategy_id(&self) -> &str {
+            &self.id
+        }
+
+        fn exchange(&self) -> Exchange {
+            Exchange::Simulated
+        }
+
+        fn symbol(&self) -> Symbol {
+            Symbol::new("BTC", "USDT")
+        }
+
+        fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
+            panic!("test panic");
+        }
+
+        fn on_fill(&mut self, _fill: &Fill) {}
+
+        fn on_order_update(&mut self, _update: &OrderUpdate) {}
+
+        fn is_active(&self) -> bool {
+            true
+        }
+
+        fn stop(&mut self) -> Vec<OrderAction> {
+            Vec::new()
+        }
+    }
+
+    /// A strategy that returns a known action on every tick. Used alongside
+    /// `PanickingStrategy` to verify that the engine continues processing
+    /// after a panic.
+    struct WorkingStrategy {
+        id: String,
+        tick_actions: Vec<OrderAction>,
+    }
+
+    impl WorkingStrategy {
+        fn new(id: &str, actions: Vec<OrderAction>) -> Self {
+            Self {
+                id: id.to_string(),
+                tick_actions: actions,
+            }
+        }
+    }
+
+    impl Strategy for WorkingStrategy {
+        fn name(&self) -> &str {
+            "working"
+        }
+
+        fn strategy_id(&self) -> &str {
+            &self.id
+        }
+
+        fn exchange(&self) -> Exchange {
+            Exchange::Simulated
+        }
+
+        fn symbol(&self) -> Symbol {
+            Symbol::new("BTC", "USDT")
+        }
+
+        fn on_tick(&mut self, _snapshot: &MarketSnapshot) -> Vec<OrderAction> {
+            self.tick_actions.clone()
+        }
+
+        fn on_fill(&mut self, _fill: &Fill) {}
+
+        fn on_order_update(&mut self, _update: &OrderUpdate) {}
+
+        fn is_active(&self) -> bool {
+            true
+        }
+
+        fn stop(&mut self) -> Vec<OrderAction> {
+            Vec::new()
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Panic isolation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tick_isolates_panicking_strategy() {
+        let mut engine = StrategyEngine::new();
+
+        // Add a panicking strategy first, then a working one.
+        let panicker = PanickingStrategy::new("panicker");
+        let worker = WorkingStrategy::new(
+            "worker",
+            vec![make_place_action("worker"), make_place_action("worker")],
+        );
+
+        engine.add_strategy(Box::new(panicker)).unwrap();
+        engine.add_strategy(Box::new(worker)).unwrap();
+
+        let snapshot = make_snapshot();
+
+        // This must not crash — the panicking strategy is caught.
+        let actions = engine.tick(&snapshot);
+
+        // The working strategy's 2 actions should still be returned.
+        assert_eq!(actions.len(), 2);
+
+        // The panicking strategy should be recorded.
+        assert!(engine.panicked_strategies().contains("panicker"));
+        assert!(!engine.panicked_strategies().contains("worker"));
+    }
+
+    #[test]
+    fn test_panicking_strategy_logged() {
+        let mut engine = StrategyEngine::new();
+
+        // Add two working strategies and one panicking strategy in the middle.
+        let w1 = WorkingStrategy::new("w1", vec![make_place_action("w1")]);
+        let panicker = PanickingStrategy::new("bad_strat");
+        let w2 = WorkingStrategy::new("w2", vec![make_cancel_all_action()]);
+
+        engine.add_strategy(Box::new(w1)).unwrap();
+        engine.add_strategy(Box::new(panicker)).unwrap();
+        engine.add_strategy(Box::new(w2)).unwrap();
+
+        let snapshot = make_snapshot();
+
+        // Engine should return the actions from both working strategies
+        // and gracefully handle the panic from the middle one.
+        let actions = engine.tick(&snapshot);
+
+        // w1 produces 1 action, w2 produces 1 action => 2 total.
+        // The panicking strategy's actions are skipped.
+        assert_eq!(actions.len(), 2);
+
+        // Verify the panicked strategy is tracked.
+        assert_eq!(engine.panicked_strategies().len(), 1);
+        assert!(engine.panicked_strategies().contains("bad_strat"));
+
+        // A second tick should still work — the panicked strategy panics again
+        // but the engine remains stable.
+        let actions2 = engine.tick(&snapshot);
+        assert_eq!(actions2.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Exchange+symbol filtering tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tick_filters_by_exchange_symbol() {
+        let mut engine = StrategyEngine::new();
+
+        // Strategy for BTC/USDT on Simulated exchange
+        let btc_strategy = MockStrategy::new("btc_strat", "BtcMM", true)
+            .with_exchange_symbol(Exchange::Simulated, Symbol::new("BTC", "USDT"))
+            .with_tick_actions(vec![make_place_action("btc_strat")]);
+
+        // Strategy for ETH/USDT on Simulated exchange
+        let eth_strategy = MockStrategy::new("eth_strat", "EthMM", true)
+            .with_exchange_symbol(Exchange::Simulated, Symbol::new("ETH", "USDT"))
+            .with_tick_actions(vec![make_place_action("eth_strat")]);
+
+        engine.add_strategy(Box::new(btc_strategy)).unwrap();
+        engine.add_strategy(Box::new(eth_strategy)).unwrap();
+
+        // Tick with a BTC/USDT snapshot (which make_snapshot() produces).
+        let snapshot = make_snapshot(); // Exchange::Simulated, BTC/USDT
+        let actions = engine.tick(&snapshot);
+
+        // Only the BTC strategy should have been ticked.
+        assert_eq!(
+            actions.len(),
+            1,
+            "Only the BTC strategy should produce actions for a BTC snapshot"
+        );
+
+        // Verify the action came from the BTC strategy.
+        match &actions[0] {
+            OrderAction::Place(order) => {
+                assert_eq!(order.strategy_id, "btc_strat");
+            }
+            _ => panic!("expected Place action from btc_strat"),
+        }
+
+        // Now tick with an ETH/USDT snapshot.
+        let eth_sym = Symbol::new("ETH", "USDT");
+        let now = Utc::now();
+        let eth_snapshot = MarketSnapshot {
+            exchange: Exchange::Simulated,
+            symbol: eth_sym.clone(),
+            order_book: std::sync::Arc::new(OrderBook {
+                exchange: Exchange::Simulated,
+                symbol: eth_sym.clone(),
+                bids: vec![PriceLevel {
+                    price: dec!(3000),
+                    quantity: dec!(1),
+                }],
+                asks: vec![PriceLevel {
+                    price: dec!(3001),
+                    quantity: dec!(1),
+                }],
+                timestamp: now,
+                sequence: 1,
+            }),
+            last_trade: None,
+            position: Position::new(Exchange::Simulated, eth_sym),
+            open_orders: vec![],
+            timestamp: now,
+        };
+
+        let eth_actions = engine.tick(&eth_snapshot);
+
+        // Only the ETH strategy should have been ticked.
+        assert_eq!(
+            eth_actions.len(),
+            1,
+            "Only the ETH strategy should produce actions for an ETH snapshot"
+        );
+
+        match &eth_actions[0] {
+            OrderAction::Place(order) => {
+                assert_eq!(order.strategy_id, "eth_strat");
+            }
+            _ => panic!("expected Place action from eth_strat"),
+        }
+    }
+
+    #[test]
+    fn test_tick_filters_by_exchange() {
+        let mut engine = StrategyEngine::new();
+
+        // Two strategies for BTC/USDT but on different exchanges.
+        let binance_strategy = MockStrategy::new("binance_strat", "BinanceMM", true)
+            .with_exchange_symbol(Exchange::Binance, Symbol::new("BTC", "USDT"))
+            .with_tick_actions(vec![make_place_action("binance_strat")]);
+
+        let simulated_strategy = MockStrategy::new("sim_strat", "SimMM", true)
+            .with_exchange_symbol(Exchange::Simulated, Symbol::new("BTC", "USDT"))
+            .with_tick_actions(vec![make_place_action("sim_strat")]);
+
+        engine.add_strategy(Box::new(binance_strategy)).unwrap();
+        engine.add_strategy(Box::new(simulated_strategy)).unwrap();
+
+        // Tick with a Simulated exchange BTC/USDT snapshot.
+        let snapshot = make_snapshot(); // Exchange::Simulated, BTC/USDT
+        let actions = engine.tick(&snapshot);
+
+        // Only the Simulated strategy should fire.
+        assert_eq!(
+            actions.len(),
+            1,
+            "Only the Simulated exchange strategy should produce actions"
+        );
+
+        match &actions[0] {
+            OrderAction::Place(order) => {
+                assert_eq!(order.strategy_id, "sim_strat");
+            }
+            _ => panic!("expected Place action from sim_strat"),
+        }
     }
 }

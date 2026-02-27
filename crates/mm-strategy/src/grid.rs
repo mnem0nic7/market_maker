@@ -262,6 +262,14 @@ impl Strategy for GridStrategy {
         &self.config.strategy_id
     }
 
+    fn exchange(&self) -> Exchange {
+        self.config.exchange
+    }
+
+    fn symbol(&self) -> Symbol {
+        self.config.symbol.clone()
+    }
+
     fn on_tick(&mut self, snapshot: &MarketSnapshot) -> Vec<OrderAction> {
         if !self.active {
             return Vec::new();

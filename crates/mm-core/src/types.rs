@@ -26,6 +26,25 @@ pub enum Exchange {
     Simulated,
 }
 
+impl Exchange {
+    /// Return the exchange name as a static string slice.
+    ///
+    /// This avoids the heap allocation that `to_string()` would incur,
+    /// making it suitable for hot-path metrics labels.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Exchange::Binance => "binance",
+            Exchange::Coinbase => "coinbase",
+            Exchange::Kraken => "kraken",
+            Exchange::Uniswap => "uniswap",
+            Exchange::Raydium => "raydium",
+            Exchange::InteractiveBrokers => "interactive_brokers",
+            Exchange::Alpaca => "alpaca",
+            Exchange::Simulated => "simulated",
+        }
+    }
+}
+
 /// Canonical symbol representation: "BTC/USDT", "ETH/USD", etc.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Symbol {
@@ -70,6 +89,17 @@ impl Side {
         match self {
             Side::Buy => Side::Sell,
             Side::Sell => Side::Buy,
+        }
+    }
+
+    /// Return the side as a lowercase static string slice.
+    ///
+    /// This avoids the heap allocation that `to_string().to_lowercase()`
+    /// would incur, making it suitable for hot-path metrics labels.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Side::Buy => "buy",
+            Side::Sell => "sell",
         }
     }
 }
@@ -853,5 +883,66 @@ mod tests {
         pos.update_on_fill(&make_fill(Side::Sell, dec!(110), dec!(0)));
         assert_eq!(pos.quantity, dec!(1));
         assert_eq!(pos.realized_pnl, dec!(0));
+    }
+
+    // -----------------------------------------------------------------------
+    // Exchange::as_str() tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_exchange_as_str() {
+        assert_eq!(Exchange::Binance.as_str(), "binance");
+        assert_eq!(Exchange::Coinbase.as_str(), "coinbase");
+        assert_eq!(Exchange::Kraken.as_str(), "kraken");
+        assert_eq!(Exchange::Uniswap.as_str(), "uniswap");
+        assert_eq!(Exchange::Raydium.as_str(), "raydium");
+        assert_eq!(Exchange::InteractiveBrokers.as_str(), "interactive_brokers");
+        assert_eq!(Exchange::Alpaca.as_str(), "alpaca");
+        assert_eq!(Exchange::Simulated.as_str(), "simulated");
+    }
+
+    #[test]
+    fn test_exchange_as_str_matches_to_string() {
+        // Verify as_str() produces the same output as to_string() for all variants.
+        for exchange in [
+            Exchange::Binance,
+            Exchange::Coinbase,
+            Exchange::Kraken,
+            Exchange::Uniswap,
+            Exchange::Raydium,
+            Exchange::InteractiveBrokers,
+            Exchange::Alpaca,
+            Exchange::Simulated,
+        ] {
+            assert_eq!(
+                exchange.as_str(),
+                exchange.to_string(),
+                "as_str() and to_string() must match for {:?}",
+                exchange
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Side::as_str() tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_side_as_str() {
+        assert_eq!(Side::Buy.as_str(), "buy");
+        assert_eq!(Side::Sell.as_str(), "sell");
+    }
+
+    #[test]
+    fn test_side_as_str_matches_to_string_lowercase() {
+        // Verify as_str() produces the same output as to_string().to_lowercase().
+        for side in [Side::Buy, Side::Sell] {
+            assert_eq!(
+                side.as_str(),
+                side.to_string().to_lowercase(),
+                "as_str() and to_string().to_lowercase() must match for {:?}",
+                side
+            );
+        }
     }
 }

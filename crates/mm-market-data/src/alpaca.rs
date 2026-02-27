@@ -47,6 +47,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -68,8 +69,9 @@ use mm_core::types::{Exchange, OrderBook, PriceLevel, Side, Symbol, Trade};
 // ---------------------------------------------------------------------------
 
 const DEFAULT_DATA_WS_URL: &str = "wss://stream.data.alpaca.markets/v2/iex";
-const RECONNECT_DELAY_SECS: u64 = 5;
-const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+const WS_RECONNECT_DELAY_SECS: u64 = 5;
+const WS_MAX_BACKOFF_SECS: u64 = 300; // cap at 5 minutes
+const WS_READ_TIMEOUT_SECS: u64 = 30;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -307,30 +309,40 @@ impl MarketDataConnector for AlpacaConnector {
 
                         // --- Main read loop ---
                         loop {
-                            match read.next().await {
-                                Some(Ok(Message::Text(text))) => {
+                            match tokio::time::timeout(
+                                Duration::from_secs(WS_READ_TIMEOUT_SECS),
+                                read.next(),
+                            )
+                            .await
+                            {
+                                Ok(Some(Ok(Message::Text(text)))) => {
+                                    reconnect_attempts = 0;
                                     if let Err(e) =
                                         handle_alpaca_message(&text, &book_tx, &trade_tx).await
                                     {
                                         warn!(error = %e, "failed to handle Alpaca message");
                                     }
                                 }
-                                Some(Ok(Message::Ping(data))) => {
+                                Ok(Some(Ok(Message::Ping(data)))) => {
                                     if let Err(e) = write.send(Message::Pong(data)).await {
                                         warn!(error = %e, "failed to send pong to Alpaca");
                                         break;
                                     }
                                 }
-                                Some(Ok(Message::Close(frame))) => {
+                                Ok(Some(Ok(Message::Close(frame)))) => {
                                     info!(?frame, "Alpaca WebSocket closed by server");
                                     break;
                                 }
-                                Some(Err(e)) => {
+                                Ok(Some(Err(e))) => {
                                     error!(error = %e, "Alpaca WebSocket error");
                                     break;
                                 }
-                                None => {
+                                Ok(None) => {
                                     info!("Alpaca WebSocket stream ended");
+                                    break;
+                                }
+                                Err(_) => {
+                                    warn!("WebSocket read timeout after 30s, reconnecting...");
                                     break;
                                 }
                                 _ => {}
@@ -344,23 +356,30 @@ impl MarketDataConnector for AlpacaConnector {
                     }
                 }
 
-                // Reconnection logic.
+                // Reconnection logic with exponential backoff and jitter.
                 reconnect_attempts += 1;
-                if reconnect_attempts > MAX_RECONNECT_ATTEMPTS {
-                    error!(
-                        attempts = reconnect_attempts,
-                        "exceeded max reconnection attempts for Alpaca, giving up"
-                    );
-                    break;
-                }
 
-                let delay = RECONNECT_DELAY_SECS * reconnect_attempts as u64;
+                let base_delay = WS_RECONNECT_DELAY_SECS.min(WS_MAX_BACKOFF_SECS);
+                let exp_delay = base_delay.saturating_mul(1u64 << reconnect_attempts.min(6));
+                let capped_delay = exp_delay.min(WS_MAX_BACKOFF_SECS);
+                // Add jitter: +/-25%
+                let jitter_range = capped_delay / 4;
+                let delay = if jitter_range > 0 {
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .subsec_nanos() as u64;
+                    capped_delay - jitter_range + nanos % (jitter_range * 2)
+                } else {
+                    capped_delay
+                };
+
                 warn!(
                     attempt = reconnect_attempts,
                     delay_secs = delay,
                     "reconnecting to Alpaca WebSocket"
                 );
-                tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+                tokio::time::sleep(Duration::from_secs(delay)).await;
             }
 
             connected.store(false, Ordering::SeqCst);
@@ -591,5 +610,175 @@ fn parse_decimal_field(
             exchange: Exchange::Alpaca,
             message: format!("{} field '{}' not found or not a number", label, field),
         })
+    }
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+    use serde_json::json;
+
+    // -----------------------------------------------------------------------
+    // parse_decimal_field tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_decimal_field_string() {
+        let obj = json!({"bp": "50000.25"});
+        let result = parse_decimal_field(&obj, "bp", "bid price");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), dec!(50000.25));
+    }
+
+    #[test]
+    fn test_parse_decimal_field_number() {
+        let obj = json!({"ap": 150.20});
+        let result = parse_decimal_field(&obj, "ap", "ask price");
+        assert!(result.is_ok());
+        // f64 -> string -> Decimal may round slightly, but 150.20 is exact.
+        let val = result.unwrap();
+        assert_eq!(val, dec!(150.2));
+    }
+
+    #[test]
+    fn test_parse_decimal_field_missing() {
+        let obj = json!({"bp": "100"});
+        let result = parse_decimal_field(&obj, "ap", "ask price");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("not found or not a number"),
+            "error should mention missing field, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_parse_decimal_field_invalid() {
+        let obj = json!({"bp": "not_a_number"});
+        let result = parse_decimal_field(&obj, "bp", "bid price");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("failed to parse"),
+            "error should mention parse failure, got: {}",
+            err_msg
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_quote / handle_trade tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_handle_quote_valid() {
+        let (book_tx, mut book_rx) = tokio::sync::mpsc::channel::<OrderBook>(16);
+
+        let quote = AlpacaQuoteMsg {
+            msg_type: "q".into(),
+            symbol: "AAPL".into(),
+            bid_price: dec!(150.10),
+            bid_size: dec!(100),
+            ask_price: dec!(150.20),
+            ask_size: dec!(200),
+            timestamp: "2023-01-01T00:00:00.000000Z".into(),
+        };
+
+        handle_quote(quote, &book_tx).await.unwrap();
+
+        let book = book_rx.try_recv().expect("should receive an order book");
+        assert_eq!(book.exchange, Exchange::Alpaca);
+        assert_eq!(book.symbol, Symbol::new("AAPL", "USD"));
+        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.bids[0].price, dec!(150.10));
+        assert_eq!(book.bids[0].quantity, dec!(100));
+        assert_eq!(book.asks.len(), 1);
+        assert_eq!(book.asks[0].price, dec!(150.20));
+        assert_eq!(book.asks[0].quantity, dec!(200));
+    }
+
+    #[tokio::test]
+    async fn test_handle_trade_valid() {
+        let (trade_tx, mut trade_rx) = tokio::sync::mpsc::channel::<Trade>(16);
+
+        let trade_msg = AlpacaTradeMsg {
+            msg_type: "t".into(),
+            symbol: "AAPL".into(),
+            price: dec!(150.15),
+            size: dec!(50),
+            timestamp: "2023-01-01T00:00:00.000000Z".into(),
+            trade_id: 123456,
+        };
+
+        handle_trade(trade_msg, &trade_tx).await.unwrap();
+
+        let trade = trade_rx.try_recv().expect("should receive a trade");
+        assert_eq!(trade.exchange, Exchange::Alpaca);
+        assert_eq!(trade.symbol, Symbol::new("AAPL", "USD"));
+        assert_eq!(trade.price, dec!(150.15));
+        assert_eq!(trade.quantity, dec!(50));
+        assert_eq!(trade.side, Side::Buy); // default side
+        assert_eq!(trade.trade_id, "123456");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_alpaca_message tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_handle_alpaca_message_auth() {
+        let (book_tx, _book_rx) = tokio::sync::mpsc::channel::<OrderBook>(16);
+        let (trade_tx, _trade_rx) = tokio::sync::mpsc::channel::<Trade>(16);
+
+        // Auth success message — should be silently handled (no error).
+        let text = r#"[{"T":"success","msg":"authenticated"}]"#;
+        let result = handle_alpaca_message(text, &book_tx, &trade_tx).await;
+        assert!(
+            result.is_ok(),
+            "auth success message should be handled without error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_alpaca_message_subscription() {
+        let (book_tx, _book_rx) = tokio::sync::mpsc::channel::<OrderBook>(16);
+        let (trade_tx, _trade_rx) = tokio::sync::mpsc::channel::<Trade>(16);
+
+        // Subscription confirmation message — should be silently handled.
+        let text = r#"[{"T":"subscription","quotes":["AAPL"],"trades":["AAPL"]}]"#;
+        let result = handle_alpaca_message(text, &book_tx, &trade_tx).await;
+        assert!(
+            result.is_ok(),
+            "subscription confirmation should be handled without error"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Symbol normalization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_symbol_normalization() {
+        // to_alpaca_symbol: canonical Symbol -> Alpaca ticker
+        let sym = Symbol::new("BTC", "USD");
+        assert_eq!(to_alpaca_symbol(&sym), "BTC");
+
+        // from_alpaca_symbol: Alpaca ticker -> canonical Symbol
+        let normalized = from_alpaca_symbol("BTC");
+        assert_eq!(normalized, Symbol::new("BTC", "USD"));
+        assert_eq!(normalized.base, "BTC");
+        assert_eq!(normalized.quote, "USD");
+
+        // Round-trip for a regular equity ticker.
+        let aapl = Symbol::new("AAPL", "USD");
+        let ticker = to_alpaca_symbol(&aapl);
+        assert_eq!(ticker, "AAPL");
+        let back = from_alpaca_symbol(&ticker);
+        assert_eq!(back, aapl);
     }
 }

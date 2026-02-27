@@ -236,6 +236,14 @@ impl Strategy for StatArbStrategy {
         &self.config.strategy_id
     }
 
+    fn exchange(&self) -> Exchange {
+        self.config.leg_a_exchange
+    }
+
+    fn symbol(&self) -> Symbol {
+        self.config.leg_a_symbol.clone()
+    }
+
     fn on_tick(&mut self, snapshot: &MarketSnapshot) -> Vec<OrderAction> {
         if !self.active {
             return Vec::new();

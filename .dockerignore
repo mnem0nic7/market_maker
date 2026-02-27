@@ -1,0 +1,40 @@
+# Build artifacts
+target/
+
+# Version control
+.git/
+.gitignore
+
+# Documentation (not needed in build)
+*.md
+docs/
+
+# Dashboard frontend (separate build)
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+
+# Docker files (avoid recursive context)
+docker/
+
+# CI/CD
+.github/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment and secrets
+.env
+.env.*
+
+# Test fixtures and benchmarks
+tests/
+benches/
+
+# Miscellaneous
+*.png
+*.jpg
+*.jpeg

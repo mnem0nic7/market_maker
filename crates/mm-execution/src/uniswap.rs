@@ -737,196 +737,226 @@ impl ExecutionConnector for UniswapExecutionConnector {
         Ok(())
     }
 
+    #[allow(unused_variables)]
     async fn submit_order(&self, order: &NewOrder) -> MmResult<String> {
-        warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
+        // SAFETY GATE: This DEX connector uses placeholder transaction signing
+        // that would submit malformed transactions and lose real funds. Block all
+        // order submission until a production-grade signing implementation exists.
+        return Err(MmError::DexNotReady {
+            exchange: Exchange::Uniswap,
+            message: "Uniswap connector is experimental — transaction signing is not \
+                      production-ready. Submitting orders is disabled to prevent loss of funds."
+                .into(),
+        });
 
-        if !self.connected.load(Ordering::SeqCst) {
-            return Err(MmError::Exchange {
-                exchange: Exchange::Uniswap,
-                message: "not connected".into(),
-            });
-        }
+        // ---- Original implementation below (retained for future completion) ----
 
-        info!(
-            symbol = %order.symbol,
-            side = %order.side,
-            quantity = %order.quantity,
-            "Uniswap: submitting swap"
-        );
-
-        // Determine token addresses based on trade direction.
-        // Buy base: swap quote -> base (tokenIn = quote, tokenOut = base)
-        // Sell base: swap base -> quote (tokenIn = base, tokenOut = quote)
-        let (token_in_symbol, token_out_symbol) = match order.side {
-            Side::Buy => (order.symbol.quote.as_str(), order.symbol.base.as_str()),
-            Side::Sell => (order.symbol.base.as_str(), order.symbol.quote.as_str()),
-        };
-
-        let token_in = self.token_address(token_in_symbol)?;
-        let token_out = self.token_address(token_out_symbol)?;
-
-        let fee = self.fee_tier(&order.symbol);
-        let recipient = self.wallet_address();
-
-        let deadline = (Utc::now().timestamp() as u64) + DEADLINE_OFFSET_SECS;
-
-        // Compute amountIn in raw token units.
-        let in_decimals = self
-            .config
-            .token_decimals
-            .get(token_in_symbol)
-            .copied()
-            .unwrap_or(18);
-        let out_decimals = self
-            .config
-            .token_decimals
-            .get(token_out_symbol)
-            .copied()
-            .unwrap_or(18);
-
-        let amount_in = match order.side {
-            Side::Buy => {
-                // Buying base: amountIn is in quote token.
-                // If price is given, amountIn = quantity * price.
-                // Otherwise, use quantity as the quote amount directly.
-                let quote_amount = if let Some(price) = order.price {
-                    order.quantity * price
-                } else {
-                    order.quantity
-                };
-                Self::to_raw_amount(quote_amount, in_decimals)
-            }
-            Side::Sell => {
-                // Selling base: amountIn is in base token.
-                Self::to_raw_amount(order.quantity, in_decimals)
-            }
-        };
-
-        // amountOutMinimum: apply slippage tolerance.
-        let amount_out_minimum = if let Some(price) = order.price {
-            let expected_out = match order.side {
-                Side::Buy => order.quantity,
-                Side::Sell => order.quantity * price,
-            };
-            let slippage_factor =
-                Decimal::from_f64(1.0 - self.config.max_slippage).unwrap_or(Decimal::ONE);
-            let min_out = expected_out * slippage_factor;
-            Self::to_raw_amount(min_out, out_decimals)
-        } else {
-            0 // No minimum (market order with no price limit).
-        };
-
-        // Build calldata.
-        let calldata = self.build_exact_input_single_calldata(
-            &token_in,
-            &token_out,
-            fee,
-            &recipient,
-            deadline,
-            amount_in,
-            amount_out_minimum,
-        );
-
-        // Get gas price and nonce.
-        let (max_fee, priority_fee) = self.fetch_gas_price().await?;
-        let nonce = self.next_nonce().await;
-        let gas_limit: u64 = 300_000; // Conservative estimate for Uniswap swap.
-
-        // Build the raw transaction.
-        // Value is 0 for ERC-20 swaps (non-zero only for ETH-in swaps).
-        let value: u128 = 0;
-        let raw_tx = self.build_raw_transaction(
-            nonce,
-            &self.config.router_address,
-            value,
-            &calldata,
-            gas_limit,
-            max_fee,
-            priority_fee,
-        );
-
-        // Send the raw transaction via eth_sendRawTransaction.
-        let body = self
-            .rpc_call("eth_sendRawTransaction", serde_json::json!([raw_tx]))
-            .await?;
-
-        let tx_hash = body["result"]
-            .as_str()
-            .ok_or_else(|| MmError::Exchange {
-                exchange: Exchange::Uniswap,
-                message: format!("eth_sendRawTransaction did not return a tx hash: {}", body),
-            })?
-            .to_string();
-
-        info!(
-            tx_hash = %tx_hash,
-            nonce = nonce,
-            "Uniswap: swap transaction submitted"
-        );
-
-        // Track the pending swap for receipt polling.
-        let client_order_id = uuid::Uuid::new_v4().to_string();
+        #[allow(unreachable_code, unused_variables)]
         {
-            let mut pending = self.pending_swaps.lock().await;
-            pending.push(PendingSwap {
-                client_order_id: client_order_id.clone(),
-                tx_hash: tx_hash.clone(),
-                symbol: order.symbol.clone(),
-                _side: order.side,
-                quantity: order.quantity,
-                submitted_at: Utc::now(),
-            });
-        }
+            warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
 
-        Ok(tx_hash)
+            if !self.connected.load(Ordering::SeqCst) {
+                return Err(MmError::Exchange {
+                    exchange: Exchange::Uniswap,
+                    message: "not connected".into(),
+                });
+            }
+
+            info!(
+                symbol = %order.symbol,
+                side = %order.side,
+                quantity = %order.quantity,
+                "Uniswap: submitting swap"
+            );
+
+            // Determine token addresses based on trade direction.
+            // Buy base: swap quote -> base (tokenIn = quote, tokenOut = base)
+            // Sell base: swap base -> quote (tokenIn = base, tokenOut = quote)
+            let (token_in_symbol, token_out_symbol) = match order.side {
+                Side::Buy => (order.symbol.quote.as_str(), order.symbol.base.as_str()),
+                Side::Sell => (order.symbol.base.as_str(), order.symbol.quote.as_str()),
+            };
+
+            let token_in = self.token_address(token_in_symbol)?;
+            let token_out = self.token_address(token_out_symbol)?;
+
+            let fee = self.fee_tier(&order.symbol);
+            let recipient = self.wallet_address();
+
+            let deadline = (Utc::now().timestamp() as u64) + DEADLINE_OFFSET_SECS;
+
+            // Compute amountIn in raw token units.
+            let in_decimals = self
+                .config
+                .token_decimals
+                .get(token_in_symbol)
+                .copied()
+                .unwrap_or(18);
+            let out_decimals = self
+                .config
+                .token_decimals
+                .get(token_out_symbol)
+                .copied()
+                .unwrap_or(18);
+
+            let amount_in = match order.side {
+                Side::Buy => {
+                    // Buying base: amountIn is in quote token.
+                    // If price is given, amountIn = quantity * price.
+                    // Otherwise, use quantity as the quote amount directly.
+                    let quote_amount = if let Some(price) = order.price {
+                        order.quantity * price
+                    } else {
+                        order.quantity
+                    };
+                    Self::to_raw_amount(quote_amount, in_decimals)
+                }
+                Side::Sell => {
+                    // Selling base: amountIn is in base token.
+                    Self::to_raw_amount(order.quantity, in_decimals)
+                }
+            };
+
+            // amountOutMinimum: apply slippage tolerance.
+            let amount_out_minimum = if let Some(price) = order.price {
+                let expected_out = match order.side {
+                    Side::Buy => order.quantity,
+                    Side::Sell => order.quantity * price,
+                };
+                let slippage_factor =
+                    Decimal::from_f64(1.0 - self.config.max_slippage).unwrap_or(Decimal::ONE);
+                let min_out = expected_out * slippage_factor;
+                Self::to_raw_amount(min_out, out_decimals)
+            } else {
+                0 // No minimum (market order with no price limit).
+            };
+
+            // Build calldata.
+            let calldata = self.build_exact_input_single_calldata(
+                &token_in,
+                &token_out,
+                fee,
+                &recipient,
+                deadline,
+                amount_in,
+                amount_out_minimum,
+            );
+
+            // Get gas price and nonce.
+            let (max_fee, priority_fee) = self.fetch_gas_price().await?;
+            let nonce = self.next_nonce().await;
+            let gas_limit: u64 = 300_000; // Conservative estimate for Uniswap swap.
+
+            // Build the raw transaction.
+            // Value is 0 for ERC-20 swaps (non-zero only for ETH-in swaps).
+            let value: u128 = 0;
+            let raw_tx = self.build_raw_transaction(
+                nonce,
+                &self.config.router_address,
+                value,
+                &calldata,
+                gas_limit,
+                max_fee,
+                priority_fee,
+            );
+
+            // Send the raw transaction via eth_sendRawTransaction.
+            let body = self
+                .rpc_call("eth_sendRawTransaction", serde_json::json!([raw_tx]))
+                .await?;
+
+            let tx_hash = body["result"]
+                .as_str()
+                .ok_or_else(|| MmError::Exchange {
+                    exchange: Exchange::Uniswap,
+                    message: format!("eth_sendRawTransaction did not return a tx hash: {}", body),
+                })?
+                .to_string();
+
+            info!(
+                tx_hash = %tx_hash,
+                nonce = nonce,
+                "Uniswap: swap transaction submitted"
+            );
+
+            // Track the pending swap for receipt polling.
+            let client_order_id = uuid::Uuid::new_v4().to_string();
+            {
+                let mut pending = self.pending_swaps.lock().await;
+                pending.push(PendingSwap {
+                    client_order_id: client_order_id.clone(),
+                    tx_hash: tx_hash.clone(),
+                    symbol: order.symbol.clone(),
+                    _side: order.side,
+                    quantity: order.quantity,
+                    submitted_at: Utc::now(),
+                });
+            }
+
+            Ok(tx_hash)
+        } // end #[allow(unreachable_code)] block
     }
 
+    #[allow(unused_variables)]
     async fn cancel_order(&self, cancel: &CancelOrder) -> MmResult<()> {
-        warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
-        // DEX swaps are atomic and cannot be cancelled once submitted.
-        // If the transaction is still in the mempool, it might be replaced
-        // with a higher-gas no-op transaction, but that is complex and
-        // beyond the scope of this connector.
-        //
-        // Check if the order is still pending (no receipt yet).
-        if let Some(ref tx_hash) = cancel.exchange_order_id {
-            match Self::poll_receipt(&self.http, &self.config.rpc_http_url, tx_hash).await? {
-                Some((true, _)) => {
-                    return Err(MmError::Exchange {
-                        exchange: Exchange::Uniswap,
-                        message: format!(
-                            "cannot cancel tx {}: already confirmed and filled",
-                            tx_hash
-                        ),
-                    });
-                }
-                Some((false, _)) => {
-                    // Transaction reverted; nothing to cancel.
-                    info!(
-                        tx_hash = %tx_hash,
-                        "Uniswap: cancel_order on reverted tx (no-op)"
-                    );
-                    return Ok(());
-                }
-                None => {
-                    // Transaction is still pending. In theory we could submit a
-                    // replacement transaction with the same nonce and higher gas
-                    // to a zero-value self-transfer. For now, we just log it.
-                    warn!(
-                        tx_hash = %tx_hash,
-                        "Uniswap: cancel_order on pending tx — DEX swaps cannot \
-                         be cancelled; tx may still confirm"
-                    );
-                    return Ok(());
+        // SAFETY GATE: Block cancel_order for the same reason as submit_order.
+        return Err(MmError::DexNotReady {
+            exchange: Exchange::Uniswap,
+            message: "Uniswap connector is experimental — transaction signing is not \
+                      production-ready. Order operations are disabled to prevent loss of funds."
+                .into(),
+        });
+
+        // ---- Original implementation below (retained for future completion) ----
+
+        #[allow(unreachable_code, unused_variables)]
+        {
+            warn!("DEX connector is experimental — transaction signing not implemented, returning placeholder");
+            // DEX swaps are atomic and cannot be cancelled once submitted.
+            // If the transaction is still in the mempool, it might be replaced
+            // with a higher-gas no-op transaction, but that is complex and
+            // beyond the scope of this connector.
+            //
+            // Check if the order is still pending (no receipt yet).
+            if let Some(ref tx_hash) = cancel.exchange_order_id {
+                match Self::poll_receipt(&self.http, &self.config.rpc_http_url, tx_hash).await? {
+                    Some((true, _)) => {
+                        return Err(MmError::Exchange {
+                            exchange: Exchange::Uniswap,
+                            message: format!(
+                                "cannot cancel tx {}: already confirmed and filled",
+                                tx_hash
+                            ),
+                        });
+                    }
+                    Some((false, _)) => {
+                        // Transaction reverted; nothing to cancel.
+                        info!(
+                            tx_hash = %tx_hash,
+                            "Uniswap: cancel_order on reverted tx (no-op)"
+                        );
+                        return Ok(());
+                    }
+                    None => {
+                        // Transaction is still pending. In theory we could submit a
+                        // replacement transaction with the same nonce and higher gas
+                        // to a zero-value self-transfer. For now, we just log it.
+                        warn!(
+                            tx_hash = %tx_hash,
+                            "Uniswap: cancel_order on pending tx — DEX swaps cannot \
+                             be cancelled; tx may still confirm"
+                        );
+                        return Ok(());
+                    }
                 }
             }
-        }
 
-        warn!(
-            client_order_id = %cancel.client_order_id,
-            "Uniswap: cancel_order called without exchange_order_id"
-        );
-        Ok(())
+            warn!(
+                client_order_id = %cancel.client_order_id,
+                "Uniswap: cancel_order called without exchange_order_id"
+            );
+            Ok(())
+        } // end #[allow(unreachable_code)] block
     }
 
     async fn cancel_all_orders(&self, _request: &CancelAllOrders) -> MmResult<u32> {
@@ -1093,6 +1123,7 @@ fn hex_to_f64(hex: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mm_core::{OrderType, TimeInForce};
 
     #[test]
     fn test_encode_address() {
@@ -1439,5 +1470,83 @@ mod tests {
         let connector = UniswapExecutionConnector::new(config);
         let nonce = connector.nonce.try_lock().unwrap();
         assert_eq!(*nonce, 0, "nonce should start at 0");
+    }
+
+    // -------------------------------------------------------------------
+    // Safety gate tests: DEX connector must refuse to submit real orders
+    // -------------------------------------------------------------------
+
+    /// Helper to build a test NewOrder for Uniswap.
+    fn test_order() -> NewOrder {
+        NewOrder {
+            exchange: Exchange::Uniswap,
+            symbol: Symbol::new("WETH", "USDC"),
+            side: Side::Buy,
+            order_type: OrderType::Market,
+            time_in_force: TimeInForce::IOC,
+            price: None,
+            quantity: Decimal::ONE,
+            strategy_id: "test-strategy".into(),
+            reduce_only: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_order_returns_dex_not_ready_error() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+        // submit_order must fail even without connecting first — the safety
+        // gate fires before any connectivity check.
+        let result = connector.submit_order(&test_order()).await;
+        assert!(
+            result.is_err(),
+            "submit_order should return an error, not submit a real transaction"
+        );
+        let err = result.unwrap_err();
+        match &err {
+            MmError::DexNotReady { exchange, message } => {
+                assert_eq!(*exchange, Exchange::Uniswap);
+                assert!(
+                    message.contains("experimental"),
+                    "error message should mention the connector is experimental, got: {}",
+                    message
+                );
+                assert!(
+                    message.contains("production-ready"),
+                    "error message should mention production-readiness, got: {}",
+                    message
+                );
+            }
+            other => panic!("expected DexNotReady error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_order_returns_dex_not_ready_error() {
+        let config = full_test_config();
+        let connector = UniswapExecutionConnector::new(config);
+        let cancel = CancelOrder {
+            exchange: Exchange::Uniswap,
+            symbol: Symbol::new("WETH", "USDC"),
+            client_order_id: "test-order-123".into(),
+            exchange_order_id: Some("0xdeadbeef".into()),
+        };
+        let result = connector.cancel_order(&cancel).await;
+        assert!(
+            result.is_err(),
+            "cancel_order should return an error, not attempt a real cancellation"
+        );
+        let err = result.unwrap_err();
+        match &err {
+            MmError::DexNotReady { exchange, message } => {
+                assert_eq!(*exchange, Exchange::Uniswap);
+                assert!(
+                    message.contains("experimental"),
+                    "error message should mention the connector is experimental, got: {}",
+                    message
+                );
+            }
+            other => panic!("expected DexNotReady error, got: {:?}", other),
+        }
     }
 }

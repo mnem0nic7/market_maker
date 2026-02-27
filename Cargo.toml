@@ -80,13 +80,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 opentelemetry = "0.27"
 opentelemetry-otlp = "0.27"
-prometheus = "0.13"
+prometheus = "0.14"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
 # Config
-config = "0.14"
+config = "0.15"
 
 # Error handling
 thiserror = "2"
@@ -108,6 +108,7 @@ bytes = "1"
 async-stream = "0.3"
 clap = { version = "4", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 # Workspace crates
 mm-core = { path = "crates/mm-core" }

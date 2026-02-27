@@ -17,7 +17,7 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
 use mm_core::{
@@ -504,7 +504,7 @@ async fn main() -> Result<()> {
     );
 
     // ----- (j) Initialize gateway (REST API + WebSocket) -----
-    let metrics = Arc::new(MetricsRegistry::new());
+    let metrics = Arc::new(MetricsRegistry::new().expect("Failed to initialize metrics"));
     let api_state = ApiState::with_param_updates(
         Arc::clone(&metrics),
         Arc::clone(&strategy_engine_shared),
@@ -629,7 +629,7 @@ async fn main() -> Result<()> {
 
                 // Record WebSocket connectivity metric (receiving books = connected).
                 metrics.websocket_connected
-                    .with_label_values(&[&book.exchange.to_string()])
+                    .with_label_values(&[book.exchange.as_str()])
                     .set(1.0);
 
                 // Broadcast market data tick to WebSocket dashboard clients.
@@ -643,7 +643,7 @@ async fn main() -> Result<()> {
 
                     // Record order book spread metric.
                     metrics.order_book_spread_bps
-                        .with_label_values(&[&book.exchange.to_string(), &book.symbol.canonical()])
+                        .with_label_values(&[book.exchange.as_str(), &book.symbol.canonical()])
                         .set(spread_bps.to_f64().unwrap_or(0.0));
 
                     let tick_msg = ServerMessage::MarketDataTick {
@@ -813,7 +813,7 @@ async fn main() -> Result<()> {
                                 "skipping stale order book"
                             );
                             metrics.websocket_connected
-                                .with_label_values(&[&exchange.to_string()])
+                                .with_label_values(&[exchange.as_str()])
                                 .set(0.0);
                             continue;
                         }
@@ -832,12 +832,10 @@ async fn main() -> Result<()> {
                                 .unwrap_or_else(|| Position::new(*exchange, symbol.clone()))
                         };
 
-                        let open_orders = order_manager.get_open_orders();
-                        // Filter to orders for this exchange/symbol.
-                        let relevant_orders: Vec<_> = open_orders
-                            .into_iter()
-                            .filter(|o| o.exchange == *exchange && o.symbol == *symbol)
-                            .collect();
+                        // Filter at the DashMap level to avoid cloning
+                        // orders for irrelevant instruments.
+                        let relevant_orders =
+                            order_manager.get_open_orders_for(exchange, symbol);
 
                         let snapshot = MarketSnapshot {
                             exchange: *exchange,
@@ -876,8 +874,8 @@ async fn main() -> Result<()> {
                                         .evaluate_order(new_order, &portfolio_risk)
                                         .await;
 
-                                    let exchange_label = new_order.exchange.to_string();
-                                    let side_label = new_order.side.to_string().to_lowercase();
+                                    let exchange_label = new_order.exchange.as_str();
+                                    let side_label = new_order.side.as_str();
 
                                     match risk_result {
                                         RiskAction::Allow => {
@@ -885,7 +883,7 @@ async fn main() -> Result<()> {
                                                 .with_label_values(&["risk_engine", "allow"])
                                                 .inc();
                                             metrics.orders_total
-                                                .with_label_values(&[&exchange_label, &side_label, "submitted"])
+                                                .with_label_values(&[exchange_label, side_label, "submitted"])
                                                 .inc();
                                             strategy_metrics_tracker.on_order_placed(&new_order.strategy_id);
                                             Some(action)
@@ -899,7 +897,7 @@ async fn main() -> Result<()> {
                                                 .with_label_values(&["risk_engine", "reject"])
                                                 .inc();
                                             metrics.orders_total
-                                                .with_label_values(&[&exchange_label, &side_label, "rejected"])
+                                                .with_label_values(&[exchange_label, side_label, "rejected"])
                                                 .inc();
                                             strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
                                             None
@@ -914,7 +912,7 @@ async fn main() -> Result<()> {
                                                     .with_label_values(&["risk_engine", "reject"])
                                                     .inc();
                                                 metrics.orders_total
-                                                    .with_label_values(&[&exchange_label, &side_label, "rejected"])
+                                                    .with_label_values(&[exchange_label, side_label, "rejected"])
                                                     .inc();
                                                 strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
                                                 None
@@ -928,7 +926,7 @@ async fn main() -> Result<()> {
                                                     .with_label_values(&["risk_engine", "reduce_size"])
                                                     .inc();
                                                 metrics.orders_total
-                                                    .with_label_values(&[&exchange_label, &side_label, "submitted"])
+                                                    .with_label_values(&[exchange_label, side_label, "submitted"])
                                                     .inc();
                                                 strategy_metrics_tracker.on_order_placed(&new_order.strategy_id);
                                                 let mut reduced = new_order.clone();
@@ -945,7 +943,7 @@ async fn main() -> Result<()> {
                                                 .with_label_values(&["risk_engine", "kill_switch"])
                                                 .inc();
                                             metrics.orders_total
-                                                .with_label_values(&[&exchange_label, &side_label, "rejected"])
+                                                .with_label_values(&[exchange_label, side_label, "rejected"])
                                                 .inc();
                                             metrics.kill_switch_active.set(1.0);
                                             strategy_metrics_tracker.on_order_rejected(&new_order.strategy_id);
@@ -1337,6 +1335,26 @@ async fn shutdown_signal() {
 /// Process an incoming order update: update the OMS, notify the strategy
 /// engine, and update positions on fills.
 #[allow(clippy::too_many_arguments)]
+#[instrument(
+    skip(
+        order_manager,
+        strategy_engine,
+        positions,
+        daily_pnl,
+        _api_state,
+        event_publisher,
+        strategy_metrics_tracker,
+        pnl_limit_check,
+        metrics,
+        broadcast_tx
+    ),
+    fields(
+        exchange = %update.exchange,
+        symbol = %update.symbol,
+        client_order_id = %update.client_order_id,
+        status = %update.status
+    )
+)]
 async fn handle_order_update(
     update: &OrderUpdate,
     order_manager: &Arc<OrderManager>,
@@ -1359,6 +1377,16 @@ async fn handle_order_update(
             .lock()
             .await
             .route_order_update(&order.strategy_id, update);
+
+        // Broadcast order update to WebSocket dashboard clients.
+        let _ = broadcast_tx.try_send(ServerMessage::OrderUpdate {
+            client_order_id: update.client_order_id.clone(),
+            exchange: update.exchange,
+            symbol: update.symbol.clone(),
+            status: format!("{:?}", update.status),
+            filled_quantity: order.filled_quantity,
+            remaining_quantity: order.remaining_quantity,
+        });
 
         // Handle fills: update positions.
         if matches!(
@@ -1384,11 +1412,11 @@ async fn handle_order_update(
 
                 // Record fill metrics.
                 {
-                    let exchange_label = update.exchange.to_string();
-                    let side_label = order.side.to_string().to_lowercase();
+                    let exchange_label = update.exchange.as_str();
+                    let side_label = order.side.as_str();
                     metrics
                         .fills_total
-                        .with_label_values(&[&exchange_label, &side_label])
+                        .with_label_values(&[exchange_label, side_label])
                         .inc();
                 }
 
@@ -1403,19 +1431,19 @@ async fn handle_order_update(
 
                     // Record position and PnL metrics after the fill.
                     {
-                        let exchange_label = update.exchange.to_string();
+                        let exchange_label = update.exchange.as_str();
                         let symbol_label = update.symbol.canonical();
                         metrics
                             .position_quantity
-                            .with_label_values(&[&exchange_label, &symbol_label])
+                            .with_label_values(&[exchange_label, &symbol_label])
                             .set(pos.quantity.to_f64().unwrap_or(0.0));
                         metrics
                             .pnl_realized
-                            .with_label_values(&[&exchange_label, &symbol_label])
+                            .with_label_values(&[exchange_label, &symbol_label])
                             .set(pos.realized_pnl.to_f64().unwrap_or(0.0));
                         metrics
                             .pnl_unrealized
-                            .with_label_values(&[&exchange_label, &symbol_label])
+                            .with_label_values(&[exchange_label, &symbol_label])
                             .set(pos.unrealized_pnl.to_f64().unwrap_or(0.0));
                     }
 

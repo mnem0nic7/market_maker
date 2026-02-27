@@ -458,6 +458,14 @@ mod tests {
             "test-buy-sell"
         }
 
+        fn exchange(&self) -> Exchange {
+            Exchange::Simulated
+        }
+
+        fn symbol(&self) -> Symbol {
+            Symbol::new("BTC", "USDT")
+        }
+
         fn on_tick(&mut self, snapshot: &MarketSnapshot) -> Vec<OrderAction> {
             let mut actions = Vec::new();
 
@@ -615,6 +623,12 @@ mod tests {
             }
             fn strategy_id(&self) -> &str {
                 "noop"
+            }
+            fn exchange(&self) -> Exchange {
+                Exchange::Simulated
+            }
+            fn symbol(&self) -> Symbol {
+                Symbol::new("BTC", "USDT")
             }
             fn on_tick(&mut self, _: &MarketSnapshot) -> Vec<OrderAction> {
                 vec![]
@@ -923,6 +937,12 @@ mod tests {
             }
             fn strategy_id(&self) -> &str {
                 "noop"
+            }
+            fn exchange(&self) -> Exchange {
+                Exchange::Simulated
+            }
+            fn symbol(&self) -> Symbol {
+                Symbol::new("BTC", "USDT")
             }
             fn on_tick(&mut self, _: &MarketSnapshot) -> Vec<OrderAction> {
                 vec![]

@@ -50,6 +50,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -74,8 +75,9 @@ use crate::normalizer;
 
 const COINBASE_WS_URL: &str = "wss://advanced-trade-ws.coinbase.com";
 const COINBASE_REST_URL: &str = "https://api.coinbase.com";
-const RECONNECT_DELAY_SECS: u64 = 5;
-const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+const WS_RECONNECT_DELAY_SECS: u64 = 5;
+const WS_MAX_BACKOFF_SECS: u64 = 300; // cap at 5 minutes
+const WS_READ_TIMEOUT_SECS: u64 = 30;
 
 // ---------------------------------------------------------------------------
 // Subscribe / unsubscribe messages
@@ -251,30 +253,40 @@ impl MarketDataConnector for CoinbaseConnector {
                         info!("Coinbase subscriptions sent");
 
                         loop {
-                            match read.next().await {
-                                Some(Ok(Message::Text(text))) => {
+                            match tokio::time::timeout(
+                                Duration::from_secs(WS_READ_TIMEOUT_SECS),
+                                read.next(),
+                            )
+                            .await
+                            {
+                                Ok(Some(Ok(Message::Text(text)))) => {
+                                    reconnect_attempts = 0;
                                     if let Err(e) =
                                         handle_coinbase_message(&text, &book_tx, &trade_tx).await
                                     {
                                         warn!(error = %e, "failed to handle Coinbase message");
                                     }
                                 }
-                                Some(Ok(Message::Ping(data))) => {
+                                Ok(Some(Ok(Message::Ping(data)))) => {
                                     if let Err(e) = write.send(Message::Pong(data)).await {
                                         warn!(error = %e, "failed to send pong to Coinbase");
                                         break;
                                     }
                                 }
-                                Some(Ok(Message::Close(frame))) => {
+                                Ok(Some(Ok(Message::Close(frame)))) => {
                                     info!(?frame, "Coinbase WebSocket closed by server");
                                     break;
                                 }
-                                Some(Err(e)) => {
+                                Ok(Some(Err(e))) => {
                                     error!(error = %e, "Coinbase WebSocket error");
                                     break;
                                 }
-                                None => {
+                                Ok(None) => {
                                     info!("Coinbase WebSocket stream ended");
+                                    break;
+                                }
+                                Err(_) => {
+                                    warn!("WebSocket read timeout after 30s, reconnecting...");
                                     break;
                                 }
                                 _ => {}
@@ -288,22 +300,30 @@ impl MarketDataConnector for CoinbaseConnector {
                     }
                 }
 
+                // Reconnection logic with exponential backoff and jitter.
                 reconnect_attempts += 1;
-                if reconnect_attempts > MAX_RECONNECT_ATTEMPTS {
-                    error!(
-                        attempts = reconnect_attempts,
-                        "exceeded max reconnection attempts for Coinbase, giving up"
-                    );
-                    break;
-                }
 
-                let delay = RECONNECT_DELAY_SECS * reconnect_attempts as u64;
+                let base_delay = WS_RECONNECT_DELAY_SECS.min(WS_MAX_BACKOFF_SECS);
+                let exp_delay = base_delay.saturating_mul(1u64 << reconnect_attempts.min(6));
+                let capped_delay = exp_delay.min(WS_MAX_BACKOFF_SECS);
+                // Add jitter: +/-25%
+                let jitter_range = capped_delay / 4;
+                let delay = if jitter_range > 0 {
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .subsec_nanos() as u64;
+                    capped_delay - jitter_range + nanos % (jitter_range * 2)
+                } else {
+                    capped_delay
+                };
+
                 warn!(
                     attempt = reconnect_attempts,
                     delay_secs = delay,
                     "reconnecting to Coinbase WebSocket"
                 );
-                tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+                tokio::time::sleep(Duration::from_secs(delay)).await;
             }
 
             connected.store(false, Ordering::SeqCst);

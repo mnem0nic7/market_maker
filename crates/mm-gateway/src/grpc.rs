@@ -542,3 +542,434 @@ fn order_status_to_pb(status: mm_core::types::OrderStatus) -> i32 {
         mm_core::types::OrderStatus::Expired => 9,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use mm_core::types::{Position, Symbol};
+    use mm_core::{Exchange, OrderBook, PortfolioRisk, StrategyConfig};
+    use rust_decimal_macros::dec;
+    use tonic::Request;
+
+    use pb::execution::execution_service_server::ExecutionService;
+    use pb::market_data::market_data_service_server::MarketDataService;
+    use pb::risk::risk_service_server::RiskService;
+    use pb::strategy::strategy_service_server::StrategyService;
+
+    use crate::rest::{ApiState, StrategyStatus};
+
+    /// Build a shared ApiState suitable for testing (empty state).
+    fn test_state() -> Arc<ApiState> {
+        ApiState::new()
+    }
+
+    // -----------------------------------------------------------------------
+    // RiskService: Kill switch tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_kill_switch_status() {
+        let state = test_state();
+        let svc = RiskServiceImpl::new(Arc::clone(&state));
+
+        let resp = svc
+            .get_kill_switch_status(Request::new(pb::risk::GetKillSwitchStatusRequest {}))
+            .await
+            .expect("get_kill_switch_status should succeed");
+
+        let inner = resp.into_inner();
+        assert!(!inner.active, "kill switch should be inactive by default");
+        assert!(inner.timestamp_ms > 0, "timestamp should be set");
+    }
+
+    #[tokio::test]
+    async fn test_activate_kill_switch() {
+        let state = test_state();
+        let svc = RiskServiceImpl::new(Arc::clone(&state));
+
+        let resp = svc
+            .activate_kill_switch(Request::new(pb::risk::ActivateKillSwitchRequest {
+                reason: "test activation".to_string(),
+            }))
+            .await
+            .expect("activate_kill_switch should succeed");
+
+        let inner = resp.into_inner();
+        assert!(
+            inner.active,
+            "kill switch should be active after activation"
+        );
+        assert!(inner.timestamp_ms > 0, "timestamp should be set");
+
+        // Verify the underlying state was updated.
+        let ks = *state.kill_switch_active.lock().await;
+        assert!(ks, "underlying state should reflect active kill switch");
+    }
+
+    #[tokio::test]
+    async fn test_reset_kill_switch() {
+        let state = test_state();
+        let svc = RiskServiceImpl::new(Arc::clone(&state));
+
+        // First activate the kill switch.
+        svc.activate_kill_switch(Request::new(pb::risk::ActivateKillSwitchRequest {
+            reason: "pre-reset activation".to_string(),
+        }))
+        .await
+        .expect("activate should succeed");
+
+        // Confirm it is active.
+        let active = *state.kill_switch_active.lock().await;
+        assert!(active, "kill switch should be active before reset");
+
+        // Now reset it.
+        let resp = svc
+            .reset_kill_switch(Request::new(pb::risk::ResetKillSwitchRequest {}))
+            .await
+            .expect("reset_kill_switch should succeed");
+
+        let inner = resp.into_inner();
+        assert!(!inner.active, "kill switch should be inactive after reset");
+
+        // Verify underlying state.
+        let ks = *state.kill_switch_active.lock().await;
+        assert!(!ks, "underlying state should reflect inactive kill switch");
+    }
+
+    // -----------------------------------------------------------------------
+    // RiskService: activate_kill_switch stops running strategies
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_activate_kill_switch_stops_strategies() {
+        let state = test_state();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(StrategyStatus {
+                config: StrategyConfig {
+                    strategy_id: "strat-1".to_string(),
+                    strategy_type: "spread".to_string(),
+                    exchange: Exchange::Simulated,
+                    symbol: Symbol::new("BTC", "USDT"),
+                    enabled: true,
+                    params: serde_json::json!({}),
+                },
+                running: true,
+                started_at: Some(Utc::now()),
+                stopped_at: None,
+            });
+        }
+
+        let svc = RiskServiceImpl::new(Arc::clone(&state));
+
+        svc.activate_kill_switch(Request::new(pb::risk::ActivateKillSwitchRequest {
+            reason: "emergency".to_string(),
+        }))
+        .await
+        .expect("activate should succeed");
+
+        let strategies = state.strategies.read().await;
+        assert!(
+            !strategies[0].running,
+            "strategy should be stopped after kill switch activation"
+        );
+        assert!(
+            strategies[0].stopped_at.is_some(),
+            "stopped_at should be set"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // MarketDataService: get_order_book not found
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_order_book_not_found() {
+        let state = test_state();
+        let svc = MarketDataServiceImpl::new(Arc::clone(&state));
+
+        let result = svc
+            .get_order_book(Request::new(pb::market_data::GetOrderBookRequest {
+                exchange: 1, // Binance
+                symbol: Some(pb::common::Symbol {
+                    base: "BTC".to_string(),
+                    quote: "USDT".to_string(),
+                }),
+                depth: 10,
+            }))
+            .await;
+
+        let err = result.expect_err("should return not_found for missing order book");
+        assert_eq!(
+            err.code(),
+            tonic::Code::NotFound,
+            "expected NOT_FOUND status"
+        );
+        assert!(
+            err.message().contains("order book not found"),
+            "error message should mention 'order book not found'"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // MarketDataService: get_order_book with populated data
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_order_book_returns_data() {
+        let state = test_state();
+
+        // Insert a test order book into state.
+        {
+            let mut books = state.order_books.write().await;
+            let book = Arc::new(OrderBook {
+                exchange: Exchange::Binance,
+                symbol: Symbol::new("ETH", "USDT"),
+                bids: vec![mm_core::types::PriceLevel {
+                    price: dec!(3000),
+                    quantity: dec!(1.5),
+                }],
+                asks: vec![mm_core::types::PriceLevel {
+                    price: dec!(3001),
+                    quantity: dec!(2.0),
+                }],
+                timestamp: Utc::now(),
+                sequence: 42,
+            });
+            books.insert((Exchange::Binance, "ETH/USDT".to_string()), book);
+        }
+
+        let svc = MarketDataServiceImpl::new(Arc::clone(&state));
+
+        let resp = svc
+            .get_order_book(Request::new(pb::market_data::GetOrderBookRequest {
+                exchange: 1, // Binance
+                symbol: Some(pb::common::Symbol {
+                    base: "ETH".to_string(),
+                    quote: "USDT".to_string(),
+                }),
+                depth: 0, // all levels
+            }))
+            .await
+            .expect("should return order book");
+
+        let book = resp
+            .into_inner()
+            .order_book
+            .expect("order_book should be present");
+        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.asks.len(), 1);
+        assert_eq!(book.bids[0].price, "3000");
+        assert_eq!(book.asks[0].price, "3001");
+        assert_eq!(book.sequence, 42);
+    }
+
+    // -----------------------------------------------------------------------
+    // ExecutionService: get_open_orders with empty state
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_open_orders_empty() {
+        let state = test_state();
+        let svc = ExecutionServiceImpl::new(Arc::clone(&state));
+
+        let resp = svc
+            .get_open_orders(Request::new(pb::execution::GetOpenOrdersRequest {
+                exchange: 0, // UNSPECIFIED = all
+                symbol: None,
+            }))
+            .await
+            .expect("get_open_orders should succeed on empty state");
+
+        let inner = resp.into_inner();
+        assert!(
+            inner.orders.is_empty(),
+            "orders list should be empty when no orders exist"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // StrategyService: list_strategies with empty state
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_list_strategies_empty() {
+        let state = test_state();
+        let svc = StrategyServiceImpl::new(Arc::clone(&state));
+
+        let resp = svc
+            .list_strategies(Request::new(pb::strategy::ListStrategiesRequest {}))
+            .await
+            .expect("list_strategies should succeed on empty state");
+
+        let inner = resp.into_inner();
+        assert!(
+            inner.strategies.is_empty(),
+            "strategies list should be empty"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ExecutionService: submit_order returns unimplemented
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_submit_order_unimplemented() {
+        let state = test_state();
+        let svc = ExecutionServiceImpl::new(Arc::clone(&state));
+
+        let result = svc
+            .submit_order(Request::new(pb::execution::SubmitOrderRequest {
+                exchange: 1,
+                symbol: Some(pb::common::Symbol {
+                    base: "BTC".to_string(),
+                    quote: "USDT".to_string(),
+                }),
+                side: 1,
+                order_type: 2,
+                time_in_force: 1,
+                price: "50000".to_string(),
+                quantity: "0.1".to_string(),
+                strategy_id: "test-strat".to_string(),
+                reduce_only: false,
+            }))
+            .await;
+
+        let err = result.expect_err("submit_order should return unimplemented");
+        assert_eq!(
+            err.code(),
+            tonic::Code::Unimplemented,
+            "expected UNIMPLEMENTED status"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ExecutionService: cancel_order returns unimplemented
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cancel_order_unimplemented() {
+        let state = test_state();
+        let svc = ExecutionServiceImpl::new(Arc::clone(&state));
+
+        let result = svc
+            .cancel_order(Request::new(pb::execution::CancelOrderRequest {
+                exchange: 1,
+                client_order_id: "some-order".to_string(),
+                exchange_order_id: String::new(),
+                symbol: Some(pb::common::Symbol {
+                    base: "BTC".to_string(),
+                    quote: "USDT".to_string(),
+                }),
+            }))
+            .await;
+
+        let err = result.expect_err("cancel_order should return unimplemented");
+        assert_eq!(
+            err.code(),
+            tonic::Code::Unimplemented,
+            "expected UNIMPLEMENTED status"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // RiskService: get_portfolio_risk with populated data
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_portfolio_risk() {
+        let state = test_state();
+
+        // Populate portfolio risk data.
+        {
+            let mut risk = state.portfolio_risk.write().await;
+            *risk = Some(PortfolioRisk {
+                total_var_95: dec!(1000),
+                total_var_99: dec!(1500),
+                net_exposure: dec!(5000),
+                gross_exposure: dec!(10000),
+                max_drawdown: dec!(200),
+                daily_pnl: dec!(350),
+                positions: vec![Position {
+                    exchange: Exchange::Binance,
+                    symbol: Symbol::new("BTC", "USDT"),
+                    quantity: dec!(0.5),
+                    average_entry_price: dec!(50000),
+                    unrealized_pnl: dec!(100),
+                    realized_pnl: dec!(50),
+                    updated_at: Utc::now(),
+                }],
+                timestamp: Utc::now(),
+            });
+        }
+
+        let svc = RiskServiceImpl::new(Arc::clone(&state));
+
+        let resp = svc
+            .get_portfolio_risk(Request::new(pb::risk::GetPortfolioRiskRequest {}))
+            .await
+            .expect("get_portfolio_risk should succeed");
+
+        let risk = resp
+            .into_inner()
+            .risk
+            .expect("risk field should be present");
+
+        assert_eq!(risk.total_var_95, "1000");
+        assert_eq!(risk.total_var_99, "1500");
+        assert_eq!(risk.net_exposure, "5000");
+        assert_eq!(risk.gross_exposure, "10000");
+        assert_eq!(risk.max_drawdown, "200");
+        assert_eq!(risk.daily_pnl, "350");
+        assert_eq!(risk.positions.len(), 1);
+        assert_eq!(risk.positions[0].quantity, "0.5");
+        assert_eq!(risk.positions[0].average_entry_price, "50000");
+    }
+
+    // -----------------------------------------------------------------------
+    // RiskService: get_portfolio_risk returns not_found when empty
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_portfolio_risk_not_found() {
+        let state = test_state();
+        let svc = RiskServiceImpl::new(Arc::clone(&state));
+
+        let result = svc
+            .get_portfolio_risk(Request::new(pb::risk::GetPortfolioRiskRequest {}))
+            .await;
+
+        let err = result.expect_err("should return not_found when no risk data");
+        assert_eq!(
+            err.code(),
+            tonic::Code::NotFound,
+            "expected NOT_FOUND status"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enum conversion helpers
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_map_exchange_valid() {
+        assert!(matches!(map_exchange(1), Ok(mm_core::Exchange::Binance)));
+        assert!(matches!(map_exchange(2), Ok(mm_core::Exchange::Coinbase)));
+        assert!(matches!(map_exchange(3), Ok(mm_core::Exchange::Kraken)));
+        assert!(matches!(map_exchange(8), Ok(mm_core::Exchange::Simulated)));
+    }
+
+    #[tokio::test]
+    async fn test_map_exchange_invalid() {
+        let err = map_exchange(0).expect_err("exchange 0 should be invalid");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        let err = map_exchange(99).expect_err("exchange 99 should be invalid");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+}

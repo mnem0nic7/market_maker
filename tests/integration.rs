@@ -4,6 +4,8 @@ mod backtest_test;
 mod circuit_breaker_test;
 #[path = "integration/config_validation_test.rs"]
 mod config_validation_test;
+#[path = "integration/end_to_end_test.rs"]
+mod end_to_end_test;
 #[path = "integration/event_sourcing_test.rs"]
 mod event_sourcing_test;
 #[path = "integration/kill_switch_test.rs"]
