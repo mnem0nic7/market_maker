@@ -1,4 +1,8 @@
+pub mod loader;
+
 use serde::{Deserialize, Serialize};
+
+pub use loader::SkillLoader;
 
 /// A research skill — a named set of instructions the agent can follow
 /// for specialized analysis (e.g., DCF valuation, comparable analysis).
