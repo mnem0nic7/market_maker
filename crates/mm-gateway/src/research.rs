@@ -9,7 +9,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use mm_research::agent::AgentRunner;
-use mm_research::llm::AnthropicProvider;
+use mm_research::llm::{AnthropicProvider, OpenAiProvider};
 use mm_research::skills::SkillLoader;
 use mm_research::tools::finance::{register_finance_tools, FinancialDataClient};
 use mm_research::tools::registry::ToolRegistry;
@@ -155,6 +155,12 @@ pub async fn research_query(
                 ApiResponse::error("Anthropic API key not configured.")
             })?;
             Arc::new(AnthropicProvider::new(api_key, config.llm_model.clone()))
+        }
+        "openai" => {
+            let api_key = config.openai_api_key.clone().ok_or_else(|| {
+                ApiResponse::error("OpenAI API key not configured.")
+            })?;
+            Arc::new(OpenAiProvider::new(api_key, config.llm_model.clone()))
         }
         other => {
             return Err(ApiResponse::error(format!(

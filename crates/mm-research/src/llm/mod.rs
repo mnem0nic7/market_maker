@@ -1,7 +1,9 @@
 pub mod anthropic;
+pub mod openai;
 pub mod types;
 
 pub use anthropic::AnthropicProvider;
+pub use openai::OpenAiProvider;
 pub use types::*;
 
 use async_trait::async_trait;
