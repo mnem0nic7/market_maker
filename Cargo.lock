@@ -2083,6 +2083,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "async-trait",
  "axum 0.8.8",
  "bytes",
  "chrono",
@@ -2090,6 +2091,7 @@ dependencies = [
  "governor",
  "mm-backtest",
  "mm-core",
+ "mm-research",
  "mm-risk",
  "mm-strategy",
  "prometheus",
@@ -2135,6 +2137,29 @@ dependencies = [
  "tokio-tungstenite 0.24.0",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "mm-research"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures",
+ "mm-core",
+ "reqwest",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

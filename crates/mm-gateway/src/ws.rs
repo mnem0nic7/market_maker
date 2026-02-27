@@ -69,6 +69,9 @@ pub enum ServerMessage {
     Unsubscribed {
         channel: String,
     },
+    ResearchEvent {
+        event: serde_json::Value,
+    },
 }
 
 /// Messages sent from dashboard clients to the server.
@@ -374,11 +377,12 @@ pub(crate) fn should_send(subscriptions: &HashSet<Channel>, msg: &ServerMessage)
         ServerMessage::OrderUpdate { .. } => subscriptions.contains(&Channel::Orders),
         ServerMessage::RiskUpdate { .. } => subscriptions.contains(&Channel::Risk),
         ServerMessage::MarketDataTick { .. } => subscriptions.contains(&Channel::MarketData),
-        // Strategy metrics, error, and ack messages are always forwarded.
+        // Strategy metrics, error, research, and ack messages are always forwarded.
         ServerMessage::StrategyMetrics { .. }
         | ServerMessage::Error { .. }
         | ServerMessage::Subscribed { .. }
-        | ServerMessage::Unsubscribed { .. } => true,
+        | ServerMessage::Unsubscribed { .. }
+        | ServerMessage::ResearchEvent { .. } => true,
     }
 }
 

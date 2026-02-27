@@ -44,10 +44,10 @@ impl AgentRunner {
 
     /// Run the agent loop, returning a stream of events.
     pub fn run(
-        &self,
+        self,
         query: String,
         trading_context: Option<String>,
-    ) -> impl Stream<Item = AgentEvent> + Send + '_ {
+    ) -> impl Stream<Item = AgentEvent> + Send + 'static {
         let llm = Arc::clone(&self.llm);
         let tools = Arc::clone(&self.tools);
         let skills = self.skills.clone();

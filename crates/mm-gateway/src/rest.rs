@@ -311,6 +311,9 @@ pub struct ApiState {
     /// can push parameter updates to the strategy engine without stop/restart.
     pub param_update_tx: Option<mpsc::Sender<StrategyParamUpdate>>,
 
+    /// Optional research agent configuration.
+    pub research_config: Option<Arc<mm_research::config::ResearchConfig>>,
+
     /// Timestamp when the API state was created — used by the health endpoint
     /// to report uptime.
     pub startup_time: std::time::Instant,
@@ -350,6 +353,14 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
+            research_config: {
+                let cfg = mm_research::config::ResearchConfig::from_env();
+                if cfg.anthropic_api_key.is_some() || cfg.openai_api_key.is_some() {
+                    Some(Arc::new(cfg))
+                } else {
+                    None
+                }
+            },
             strategy_engine: None,
             rate_limit: None,
             param_update_tx: None,
@@ -373,6 +384,14 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
+            research_config: {
+                let cfg = mm_research::config::ResearchConfig::from_env();
+                if cfg.anthropic_api_key.is_some() || cfg.openai_api_key.is_some() {
+                    Some(Arc::new(cfg))
+                } else {
+                    None
+                }
+            },
             strategy_engine: None,
             rate_limit: None,
             param_update_tx: None,
@@ -399,6 +418,14 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
+            research_config: {
+                let cfg = mm_research::config::ResearchConfig::from_env();
+                if cfg.anthropic_api_key.is_some() || cfg.openai_api_key.is_some() {
+                    Some(Arc::new(cfg))
+                } else {
+                    None
+                }
+            },
             strategy_engine: Some(engine),
             rate_limit: None,
             param_update_tx: None,
@@ -427,6 +454,14 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
+            research_config: {
+                let cfg = mm_research::config::ResearchConfig::from_env();
+                if cfg.anthropic_api_key.is_some() || cfg.openai_api_key.is_some() {
+                    Some(Arc::new(cfg))
+                } else {
+                    None
+                }
+            },
             strategy_engine: Some(engine),
             rate_limit: None,
             param_update_tx: None,
@@ -456,6 +491,14 @@ impl ApiState {
             backtest_results: RwLock::new(Vec::new()),
             backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
+            research_config: {
+                let cfg = mm_research::config::ResearchConfig::from_env();
+                if cfg.anthropic_api_key.is_some() || cfg.openai_api_key.is_some() {
+                    Some(Arc::new(cfg))
+                } else {
+                    None
+                }
+            },
             strategy_engine: Some(engine),
             rate_limit: None,
             param_update_tx: Some(param_update_tx),
@@ -480,6 +523,14 @@ impl Default for ApiState {
             backtest_results: RwLock::new(Vec::new()),
             backtest_store: None,
             assistant_config: AssistantConfig::from_env(),
+            research_config: {
+                let cfg = mm_research::config::ResearchConfig::from_env();
+                if cfg.anthropic_api_key.is_some() || cfg.openai_api_key.is_some() {
+                    Some(Arc::new(cfg))
+                } else {
+                    None
+                }
+            },
             strategy_engine: None,
             rate_limit: None,
             param_update_tx: None,
@@ -630,6 +681,10 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         )
         // AI assistant
         .route("/api/v1/assistant/chat", post(assistant_chat))
+        // Research agent
+        .route("/api/v1/research/query", post(crate::research::research_query))
+        .route("/api/v1/research/tools", get(crate::research::research_tools))
+        .route("/api/v1/research/skills", get(crate::research::research_skills))
         // Metrics middleware — records request count and latency for every request.
         .layer(middleware::from_fn_with_state(
             state.clone(),
