@@ -60,7 +60,7 @@ axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tonic = "0.12"
-prost = "0.13"
+prost = "0.14"
 prost-types = "0.13"
 
 # Messaging
