@@ -22,6 +22,23 @@ interface StrategyDrawerProps {
 
 type DraftValues = Record<string, string | boolean>;
 
+const DEFAULT_DRAWER_WIDTH = 880;
+const MIN_DRAWER_WIDTH = 560;
+const MAX_DRAWER_WIDTH = 1280;
+
+function clampDrawerWidth(width: number, viewportWidth: number): number {
+  if (viewportWidth <= 0) {
+    return width;
+  }
+
+  if (viewportWidth < 768) {
+    return viewportWidth;
+  }
+
+  const maxAllowedWidth = Math.min(MAX_DRAWER_WIDTH, viewportWidth - 32);
+  return Math.min(Math.max(width, MIN_DRAWER_WIDTH), maxAllowedWidth);
+}
+
 function formatTimestamp(value: string | null): string {
   if (!value) return "Not yet recorded";
   const date = new Date(value);
@@ -266,6 +283,9 @@ export function StrategyDrawer({
   const [actionState, setActionState] = useState<"idle" | "starting" | "stopping">("idle");
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [drawerWidth, setDrawerWidth] = useState(DEFAULT_DRAWER_WIDTH);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [isResizing, setIsResizing] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -275,10 +295,29 @@ export function StrategyDrawer({
   }, []);
 
   useEffect(() => {
+    if (!mounted) return;
+
+    const syncViewportWidth = () => {
+      setViewportWidth(window.innerWidth);
+    };
+
+    syncViewportWidth();
+    window.addEventListener("resize", syncViewportWidth);
+
+    return () => {
+      window.removeEventListener("resize", syncViewportWidth);
+    };
+  }, [mounted]);
+
+  useEffect(() => {
     if (!mounted || !strategy) return;
 
     const previousOverflow = document.body.style.overflow;
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
     document.body.style.overflow = "hidden";
+    document.body.style.userSelect = isResizing ? "none" : previousUserSelect;
+    document.body.style.cursor = isResizing ? "col-resize" : previousCursor;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -292,9 +331,39 @@ export function StrategyDrawer({
 
     return () => {
       document.body.style.overflow = previousOverflow;
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [mounted, onClose, strategy]);
+  }, [isResizing, mounted, onClose, strategy]);
+
+  useEffect(() => {
+    if (!mounted || !isResizing) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const nextWidth = window.innerWidth - event.clientX;
+      setDrawerWidth(clampDrawerWidth(nextWidth, window.innerWidth));
+    };
+
+    const stopResizing = () => {
+      setIsResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResizing);
+    window.addEventListener("pointercancel", stopResizing);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("pointercancel", stopResizing);
+    };
+  }, [isResizing, mounted]);
+
+  useEffect(() => {
+    if (viewportWidth <= 0) return;
+    setDrawerWidth((currentWidth) => clampDrawerWidth(currentWidth, viewportWidth));
+  }, [viewportWidth]);
 
   useEffect(() => {
     if (!strategy) return;
@@ -410,6 +479,14 @@ export function StrategyDrawer({
   const totalPnl = activeMetrics
     ? (Number.parseFloat(activeMetrics.realized_pnl) + Number.parseFloat(activeMetrics.unrealized_pnl)).toFixed(4)
     : null;
+  const resolvedDrawerWidth = clampDrawerWidth(drawerWidth, viewportWidth);
+  const canResize = viewportWidth >= 768;
+
+  const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canResize) return;
+    event.preventDefault();
+    setIsResizing(true);
+  };
 
   const drawer = (
     <>
@@ -421,8 +498,20 @@ export function StrategyDrawer({
         aria-label="Strategy details"
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        className="fixed inset-y-0 right-0 z-[210] w-full max-w-2xl overflow-y-auto border-l border-border-panel bg-bg-panel shadow-2xl outline-none"
+        className="fixed inset-y-0 right-0 z-[210] overflow-y-auto border-l border-border-panel bg-bg-panel shadow-2xl outline-none"
+        style={{ width: canResize ? `${resolvedDrawerWidth}px` : "100vw" }}
       >
+        {canResize && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize strategy drawer"
+            onPointerDown={handleResizeStart}
+            className="absolute inset-y-0 left-0 z-20 w-3 -translate-x-1/2 cursor-col-resize"
+          >
+            <div className="absolute inset-y-8 left-1/2 w-px -translate-x-1/2 rounded-full bg-border-panel/70" />
+          </div>
+        )}
         <div className="sticky top-0 z-10 border-b border-border-panel bg-bg-panel/95 px-5 py-4 backdrop-blur">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
