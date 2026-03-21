@@ -60,6 +60,12 @@ pub enum ServerMessage {
         strategy_id: String,
         metrics: mm_core::StrategyMetrics,
     },
+    StrategyLifecycleEvent {
+        strategy_id: String,
+        event: String,
+        running: bool,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
     Error {
         message: String,
     },
@@ -377,8 +383,9 @@ pub(crate) fn should_send(subscriptions: &HashSet<Channel>, msg: &ServerMessage)
         ServerMessage::OrderUpdate { .. } => subscriptions.contains(&Channel::Orders),
         ServerMessage::RiskUpdate { .. } => subscriptions.contains(&Channel::Risk),
         ServerMessage::MarketDataTick { .. } => subscriptions.contains(&Channel::MarketData),
-        // Strategy metrics, error, research, and ack messages are always forwarded.
+        // Strategy metrics, lifecycle events, error, research, and ack messages are always forwarded.
         ServerMessage::StrategyMetrics { .. }
+        | ServerMessage::StrategyLifecycleEvent { .. }
         | ServerMessage::Error { .. }
         | ServerMessage::Subscribed { .. }
         | ServerMessage::Unsubscribed { .. }
@@ -447,6 +454,9 @@ mod tests {
                 strategy_id: "spread-btc".to_string(),
                 realized_pnl: dec!(100),
                 unrealized_pnl: dec!(50),
+                current_position: dec!(1.0),
+                peak_total_pnl: dec!(175),
+                max_drawdown: dec!(25),
                 total_fills: 10,
                 total_orders_placed: 20,
                 total_orders_cancelled: 5,
@@ -456,6 +466,15 @@ mod tests {
                 uptime_secs: 3600,
                 last_fill_at: None,
             },
+        }
+    }
+
+    fn strategy_lifecycle_msg() -> ServerMessage {
+        ServerMessage::StrategyLifecycleEvent {
+            strategy_id: "spread-btc".to_string(),
+            event: "started".to_string(),
+            running: true,
+            timestamp: chrono::Utc::now(),
         }
     }
 
@@ -520,6 +539,7 @@ mod tests {
         assert!(should_send(&subscriptions, &risk_update()));
         assert!(should_send(&subscriptions, &market_data_tick()));
         assert!(should_send(&subscriptions, &strategy_metrics_msg()));
+        assert!(should_send(&subscriptions, &strategy_lifecycle_msg()));
         assert!(should_send(&subscriptions, &error_msg()));
     }
 
@@ -576,6 +596,15 @@ mod tests {
     }
 
     #[test]
+    fn test_should_send_strategy_lifecycle_always_forwarded() {
+        let empty = subs(&[]);
+        let positions_only = subs(&[Channel::Positions]);
+
+        assert!(should_send(&empty, &strategy_lifecycle_msg()));
+        assert!(should_send(&positions_only, &strategy_lifecycle_msg()));
+    }
+
+    #[test]
     fn test_should_send_error_always_forwarded() {
         // Error messages should pass regardless of subscriptions.
         let empty = subs(&[]);
@@ -597,6 +626,7 @@ mod tests {
 
         // "Always forwarded" messages should still pass.
         assert!(should_send(&empty, &strategy_metrics_msg()));
+        assert!(should_send(&empty, &strategy_lifecycle_msg()));
         assert!(should_send(&empty, &error_msg()));
         assert!(should_send(
             &empty,

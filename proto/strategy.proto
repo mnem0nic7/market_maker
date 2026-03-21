@@ -52,8 +52,27 @@ message GetStrategyRequest {
   string strategy_id = 1;
 }
 
+message StrategyRiskSummary {
+  string posture = 1;
+  string current_total_pnl = 2;
+  repeated string upside = 3;
+  repeated string downside = 4;
+}
+
+message StrategyLifecycleInfo {
+  bool can_start = 1;
+  bool can_stop = 2;
+  bool can_edit = 3;
+  string save_mode = 4;
+  string start_behavior = 5;
+  string stop_behavior = 6;
+}
+
 message StrategyDetail {
   StrategyInfo info = 1;
   // Strategy-specific configuration as JSON string.
   string config_json = 2;
+  string metrics_json = 3;
+  StrategyRiskSummary risk_summary = 4;
+  StrategyLifecycleInfo lifecycle = 5;
 }

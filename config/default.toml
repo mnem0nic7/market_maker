@@ -66,71 +66,188 @@ symbols = ["SOL/USDC", "SOL/USDT"]
 #   - "spread"     : Basic symmetric spread market making.
 #   - "avellaneda" : Avellaneda-Stoikov inventory-aware market making.
 #   - "grid"       : Grid trading within a price range.
+#   - "twap"       : Time-weighted average price execution.
+#   - "vwap"       : Volume-weighted average price execution.
+#   - "momentum"   : Trend-following directional strategy.
+#   - "mean_reversion" : Bollinger Band-style directional strategy.
+#   - "stat_arb"   : Statistical arbitrage across correlated instruments.
 #
 # The "params" table is passed directly to the strategy constructor. Its
 # schema depends on the strategy_type. The strategy_id, exchange, and symbol
 # fields in the outer section take precedence over anything in params.
+# The dashboard create flow currently supports the single-symbol strategies.
+# `stat_arb` is seeded here as a pair template and started from the
+# Strategies panel until a dedicated multi-leg editor exists.
 
 [[strategies]]
-strategy_id = "spread-btc-binance"
+strategy_id = "spread-aapl-alpaca-paper"
 strategy_type = "spread"
-exchange = "binance"
-symbol = "BTC/USDT"
+exchange = "alpaca"
+symbol = "AAPL/USD"
 enabled = false
 
 [strategies.params]
 # Half-spread in basis points for the innermost level.
-spread_bps = "10"
-# Order quantity per level.
-order_size = "0.01"
+spread_bps = "12"
+# Order quantity per level (fractional shares are supported on Alpaca paper).
+order_size = "1"
 # Number of price levels on each side of the book.
-num_levels = 3
+num_levels = 1
 # Minimum ms between full order refreshes.
 refresh_interval_ms = 1000
 # Floor for the spread in basis points.
-min_spread_bps = "5"
+min_spread_bps = "6"
 # Mid-price movement (bps) that triggers a cancel-and-replace cycle.
-reprice_threshold_bps = "3"
+reprice_threshold_bps = "4"
 
 [[strategies]]
-strategy_id = "as-eth-binance"
+strategy_id = "mean_reversion-aapl-alpaca-paper"
+strategy_type = "mean_reversion"
+exchange = "alpaca"
+symbol = "AAPL/USD"
+enabled = false
+
+[strategies.params]
+# Number of recent mid-price observations used for the rolling band window.
+window_periods = 30
+# Standard-deviation multiplier for the Bollinger-style entry/exit bands.
+num_std_dev = "2.5"
+# Order quantity per signal (fractional shares are supported on Alpaca paper).
+order_size = "1"
+# Maximum absolute inventory this strategy is allowed to hold.
+max_position = "1"
+# Exit when price reverts back to the rolling mean.
+exit_at_mean = true
+
+[[strategies]]
+strategy_id = "avellaneda-msft-alpaca-paper"
 strategy_type = "avellaneda"
-exchange = "binance"
-symbol = "ETH/USDT"
+exchange = "alpaca"
+symbol = "MSFT/USD"
 enabled = false
 
 [strategies.params]
-# Risk aversion (higher = more inventory-averse quoting).
-gamma = "0.1"
-# Volatility estimate (annualized or period-matched).
+# Higher values lean harder against inventory accumulation.
+gamma = "0.15"
+# Session volatility estimate used by the reservation-price model.
 sigma = "0.02"
-# Order book liquidity parameter.
+# Liquidity parameter for optimal spread sizing.
 kappa = "1.5"
-# Order size per side.
-order_size = "0.05"
-# Maximum absolute inventory the strategy may hold.
-max_position = "5.0"
-# Session duration in seconds (8 hours).
-session_duration_secs = 28800
+# Order quantity per side (fractional shares are supported on Alpaca paper).
+order_size = "1"
+# Maximum absolute inventory this strategy is allowed to hold.
+max_position = "1"
+# Session length in seconds used for time-decay in the model.
+session_duration_secs = 3600
 
 [[strategies]]
-strategy_id = "grid-btc-coinbase"
+strategy_id = "grid-aapl-alpaca-paper"
 strategy_type = "grid"
-exchange = "coinbase"
-symbol = "BTC/USD"
+exchange = "alpaca"
+symbol = "AAPL/USD"
 enabled = false
 
 [strategies.params]
-# Upper bound of the grid.
-upper_price = "70000"
-# Lower bound of the grid.
-lower_price = "60000"
-# Number of grid intervals (levels = num_grids + 1).
+# Starter AAPL band for paper testing; tune this to the current regime.
+upper_price = "250"
+lower_price = "150"
+# Number of intervals across the grid range.
 num_grids = 10
 # Order quantity per grid level.
-order_size = "0.01"
-# "Arithmetic" (equal price spacing) or "Geometric" (equal % spacing).
+order_size = "1"
+# Grid spacing model.
 grid_type = "Arithmetic"
+
+[[strategies]]
+strategy_id = "twap-aapl-buy-alpaca-paper"
+strategy_type = "twap"
+exchange = "alpaca"
+symbol = "AAPL/USD"
+enabled = false
+
+[strategies.params]
+# Total quantity to execute across the full schedule.
+target_quantity = "1"
+# Execution window in seconds.
+duration_secs = 3600
+# Time between child slices in seconds.
+slice_interval_secs = 300
+# Execution direction.
+side = "Buy"
+# Maximum price deviation from mid for each slice, in basis points.
+max_deviation_bps = "10"
+
+[[strategies]]
+strategy_id = "vwap-aapl-buy-alpaca-paper"
+strategy_type = "vwap"
+exchange = "alpaca"
+symbol = "AAPL/USD"
+enabled = false
+
+[strategies.params]
+# Total quantity to execute across the full schedule.
+target_quantity = "1"
+# Execution window in seconds.
+duration_secs = 3600
+# Execution direction.
+side = "Buy"
+# Relative volume weights for each execution bucket.
+volume_profile = ["1", "2", "3", "2", "1"]
+# Maximum price deviation from mid for each slice, in basis points.
+max_deviation_bps = "10"
+
+[[strategies]]
+strategy_id = "momentum-msft-alpaca-paper"
+strategy_type = "momentum"
+exchange = "alpaca"
+symbol = "MSFT/USD"
+enabled = false
+
+[strategies.params]
+# Number of recent prices used to measure momentum.
+lookback_periods = 20
+# Entry threshold in basis points.
+entry_threshold_bps = "50"
+# Exit threshold in basis points.
+exit_threshold_bps = "15"
+# Order quantity per signal.
+order_size = "1"
+# Trailing-stop distance in basis points.
+trailing_stop_bps = "30"
+# Maximum absolute inventory this strategy is allowed to hold.
+max_position = "1"
+
+[[strategies]]
+strategy_id = "stat_arb-aapl-msft-alpaca-paper"
+strategy_type = "stat_arb"
+exchange = "alpaca"
+symbol = "AAPL/USD"
+enabled = false
+
+[strategies.params]
+# Pair-trading templates keep their canonical leg definitions in params. The
+# outer exchange/symbol fields remain compatibility placeholders for the
+# generic StrategyConfig envelope.
+leg_a_exchange = "Alpaca"
+leg_b_exchange = "Alpaca"
+# Number of recent spread observations used for z-score computation.
+lookback_periods = 50
+# Entry z-score threshold.
+entry_z_score = "2.0"
+# Exit z-score threshold; must stay below entry_z_score.
+exit_z_score = "0.5"
+# Order quantity per signal on leg A.
+order_size = "1"
+# Maximum absolute exposure this strategy is allowed to carry.
+max_position = "1"
+
+[strategies.params.leg_a_symbol]
+base = "AAPL"
+quote = "USD"
+
+[strategies.params.leg_b_symbol]
+base = "MSFT"
+quote = "USD"
 
 # =============================================================================
 # Risk management

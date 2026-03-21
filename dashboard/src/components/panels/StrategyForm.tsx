@@ -5,6 +5,7 @@ import { useDashboard, useDashboardDispatch } from "@/lib/store";
 import { api } from "@/lib/api";
 import { STRATEGY_TYPES, STRATEGY_PRESETS } from "@/lib/types";
 import type { StrategyConfig, Exchange, StrategyTypeInfo, StrategyField } from "@/lib/types";
+import { StrategyGuide } from "./StrategyGuide";
 
 const inputClass =
   "bg-bg-primary border border-border-panel rounded px-2 py-1.5 text-xs text-text-primary font-mono focus:outline-hidden focus:border-accent-cyan w-full";
@@ -208,7 +209,7 @@ export function StrategyFormPanel() {
   );
 
   const handleSubmit = useCallback(async () => {
-    if (!typeInfo || !exchange || !symbol) return;
+    if (!typeInfo || typeInfo.creationMode === "template_only" || !exchange || !symbol) return;
 
     setSubmitting(true);
     setError(null);
@@ -244,7 +245,7 @@ export function StrategyFormPanel() {
     }
   }, [typeInfo, exchange, symbol, strategyType, params, dispatch]);
 
-  const canAdvanceToStep2 = strategyType !== "";
+  const canAdvanceToStep2 = strategyType !== "" && typeInfo?.creationMode !== "template_only";
   const canAdvanceToStep3 = exchange !== "" && symbol !== "";
 
   return (
@@ -264,14 +265,30 @@ export function StrategyFormPanel() {
           >
             <option value="">Select a strategy type...</option>
             {STRATEGY_TYPES.map((t) => (
-              <option key={t.type} value={t.type}>
-                {t.label}
+              <option
+                key={t.type}
+                value={t.type}
+                disabled={t.creationMode === "template_only"}
+              >
+                {t.creationMode === "template_only" ? `${t.label} (template only)` : t.label}
               </option>
             ))}
           </select>
           {typeInfo && (
-            <p className="text-text-muted text-[10px] leading-snug">{typeInfo.description}</p>
+            <div className="flex flex-col gap-1">
+              <p className="text-text-muted text-[10px] leading-snug">{typeInfo.description}</p>
+              {typeInfo.creationMode === "template_only" && typeInfo.creationHint && (
+                <div className="rounded border border-accent-amber/30 bg-accent-amber/10 px-2 py-1.5 text-[10px] leading-snug text-accent-amber">
+                  {typeInfo.creationHint}
+                </div>
+              )}
+            </div>
           )}
+          <StrategyGuide
+            selectedType={strategyType || "mean_reversion"}
+            onSelectType={handleTypeSelect}
+            showSelector
+          />
           <button
             type="button"
             disabled={!canAdvanceToStep2}
@@ -314,7 +331,7 @@ export function StrategyFormPanel() {
               type="text"
               value={exchange}
               onChange={(e) => setExchange(e.target.value)}
-              placeholder="e.g. Binance"
+              placeholder="e.g. Alpaca"
               className={inputClass}
             />
           )}
@@ -338,7 +355,7 @@ export function StrategyFormPanel() {
               type="text"
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
-              placeholder="BTC/USDT"
+              placeholder="AAPL/USD"
               className={inputClass}
             />
           )}

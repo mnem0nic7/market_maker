@@ -55,6 +55,56 @@ function tickKey(exchange: string, symbol: { base: string; quote: string }): str
   return `${exchange}:${symbol.base}/${symbol.quote}`;
 }
 
+function resolveGatewayHttpOrigin(): string {
+  const configuredUrl = process.env.NEXT_PUBLIC_GATEWAY_HTTP_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/$/, "");
+  }
+
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const gatewayHost = process.env.NODE_ENV === "development"
+    ? "localhost:8080"
+    : `${hostname}:8080`;
+
+  return `${protocol}//${gatewayHost}`;
+}
+
+function buildBackendUnavailableError(): string {
+  return `Backend unavailable at ${resolveGatewayHttpOrigin()}. Start trading-core to populate the dashboard.`;
+}
+
+async function checkBackendHealth(): Promise<void> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+
+  try {
+    const response = await fetch("/api/v1/health", {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function resolveWebSocketUrl(): string {
+  const configuredUrl = process.env.NEXT_PUBLIC_GATEWAY_WS_URL?.trim();
+  if (configuredUrl) return configuredUrl;
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const hostname = window.location.hostname;
+  const gatewayHost = process.env.NODE_ENV === "development"
+    ? "localhost:8080"
+    : `${hostname}:8080`;
+
+  return `${protocol}//${gatewayHost}/api/v1/ws`;
+}
+
 function reducer(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
     case "SET_CONNECTED":
@@ -98,6 +148,24 @@ function reducer(state: DashboardState, action: Action): DashboardState {
             },
             events,
           };
+        case "StrategyLifecycleEvent": {
+          const updatedStrategies = state.strategies.map((strategy) =>
+            strategy.config.strategy_id === msg.strategy_id
+              ? {
+                  ...strategy,
+                  running: msg.running,
+                  started_at: msg.event === "started" ? msg.timestamp : strategy.started_at,
+                  stopped_at: msg.event === "stopped" ? msg.timestamp : msg.event === "started" ? null : strategy.stopped_at,
+                }
+              : strategy,
+          );
+
+          return {
+            ...state,
+            strategies: updatedStrategies,
+            events,
+          };
+        }
         case "PositionUpdate": {
           const posIdx = state.positions.findIndex(
             (p) => p.exchange === msg.exchange && p.symbol.base === msg.symbol.base && p.symbol.quote === msg.symbol.quote,
@@ -202,23 +270,42 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const handleStatus = useCallback((status: ConnectionStatus) => {
     dispatch({ type: "SET_CONNECTED", status });
+    if (status === "connected") {
+      dispatch({ type: "SET_ERROR", error: null });
+    }
   }, []);
 
   useEffect(() => {
     async function hydrate() {
+      const backendUnavailableError = buildBackendUnavailableError();
+
       try {
-        const [positions, orders, strategies] = await Promise.allSettled([
-          api.positions(), api.orders(), api.strategies(),
+        await checkBackendHealth();
+
+        const [positions, orders, strategies, risk] = await Promise.allSettled([
+          api.positions(),
+          api.orders(),
+          api.strategies(),
+          api.portfolioRisk(),
         ]);
+
         if (positions.status === "fulfilled") dispatch({ type: "SET_POSITIONS", positions: positions.value });
         if (orders.status === "fulfilled") dispatch({ type: "SET_ORDERS", orders: orders.value });
         if (strategies.status === "fulfilled") dispatch({ type: "SET_STRATEGIES", strategies: strategies.value });
-        try {
-          const risk = await api.portfolioRisk();
-          dispatch({ type: "SET_RISK", risk });
-        } catch { /* Risk may not be populated */ }
-      } catch (e) {
-        dispatch({ type: "SET_ERROR", error: String(e) });
+        if (risk.status === "fulfilled") dispatch({ type: "SET_RISK", risk: risk.value });
+
+        const initialFailures = [positions, orders, strategies].filter(
+          (result) => result.status === "rejected",
+        ).length;
+
+        dispatch({
+          type: "SET_ERROR",
+          error: initialFailures === 3
+            ? `Connected to ${resolveGatewayHttpOrigin()}, but failed to load initial dashboard state.`
+            : null,
+        });
+      } catch {
+        dispatch({ type: "SET_ERROR", error: backendUnavailableError });
       } finally {
         dispatch({ type: "SET_LOADING", loading: false });
       }
@@ -227,10 +314,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = process.env.NODE_ENV === "development"
-      ? "ws://localhost:8080/api/v1/ws"
-      : `${protocol}//${window.location.host}/api/v1/ws`;
+    const wsUrl = resolveWebSocketUrl();
     const ws = new WebSocketManager(wsUrl, handleMessage, handleStatus);
     ws.connect();
     wsRef.current = ws;

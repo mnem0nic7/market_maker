@@ -1,6 +1,6 @@
 import type {
   ApiResponse, HealthResponse, Position, Order, PortfolioRisk,
-  StrategyConfig, StrategyStatus, OrderBook, KillSwitchResponse,
+  StrategyConfig, StrategyDetail, StrategyStatus, OrderBook, KillSwitchResponse,
   OptimizationResult, BacktestResult, BacktestRequest, PlaceOrderRequest,
 } from "./types";
 
@@ -67,6 +67,8 @@ export const api = {
     }),
   portfolioRisk: () => fetchApi<PortfolioRisk>("/portfolio/risk"),
   strategies: () => fetchApi<StrategyStatus[]>("/strategies"),
+  strategyDetail: (id: string) =>
+    fetchApi<StrategyDetail>(`/strategies/${encodeURIComponent(id)}/detail`),
   startStrategy: (id: string) =>
     fetchApi<string>(`/strategies/${encodeURIComponent(id)}/start`, { method: "POST" }),
   stopStrategy: (id: string) =>
@@ -88,6 +90,12 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(config),
+    }),
+  patchStrategyParams: (id: string, params: Record<string, unknown>) =>
+    fetchApi<StrategyConfig>(`/strategies/${encodeURIComponent(id)}/params`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
     }),
   deleteStrategy: (id: string) =>
     fetchApi<string>(`/strategies/${encodeURIComponent(id)}`, { method: "DELETE" }),

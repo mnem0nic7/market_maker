@@ -233,7 +233,7 @@ pub struct StrategyInstanceConfig {
     /// Unique identifier for this strategy instance.
     pub strategy_id: String,
 
-    /// Strategy type: "spread", "avellaneda", or "grid".
+    /// Strategy type such as "spread", "mean_reversion", "grid", or "stat_arb".
     pub strategy_type: String,
 
     /// Target exchange name (must match a key in `exchanges`).
@@ -624,9 +624,11 @@ pub fn load_config() -> anyhow::Result<TradingConfig> {
     let mut config: TradingConfig = settings.try_deserialize()?;
 
     // The `config` crate's Environment source doesn't reliably override
-    // fields inside HashMap entries. Manually apply env var overrides for
-    // exchange credentials (the most important case).
+    // fields inside nested structures consistently. Manually apply env var
+    // overrides for the runtime-critical sections we depend on in Docker.
     apply_exchange_env_overrides(&mut config);
+    apply_gateway_env_overrides(&mut config);
+    normalize_optional_config(&mut config);
 
     Ok(config)
 }
@@ -654,6 +656,43 @@ fn apply_exchange_env_overrides(config: &mut TradingConfig) {
                 ec.enabled = val.eq_ignore_ascii_case("true") || val == "1";
             }
         }
+    }
+}
+
+/// Apply `MM_GATEWAY__*` overrides for the embedded REST/WebSocket gateway.
+fn apply_gateway_env_overrides(config: &mut TradingConfig) {
+    if let Ok(val) = std::env::var("MM_GATEWAY__ENABLED") {
+        config.gateway.enabled = val.eq_ignore_ascii_case("true") || val == "1";
+    }
+
+    if let Ok(val) = std::env::var("MM_GATEWAY__HOST") {
+        config.gateway.host = val;
+    }
+
+    if let Ok(val) = std::env::var("MM_GATEWAY__PORT") {
+        if let Ok(port) = val.parse::<u16>() {
+            config.gateway.port = port;
+        }
+    }
+
+    if let Ok(val) = std::env::var("MM_GATEWAY__API_TOKEN") {
+        config.gateway.api_token = if val.trim().is_empty() {
+            None
+        } else {
+            Some(val)
+        };
+    }
+}
+
+/// Normalize optional string-backed settings loaded from TOML.
+fn normalize_optional_config(config: &mut TradingConfig) {
+    if config
+        .gateway
+        .api_token
+        .as_ref()
+        .is_some_and(|token| token.trim().is_empty())
+    {
+        config.gateway.api_token = None;
     }
 }
 

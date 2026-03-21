@@ -9,7 +9,10 @@ use std::sync::Arc;
 use chrono::Utc;
 use tonic::{Request, Response, Status};
 
-use crate::rest::ApiState;
+use crate::rest::{
+    build_strategy, build_strategy_lifecycle_info, build_strategy_risk_summary,
+    route_strategy_stop_actions, ApiState, StrategyStatus,
+};
 
 // ---------------------------------------------------------------------------
 // Generated protobuf modules
@@ -354,6 +357,67 @@ impl StrategyServiceImpl {
     }
 }
 
+async fn emit_strategy_lifecycle_event(state: &Arc<ApiState>, strategy_id: &str, event: &str, running: bool) {
+    if let Some(tx) = &state.dashboard_event_tx {
+        let _ = tx
+            .send(crate::ws::ServerMessage::StrategyLifecycleEvent {
+                strategy_id: strategy_id.to_string(),
+                event: event.to_string(),
+                running,
+                timestamp: Utc::now(),
+            })
+            .await;
+    }
+}
+
+fn strategy_info_from_status(status: &StrategyStatus) -> pb::strategy::StrategyInfo {
+    pb::strategy::StrategyInfo {
+        strategy_id: status.config.strategy_id.clone(),
+        strategy_type: status.config.strategy_type.clone(),
+        exchange: exchange_to_pb(status.config.exchange),
+        symbol: Some(pb::common::Symbol {
+            base: status.config.symbol.base.clone(),
+            quote: status.config.symbol.quote.clone(),
+        }),
+        running: status.running,
+        started_at_ms: status.started_at.map(|t| t.timestamp_millis()).unwrap_or(0),
+        stopped_at_ms: status.stopped_at.map(|t| t.timestamp_millis()).unwrap_or(0),
+    }
+}
+
+fn strategy_detail_from_parts(
+    status: &StrategyStatus,
+    metrics: Option<&mm_core::strategy_metrics::StrategyMetrics>,
+) -> pb::strategy::StrategyDetail {
+    let risk_summary = build_strategy_risk_summary(status, metrics);
+    let lifecycle = build_strategy_lifecycle_info(status);
+
+    pb::strategy::StrategyDetail {
+        info: Some(strategy_info_from_status(status)),
+        config_json: serde_json::to_string(&status.config).unwrap_or_default(),
+        metrics_json: metrics
+            .map(|strategy_metrics| serde_json::to_string(strategy_metrics).unwrap_or_default())
+            .unwrap_or_default(),
+        risk_summary: Some(pb::strategy::StrategyRiskSummary {
+            posture: risk_summary.posture,
+            current_total_pnl: risk_summary
+                .current_total_pnl
+                .map(|pnl| pnl.to_string())
+                .unwrap_or_default(),
+            upside: risk_summary.upside,
+            downside: risk_summary.downside,
+        }),
+        lifecycle: Some(pb::strategy::StrategyLifecycleInfo {
+            can_start: lifecycle.can_start,
+            can_stop: lifecycle.can_stop,
+            can_edit: lifecycle.can_edit,
+            save_mode: lifecycle.save_mode,
+            start_behavior: lifecycle.start_behavior,
+            stop_behavior: lifecycle.stop_behavior,
+        }),
+    }
+}
+
 #[tonic::async_trait]
 impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceImpl {
     async fn list_strategies(
@@ -364,18 +428,7 @@ impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceI
 
         let infos: Vec<pb::strategy::StrategyInfo> = strategies
             .iter()
-            .map(|s| pb::strategy::StrategyInfo {
-                strategy_id: s.config.strategy_id.clone(),
-                strategy_type: s.config.strategy_type.clone(),
-                exchange: exchange_to_pb(s.config.exchange),
-                symbol: Some(pb::common::Symbol {
-                    base: s.config.symbol.base.clone(),
-                    quote: s.config.symbol.quote.clone(),
-                }),
-                running: s.running,
-                started_at_ms: s.started_at.map(|t| t.timestamp_millis()).unwrap_or(0),
-                stopped_at_ms: s.stopped_at.map(|t| t.timestamp_millis()).unwrap_or(0),
-            })
+            .map(strategy_info_from_status)
             .collect();
 
         Ok(Response::new(pb::strategy::ListStrategiesResponse {
@@ -400,9 +453,21 @@ impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceI
                         message: format!("strategy {id} is already running"),
                     }))
                 } else {
+                    if let Some(ref engine) = self.state.strategy_engine {
+                        let strategy_instance = build_strategy(&s.config).map_err(|e| {
+                            Status::internal(format!("failed to build strategy: {e}"))
+                        })?;
+
+                        let mut engine_guard = engine.lock().await;
+                        engine_guard.add_strategy(strategy_instance).map_err(|e| {
+                            Status::internal(format!("failed to register strategy: {e}"))
+                        })?;
+                    }
+
                     s.running = true;
                     s.started_at = Some(Utc::now());
                     s.stopped_at = None;
+                    emit_strategy_lifecycle_event(&self.state, &id, "started", true).await;
                     Ok(Response::new(pb::strategy::StrategyActionResponse {
                         success: true,
                         message: format!("strategy {id} started"),
@@ -418,25 +483,49 @@ impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceI
         request: Request<pb::strategy::StopStrategyRequest>,
     ) -> Result<Response<pb::strategy::StrategyActionResponse>, Status> {
         let id = request.into_inner().strategy_id;
-        let mut strategies = self.state.strategies.write().await;
+        let was_running = {
+            let strategies = self.state.strategies.read().await;
+            match strategies.iter().find(|s| s.config.strategy_id == id) {
+                Some(strategy) => strategy.running,
+                None => return Err(Status::not_found(format!("strategy not found: {id}"))),
+            }
+        };
 
+        if !was_running {
+            return Ok(Response::new(pb::strategy::StrategyActionResponse {
+                success: true,
+                message: format!("strategy {id} is already stopped"),
+            }));
+        }
+
+        let cancel_actions = if let Some(ref engine) = self.state.strategy_engine {
+            let mut engine_guard = engine.lock().await;
+            if let Some((_strategy, cancel_actions)) = engine_guard.remove_strategy(&id) {
+                cancel_actions
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        let queued_cancel_requests =
+            route_strategy_stop_actions(&self.state, &id, cancel_actions).await;
+
+        let mut strategies = self.state.strategies.write().await;
         let strategy = strategies.iter_mut().find(|s| s.config.strategy_id == id);
 
         match strategy {
             Some(s) => {
-                if !s.running {
-                    Ok(Response::new(pb::strategy::StrategyActionResponse {
-                        success: true,
-                        message: format!("strategy {id} is already stopped"),
-                    }))
-                } else {
-                    s.running = false;
-                    s.stopped_at = Some(Utc::now());
-                    Ok(Response::new(pb::strategy::StrategyActionResponse {
-                        success: true,
-                        message: format!("strategy {id} stopped"),
-                    }))
-                }
+                s.running = false;
+                s.stopped_at = Some(Utc::now());
+                emit_strategy_lifecycle_event(&self.state, &id, "stopped", false).await;
+                Ok(Response::new(pb::strategy::StrategyActionResponse {
+                    success: true,
+                    message: format!(
+                        "strategy {id} stopped; queued {queued_cancel_requests} cancel request(s)"
+                    ),
+                }))
             }
             None => Err(Status::not_found(format!("strategy not found: {id}"))),
         }
@@ -447,26 +536,20 @@ impl pb::strategy::strategy_service_server::StrategyService for StrategyServiceI
         request: Request<pb::strategy::GetStrategyRequest>,
     ) -> Result<Response<pb::strategy::StrategyDetail>, Status> {
         let id = request.into_inner().strategy_id;
-        let strategies = self.state.strategies.read().await;
+        let status = {
+            let strategies = self.state.strategies.read().await;
+            strategies
+                .iter()
+                .find(|s| s.config.strategy_id == id)
+                .cloned()
+        };
 
-        let strategy = strategies.iter().find(|s| s.config.strategy_id == id);
-
-        match strategy {
-            Some(s) => Ok(Response::new(pb::strategy::StrategyDetail {
-                info: Some(pb::strategy::StrategyInfo {
-                    strategy_id: s.config.strategy_id.clone(),
-                    strategy_type: s.config.strategy_type.clone(),
-                    exchange: exchange_to_pb(s.config.exchange),
-                    symbol: Some(pb::common::Symbol {
-                        base: s.config.symbol.base.clone(),
-                        quote: s.config.symbol.quote.clone(),
-                    }),
-                    running: s.running,
-                    started_at_ms: s.started_at.map(|t| t.timestamp_millis()).unwrap_or(0),
-                    stopped_at_ms: s.stopped_at.map(|t| t.timestamp_millis()).unwrap_or(0),
-                }),
-                config_json: serde_json::to_string(&s.config).unwrap_or_default(),
-            })),
+        match status {
+            Some(status) => {
+                let metrics = self.state.strategy_metrics.read().await;
+                let strategy_metrics = metrics.get(&id);
+                Ok(Response::new(strategy_detail_from_parts(&status, strategy_metrics)))
+            }
             None => Err(Status::not_found(format!("strategy not found: {id}"))),
         }
     }

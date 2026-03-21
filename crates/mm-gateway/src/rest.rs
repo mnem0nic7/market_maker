@@ -18,11 +18,12 @@ use mm_backtest::{
     ParameterOptimizer,
 };
 use mm_core::{
-    Exchange, MetricsRegistry, Order, OrderBook, OrderStatus, OrderType, PortfolioRisk, Position,
-    Side, StrategyConfig, StrategyMetrics, TimeInForce,
+    CancelAllOrders, CancelOrder, Exchange, MetricsRegistry, NewOrder, Order, OrderAction,
+    OrderBook, OrderStatus, OrderType, PortfolioRisk, Position, Side, StrategyConfig,
+    StrategyMetrics, TimeInForce,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tracing::{info, warn};
 use utoipa::OpenApi;
 
@@ -311,6 +312,13 @@ pub struct ApiState {
     /// can push parameter updates to the strategy engine without stop/restart.
     pub param_update_tx: Option<mpsc::Sender<StrategyParamUpdate>>,
 
+    /// Optional command channel for routing manual REST order actions through
+    /// the live trading-core execution path.
+    pub order_command_tx: Option<mpsc::Sender<ApiOrderCommand>>,
+
+    /// Optional dashboard event channel for broadcasting lifecycle updates.
+    pub dashboard_event_tx: Option<mpsc::Sender<crate::ws::ServerMessage>>,
+
     /// Optional research agent configuration.
     pub research_config: Option<Arc<mm_research::config::ResearchConfig>>,
 
@@ -334,6 +342,50 @@ pub struct StrategyStatus {
     pub running: bool,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub stopped_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrategyRiskSummary {
+    pub posture: String,
+    pub current_total_pnl: Option<rust_decimal::Decimal>,
+    pub upside: Vec<String>,
+    pub downside: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrategyLifecycleInfo {
+    pub can_start: bool,
+    pub can_stop: bool,
+    pub can_edit: bool,
+    pub save_mode: String,
+    pub start_behavior: String,
+    pub stop_behavior: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrategyDetail {
+    pub status: StrategyStatus,
+    pub metrics: Option<StrategyMetrics>,
+    pub risk_summary: StrategyRiskSummary,
+    pub lifecycle: StrategyLifecycleInfo,
+}
+
+/// Commands sent from the REST API to the live trading loop for manual order
+/// placement and cancellation.
+#[derive(Debug)]
+pub enum ApiOrderCommand {
+    Place {
+        order: NewOrder,
+        response_tx: oneshot::Sender<Result<Order, String>>,
+    },
+    Cancel {
+        cancel: CancelOrder,
+        response_tx: oneshot::Sender<Result<(), String>>,
+    },
+    CancelAll {
+        cancel_all: CancelAllOrders,
+        response_tx: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 impl ApiState {
@@ -364,6 +416,8 @@ impl ApiState {
             strategy_engine: None,
             rate_limit: None,
             param_update_tx: None,
+            order_command_tx: None,
+            dashboard_event_tx: None,
             startup_time: std::time::Instant::now(),
         })
     }
@@ -395,6 +449,8 @@ impl ApiState {
             strategy_engine: None,
             rate_limit: None,
             param_update_tx: None,
+            order_command_tx: None,
+            dashboard_event_tx: None,
             startup_time: std::time::Instant::now(),
         })
     }
@@ -429,6 +485,8 @@ impl ApiState {
             strategy_engine: Some(engine),
             rate_limit: None,
             param_update_tx: None,
+            order_command_tx: None,
+            dashboard_event_tx: None,
             startup_time: std::time::Instant::now(),
         })
     }
@@ -465,6 +523,8 @@ impl ApiState {
             strategy_engine: Some(engine),
             rate_limit: None,
             param_update_tx: None,
+            order_command_tx: None,
+            dashboard_event_tx: None,
             startup_time: std::time::Instant::now(),
         })
     }
@@ -502,6 +562,8 @@ impl ApiState {
             strategy_engine: Some(engine),
             rate_limit: None,
             param_update_tx: Some(param_update_tx),
+            order_command_tx: None,
+            dashboard_event_tx: None,
             startup_time: std::time::Instant::now(),
         })
     }
@@ -534,6 +596,8 @@ impl Default for ApiState {
             strategy_engine: None,
             rate_limit: None,
             param_update_tx: None,
+            order_command_tx: None,
+            dashboard_event_tx: None,
             startup_time: std::time::Instant::now(),
         }
     }
@@ -653,6 +717,7 @@ pub fn rest_router(state: Arc<ApiState>) -> Router {
         )
         .route("/api/v1/strategies/{id}/start", post(start_strategy))
         .route("/api/v1/strategies/{id}/stop", post(stop_strategy))
+        .route("/api/v1/strategies/{id}/detail", get(get_strategy_detail))
         .route("/api/v1/strategies/{id}/metrics", get(get_strategy_metrics))
         .route(
             "/api/v1/strategies/{id}/params",
@@ -757,6 +822,272 @@ struct PlaceOrderRequest {
 
 fn default_time_in_force() -> String {
     "GTC".to_string()
+}
+
+fn infer_strategy_risk_posture(config: &StrategyConfig) -> (&'static str, String) {
+    let params = &config.params;
+    let order_size = params
+        .get("order_size")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| value.parse::<f64>().ok())
+        .or_else(|| params.get("order_size").and_then(serde_json::Value::as_f64))
+        .unwrap_or(0.0);
+    let max_position = params
+        .get("max_position")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| value.parse::<f64>().ok())
+        .or_else(|| params.get("max_position").and_then(serde_json::Value::as_f64))
+        .unwrap_or(0.0);
+
+    match config.strategy_type.as_str() {
+        "spread" => {
+            let spread_bps = params
+                .get("spread_bps")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| value.parse::<f64>().ok())
+                .or_else(|| params.get("spread_bps").and_then(serde_json::Value::as_f64))
+                .unwrap_or(0.0);
+            let num_levels = params
+                .get("num_levels")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+
+            if spread_bps <= 8.0 || num_levels >= 2 {
+                (
+                    "Aggressive",
+                    "Tighter spreads or more ladder levels increase fill rate but raise adverse-selection and churn risk."
+                        .to_string(),
+                )
+            } else {
+                (
+                    "Balanced",
+                    "The spread and level count are close to a moderate market-making configuration."
+                        .to_string(),
+                )
+            }
+        }
+        "momentum" => {
+            let lookback = params
+                .get("lookback_periods")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let entry = params
+                .get("entry_threshold_bps")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| value.parse::<f64>().ok())
+                .or_else(|| {
+                    params
+                        .get("entry_threshold_bps")
+                        .and_then(serde_json::Value::as_f64)
+                })
+                .unwrap_or(0.0);
+
+            if lookback <= 10 || entry <= 30.0 {
+                (
+                    "Aggressive",
+                    "Short lookbacks and low entry thresholds make the strategy react faster but increase whipsaw risk."
+                        .to_string(),
+                )
+            } else {
+                (
+                    "Balanced",
+                    "The momentum thresholds look closer to a moderate trend-following posture."
+                        .to_string(),
+                )
+            }
+        }
+        "mean_reversion" => {
+            let window_periods = params
+                .get("window_periods")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let std_dev = params
+                .get("num_std_dev")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| value.parse::<f64>().ok())
+                .or_else(|| params.get("num_std_dev").and_then(serde_json::Value::as_f64))
+                .unwrap_or(0.0);
+
+            if window_periods <= 10 || std_dev <= 1.5 {
+                (
+                    "Aggressive",
+                    "Shorter windows and tighter bands increase trade frequency and the chance of fading a real trend too early."
+                        .to_string(),
+                )
+            } else {
+                (
+                    "Balanced",
+                    "The band settings suggest a moderate mean-reversion posture."
+                        .to_string(),
+                )
+            }
+        }
+        _ if max_position > 0.0 && order_size > max_position * 0.5 => (
+            "Elevated",
+            "Large order size relative to max position means each signal can move the strategy near its inventory limit quickly."
+                .to_string(),
+        ),
+        _ => (
+            "Balanced",
+            "The current settings sit near a default operating envelope for this strategy type."
+                .to_string(),
+        ),
+    }
+}
+
+pub(crate) fn build_strategy_risk_summary(
+    status: &StrategyStatus,
+    metrics: Option<&StrategyMetrics>,
+) -> StrategyRiskSummary {
+    let (posture, posture_reason) = infer_strategy_risk_posture(&status.config);
+    let current_total_pnl = metrics.map(|strategy_metrics| {
+        strategy_metrics.realized_pnl + strategy_metrics.unrealized_pnl
+    });
+
+    let upside = vec![
+        format!(
+            "{} is intended to perform best when market structure matches the assumptions built into its parameters.",
+            status.config.strategy_type
+        ),
+        metrics
+            .map(|strategy_metrics| {
+                if strategy_metrics.total_fills > 0 {
+                    format!(
+                        "Live fills are flowing ({}) so the market is currently giving the strategy a chance to express its edge.",
+                        strategy_metrics.total_fills
+                    )
+                } else {
+                    "No fills have printed yet, so the session has not produced much evidence about live edge quality.".to_string()
+                }
+            })
+            .unwrap_or_else(|| {
+                "Metrics are not available yet, so the upside view is based only on the configured strategy profile.".to_string()
+            }),
+    ];
+
+    let mut downside = vec![posture_reason];
+    downside.push(match metrics {
+        Some(strategy_metrics) if strategy_metrics.max_drawdown > rust_decimal::Decimal::ZERO => format!(
+            "Measured max drawdown is {}, so this strategy has already experienced live PnL retracement during the current session.",
+            strategy_metrics.max_drawdown
+        ),
+        Some(strategy_metrics) if strategy_metrics.total_orders_rejected > 0 => format!(
+            "The strategy has already seen {} rejected orders, which can indicate venue friction or overly aggressive settings.",
+            strategy_metrics.total_orders_rejected
+        ),
+        Some(strategy_metrics)
+            if strategy_metrics.realized_pnl + strategy_metrics.unrealized_pnl
+                < rust_decimal::Decimal::ZERO =>
+        {
+            format!(
+                "Current total PnL is {}, so the live session is presently moving against the strategy.",
+                strategy_metrics.realized_pnl + strategy_metrics.unrealized_pnl
+            )
+        }
+        _ => {
+            "No immediate live stress signal is visible from the currently available metrics.".to_string()
+        }
+    });
+
+    StrategyRiskSummary {
+        posture: posture.to_string(),
+        current_total_pnl,
+        upside,
+        downside,
+    }
+}
+
+pub(crate) fn build_strategy_lifecycle_info(status: &StrategyStatus) -> StrategyLifecycleInfo {
+    StrategyLifecycleInfo {
+        can_start: !status.running,
+        can_stop: status.running,
+        can_edit: true,
+        save_mode: if status.running {
+            "hot_apply".to_string()
+        } else {
+            "update_stored_config".to_string()
+        },
+        start_behavior: "Start validates the current config, builds the strategy instance, registers it with the engine, marks it running, and begins collecting fresh runtime metrics."
+            .to_string(),
+        stop_behavior: "Stop removes the strategy from the engine, queues cancel requests for outstanding strategy-owned orders when the live order command channel is available, and marks the strategy as stopped. It should be treated as halting strategy logic rather than guaranteeing an immediate flat position."
+            .to_string(),
+    }
+}
+
+pub(crate) async fn route_strategy_stop_actions(
+    state: &Arc<ApiState>,
+    strategy_id: &str,
+    actions: Vec<OrderAction>,
+) -> usize {
+    let Some(order_command_tx) = state.order_command_tx.as_ref() else {
+        warn!(strategy_id = %strategy_id, "strategy stop produced cancel actions but no live order command channel is attached");
+        return 0;
+    };
+
+    let mut queued = 0usize;
+
+    for action in actions {
+        match action {
+            OrderAction::Cancel(cancel) => {
+                let (response_tx, response_rx) = oneshot::channel();
+                match order_command_tx
+                    .send(ApiOrderCommand::Cancel { cancel, response_tx })
+                    .await
+                {
+                    Ok(()) => {
+                        queued += 1;
+                        if let Err(error) = response_rx.await {
+                            warn!(strategy_id = %strategy_id, error = %error, "strategy stop cancel request dropped before completion");
+                        }
+                    }
+                    Err(error) => warn!(strategy_id = %strategy_id, error = %error, "failed to queue strategy stop cancel request"),
+                }
+            }
+            OrderAction::CancelAll(cancel_all) => {
+                let (response_tx, response_rx) = oneshot::channel();
+                match order_command_tx
+                    .send(ApiOrderCommand::CancelAll {
+                        cancel_all,
+                        response_tx,
+                    })
+                    .await
+                {
+                    Ok(()) => {
+                        queued += 1;
+                        if let Err(error) = response_rx.await {
+                            warn!(strategy_id = %strategy_id, error = %error, "strategy stop cancel-all request dropped before completion");
+                        }
+                    }
+                    Err(error) => warn!(strategy_id = %strategy_id, error = %error, "failed to queue strategy stop cancel-all request"),
+                }
+            }
+            OrderAction::Place(_) | OrderAction::Amend { .. } => {
+                warn!(strategy_id = %strategy_id, "strategy stop produced a non-cancel action; ignoring it during shutdown of strategy logic");
+            }
+        }
+    }
+
+    queued
+}
+
+async fn emit_strategy_lifecycle_event(
+    state: &Arc<ApiState>,
+    strategy_id: &str,
+    event: &str,
+    running: bool,
+) {
+    let Some(dashboard_event_tx) = state.dashboard_event_tx.as_ref() else {
+        return;
+    };
+
+    let _ = dashboard_event_tx
+        .send(crate::ws::ServerMessage::StrategyLifecycleEvent {
+            strategy_id: strategy_id.to_string(),
+            event: event.to_string(),
+            running,
+            timestamp: Utc::now(),
+        })
+        .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -939,6 +1270,110 @@ async fn list_positions(State(state): State<Arc<ApiState>>) -> impl IntoResponse
     ApiResponse::ok(positions.clone())
 }
 
+fn parse_place_order_request(
+    req: &PlaceOrderRequest,
+) -> Result<NewOrder, (StatusCode, Json<ApiResponse<()>>)> {
+    let exchange: Exchange =
+        req.exchange.to_lowercase().parse().map_err(|_| {
+            ApiResponse::bad_request(format!("invalid exchange: '{}'", req.exchange))
+        })?;
+
+    let normalised = req.symbol.replace('-', "/");
+    let parts: Vec<&str> = normalised.split('/').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return Err(ApiResponse::bad_request(format!(
+            "invalid symbol format: '{}'. Expected BASE/QUOTE (e.g. BTC/USDT)",
+            req.symbol
+        )));
+    }
+    let symbol = mm_core::types::Symbol::new(parts[0], parts[1]);
+
+    let side: Side = req.side.parse().map_err(|_| {
+        ApiResponse::bad_request(format!("invalid side: '{}'. Must be Buy or Sell", req.side))
+    })?;
+
+    let order_type: OrderType = req.order_type.parse().map_err(|_| {
+        ApiResponse::bad_request(format!(
+            "invalid order_type: '{}'. Must be Market, Limit, StopLimit, or StopMarket",
+            req.order_type
+        ))
+    })?;
+
+    let time_in_force: TimeInForce = req.time_in_force.parse().map_err(|_| {
+        ApiResponse::bad_request(format!(
+            "invalid time_in_force: '{}'. Must be GTC, IOC, FOK, or GTD",
+            req.time_in_force
+        ))
+    })?;
+
+    let price = match req.price {
+        Some(ref p) => Some(
+            p.parse()
+                .map_err(|e| ApiResponse::bad_request(format!("invalid price: {e}")))?,
+        ),
+        None => None,
+    };
+
+    if order_type == OrderType::Limit && price.is_none() {
+        return Err(ApiResponse::bad_request(
+            "limit orders require a price".to_string(),
+        ));
+    }
+
+    let quantity = req
+        .quantity
+        .parse()
+        .map_err(|e| ApiResponse::bad_request(format!("invalid quantity: {e}")))?;
+
+    if quantity <= rust_decimal::Decimal::ZERO {
+        return Err(ApiResponse::bad_request("quantity must be positive"));
+    }
+
+    Ok(NewOrder {
+        exchange,
+        symbol,
+        side,
+        order_type,
+        time_in_force,
+        price,
+        quantity,
+        strategy_id: req.strategy_id.clone().unwrap_or_else(|| "manual".to_string()),
+        reduce_only: req.reduce_only,
+    })
+}
+
+fn upsert_open_order(orders: &mut Vec<Order>, order: Order) {
+    if let Some(existing) = orders
+        .iter_mut()
+        .find(|o| o.client_order_id == order.client_order_id)
+    {
+        *existing = order;
+    } else if !order.status.is_terminal() {
+        orders.push(order);
+    }
+}
+
+fn map_runtime_order_error(message: impl Into<String>) -> (StatusCode, Json<ApiResponse<()>>) {
+    let message = message.into();
+    let lower = message.to_lowercase();
+
+    if lower.contains("not found") {
+        ApiResponse::not_found(message)
+    } else if lower.contains("order rejected")
+        || lower.contains("invalid")
+        || lower.contains("insufficient balance")
+    {
+        ApiResponse::bad_request(message)
+    } else if lower.contains("risk limit")
+        || lower.contains("kill switch")
+        || lower.contains("circuit breaker")
+    {
+        ApiResponse::conflict(message)
+    } else {
+        ApiResponse::error(message)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Orders
 // ---------------------------------------------------------------------------
@@ -1033,100 +1468,67 @@ async fn place_order(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<PlaceOrderRequest>,
 ) -> Result<(StatusCode, impl IntoResponse), (StatusCode, Json<ApiResponse<()>>)> {
-    // Parse exchange
-    let exchange: Exchange =
-        req.exchange.to_lowercase().parse().map_err(|_| {
-            ApiResponse::bad_request(format!("invalid exchange: '{}'", req.exchange))
-        })?;
+    let new_order = parse_place_order_request(&req)?;
 
-    // Parse symbol (expected format: "BTC/USDT" or "BTC-USDT")
-    let normalised = req.symbol.replace('-', "/");
-    let parts: Vec<&str> = normalised.split('/').collect();
-    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-        return Err(ApiResponse::bad_request(format!(
-            "invalid symbol format: '{}'. Expected BASE/QUOTE (e.g. BTC/USDT)",
-            req.symbol
-        )));
-    }
-    let symbol = mm_core::types::Symbol::new(parts[0], parts[1]);
+    if let Some(order_command_tx) = state.order_command_tx.as_ref() {
+        let (response_tx, response_rx) = oneshot::channel();
 
-    // Parse side
-    let side: Side = req.side.parse().map_err(|_| {
-        ApiResponse::bad_request(format!("invalid side: '{}'. Must be Buy or Sell", req.side))
-    })?;
+        order_command_tx
+            .send(ApiOrderCommand::Place {
+                order: new_order.clone(),
+                response_tx,
+            })
+            .await
+            .map_err(|_| ApiResponse::error("manual order channel is unavailable"))?;
 
-    // Parse order type
-    let order_type: OrderType = req.order_type.parse().map_err(|_| {
-        ApiResponse::bad_request(format!(
-            "invalid order_type: '{}'. Must be Market, Limit, StopLimit, or StopMarket",
-            req.order_type
-        ))
-    })?;
+        let response_order = response_rx
+            .await
+            .map_err(|_| ApiResponse::error("manual order request was dropped"))?
+            .map_err(map_runtime_order_error)?;
 
-    // Parse time in force
-    let time_in_force: TimeInForce = req.time_in_force.parse().map_err(|_| {
-        ApiResponse::bad_request(format!(
-            "invalid time_in_force: '{}'. Must be GTC, IOC, FOK, or GTD",
-            req.time_in_force
-        ))
-    })?;
+        {
+            let mut orders = state.orders.write().await;
+            upsert_open_order(&mut orders, response_order.clone());
+        }
 
-    // Parse price
-    let price: Option<rust_decimal::Decimal> = match req.price {
-        Some(ref p) => Some(
-            p.parse()
-                .map_err(|e| ApiResponse::bad_request(format!("invalid price: {e}")))?,
-        ),
-        None => None,
-    };
+        info!(
+            client_order_id = %response_order.client_order_id,
+            exchange = %response_order.exchange,
+            symbol = %response_order.symbol,
+            side = %response_order.side,
+            order_type = %response_order.order_type,
+            quantity = %response_order.quantity,
+            "Order placed via REST API"
+        );
 
-    // Limit orders require a price
-    if order_type == OrderType::Limit && price.is_none() {
-        return Err(ApiResponse::bad_request(
-            "limit orders require a price".to_string(),
-        ));
+        return Ok((StatusCode::CREATED, ApiResponse::ok(response_order)));
     }
 
-    // Parse quantity
-    let quantity: rust_decimal::Decimal = req
-        .quantity
-        .parse()
-        .map_err(|e| ApiResponse::bad_request(format!("invalid quantity: {e}")))?;
-
-    if quantity <= rust_decimal::Decimal::ZERO {
-        return Err(ApiResponse::bad_request("quantity must be positive"));
-    }
-
-    let strategy_id = req.strategy_id.unwrap_or_else(|| "manual".to_string());
-
-    // Build the Order
     let now = Utc::now();
     let order = Order {
         client_order_id: uuid::Uuid::new_v4().to_string(),
         exchange_order_id: None,
-        exchange,
-        symbol,
-        side,
-        order_type,
-        time_in_force,
-        price,
-        quantity,
+        exchange: new_order.exchange,
+        symbol: new_order.symbol,
+        side: new_order.side,
+        order_type: new_order.order_type,
+        time_in_force: new_order.time_in_force,
+        price: new_order.price,
+        quantity: new_order.quantity,
         status: OrderStatus::Pending,
         filled_quantity: rust_decimal::Decimal::ZERO,
-        remaining_quantity: quantity,
+        remaining_quantity: new_order.quantity,
         average_fill_price: rust_decimal::Decimal::ZERO,
-        strategy_id,
-        reduce_only: req.reduce_only,
+        strategy_id: new_order.strategy_id,
+        reduce_only: new_order.reduce_only,
         created_at: now,
         updated_at: now,
     };
 
     let response_order = order.clone();
-
-    // Register the order in state
     {
         let mut orders = state.orders.write().await;
-        orders.push(order);
+        upsert_open_order(&mut orders, order);
     }
 
     info!(
@@ -1136,7 +1538,7 @@ async fn place_order(
         side = %response_order.side,
         order_type = %response_order.order_type,
         quantity = %response_order.quantity,
-        "Order placed via REST API"
+        "Order placed via REST API (in-memory fallback)"
     );
 
     Ok((StatusCode::CREATED, ApiResponse::ok(response_order)))
@@ -1163,38 +1565,161 @@ async fn cancel_order(
     State(state): State<Arc<ApiState>>,
     Path(order_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
-    let mut orders = state.orders.write().await;
+    if let Some(order_command_tx) = state.order_command_tx.as_ref() {
+        let order = {
+            let orders = state.orders.read().await;
+            orders
+                .iter()
+                .find(|o| {
+                    o.client_order_id == order_id
+                        || o.exchange_order_id.as_deref() == Some(order_id.as_str())
+                })
+                .cloned()
+        };
 
-    let found = orders.iter_mut().find(|o| {
-        o.client_order_id == order_id || o.exchange_order_id.as_deref() == Some(order_id.as_str())
-    });
+        let Some(order) = order else {
+            return Err(ApiResponse::not_found(format!(
+                "order not found: {order_id}"
+            )));
+        };
 
-    match found {
-        Some(order) => {
-            // Check if the order is in a cancellable state.
-            if order.status.is_terminal() {
-                return Err(ApiResponse::conflict(format!(
-                    "order {} is in non-cancellable state: {}",
-                    order_id, order.status
+        if order.status.is_terminal() {
+            return Err(ApiResponse::conflict(format!(
+                "order {} is in non-cancellable state: {}",
+                order_id, order.status
+            )));
+        }
+
+        let cancel = CancelOrder {
+            exchange: order.exchange,
+            symbol: order.symbol.clone(),
+            client_order_id: order.client_order_id.clone(),
+            exchange_order_id: order.exchange_order_id.clone(),
+        };
+
+        let (response_tx, response_rx) = oneshot::channel();
+        order_command_tx
+            .send(ApiOrderCommand::Cancel {
+                cancel,
+                response_tx,
+            })
+            .await
+            .map_err(|_| ApiResponse::error("manual order channel is unavailable"))?;
+
+        response_rx
+            .await
+            .map_err(|_| ApiResponse::error("manual cancel request was dropped"))?
+            .map_err(map_runtime_order_error)?;
+
+        let mut orders = state.orders.write().await;
+        if let Some(existing) = orders.iter_mut().find(|o| o.client_order_id == order.client_order_id)
+        {
+            existing.status = OrderStatus::PendingCancel;
+            existing.updated_at = Utc::now();
+            info!(
+                client_order_id = %existing.client_order_id,
+                exchange = %existing.exchange,
+                symbol = %existing.symbol,
+                "Order cancellation requested via REST API"
+            );
+            return Ok(ApiResponse::ok(existing.clone()));
+        }
+
+        let mut pending = order;
+        pending.status = OrderStatus::PendingCancel;
+        pending.updated_at = Utc::now();
+        orders.push(pending.clone());
+
+        info!(
+            client_order_id = %pending.client_order_id,
+            exchange = %pending.exchange,
+            symbol = %pending.symbol,
+            "Order cancellation requested via REST API"
+        );
+
+        Ok(ApiResponse::ok(pending))
+    } else {
+        let mut orders = state.orders.write().await;
+
+        let found = orders.iter_mut().find(|o| {
+            o.client_order_id == order_id
+                || o.exchange_order_id.as_deref() == Some(order_id.as_str())
+        });
+
+        match found {
+            Some(order) => {
+                if order.status.is_terminal() {
+                    return Err(ApiResponse::conflict(format!(
+                        "order {} is in non-cancellable state: {}",
+                        order_id, order.status
+                    )));
+                }
+
+                order.status = OrderStatus::Cancelled;
+                order.updated_at = Utc::now();
+
+                info!(
+                    client_order_id = %order.client_order_id,
+                    exchange = %order.exchange,
+                    symbol = %order.symbol,
+                    "Order cancelled via REST API (in-memory fallback)"
+                );
+
+                Ok(ApiResponse::ok(order.clone()))
+            }
+            None => Err(ApiResponse::not_found(format!(
+                "order not found: {order_id}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CancelAllSnapshot {
+    order_ids: Vec<String>,
+    exchange: Option<Exchange>,
+    symbol: Option<mm_core::types::Symbol>,
+}
+
+fn collect_cancel_all_snapshot(
+    orders: &[Order],
+    filter: &CancelAllRequest,
+) -> Result<CancelAllSnapshot, (StatusCode, Json<ApiResponse<()>>)> {
+    let exchange = match filter.exchange.as_ref() {
+        Some(exch) => Some(exch.to_lowercase().parse().map_err(|_| {
+            ApiResponse::bad_request(format!("invalid exchange: '{}'", exch))
+        })?),
+        None => None,
+    };
+
+    let symbol = match filter.symbol.as_ref() {
+        Some(raw_symbol) => {
+            let normalized = raw_symbol.replace('-', "/");
+            let parts: Vec<&str> = normalized.split('/').collect();
+            if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+                return Err(ApiResponse::bad_request(format!(
+                    "invalid symbol format: '{}'. Expected BASE/QUOTE",
+                    raw_symbol
                 )));
             }
-
-            order.status = OrderStatus::Cancelled;
-            order.updated_at = Utc::now();
-
-            info!(
-                client_order_id = %order.client_order_id,
-                exchange = %order.exchange,
-                symbol = %order.symbol,
-                "Order cancelled via REST API"
-            );
-
-            Ok(ApiResponse::ok(order.clone()))
+            Some(mm_core::types::Symbol::new(parts[0], parts[1]))
         }
-        None => Err(ApiResponse::not_found(format!(
-            "order not found: {order_id}"
-        ))),
-    }
+        None => None,
+    };
+
+    let order_ids = orders
+        .iter()
+        .filter(|order| !order.status.is_terminal())
+        .filter(|order| exchange.is_none_or(|exch| order.exchange == exch))
+        .filter(|order| symbol.as_ref().is_none_or(|sym| order.symbol == *sym))
+        .map(|order| order.client_order_id.clone())
+        .collect();
+
+    Ok(CancelAllSnapshot {
+        order_ids,
+        exchange,
+        symbol,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1213,8 +1738,55 @@ async fn cancel_order(
 async fn cancel_all_orders(
     State(state): State<Arc<ApiState>>,
     body: Option<Json<CancelAllRequest>>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
     let filter = body.map(|Json(b)| b).unwrap_or_default();
+
+    if let Some(order_command_tx) = state.order_command_tx.as_ref() {
+        let snapshot = {
+            let orders = state.orders.read().await;
+            collect_cancel_all_snapshot(&orders, &filter)?
+        };
+
+        let (response_tx, response_rx) = oneshot::channel();
+        order_command_tx
+            .send(ApiOrderCommand::CancelAll {
+                cancel_all: CancelAllOrders {
+                    exchange: snapshot.exchange,
+                    symbol: snapshot.symbol.clone(),
+                    strategy_id: None,
+                },
+                response_tx,
+            })
+            .await
+            .map_err(|_| ApiResponse::error("manual order channel is unavailable"))?;
+
+        response_rx
+            .await
+            .map_err(|_| ApiResponse::error("manual cancel-all request was dropped"))?
+            .map_err(map_runtime_order_error)?;
+
+        if !snapshot.order_ids.is_empty() {
+            let now = Utc::now();
+            let mut orders = state.orders.write().await;
+            for order in orders.iter_mut() {
+                if snapshot.order_ids.contains(&order.client_order_id) {
+                    order.status = OrderStatus::PendingCancel;
+                    order.updated_at = now;
+                }
+            }
+        }
+
+        info!(
+            count = snapshot.order_ids.len(),
+            "Cancel-all orders request via REST API"
+        );
+
+        return Ok(ApiResponse::ok(CancelAllResponse {
+            cancelled: snapshot.order_ids.len(),
+            order_ids: snapshot.order_ids,
+        }));
+    }
+
     let mut orders = state.orders.write().await;
 
     let now = Utc::now();
@@ -1248,13 +1820,13 @@ async fn cancel_all_orders(
 
     info!(
         count = cancelled_ids.len(),
-        "Cancel-all orders request via REST API"
+        "Cancel-all orders request via REST API (in-memory fallback)"
     );
 
-    ApiResponse::ok(CancelAllResponse {
+    Ok(ApiResponse::ok(CancelAllResponse {
         cancelled: cancelled_ids.len(),
         order_ids: cancelled_ids,
-    })
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1389,6 +1961,7 @@ async fn update_strategy(
                 }
                 s.config = new_config;
                 info!(strategy_id = %id, "running strategy hot-updated via API");
+                emit_strategy_lifecycle_event(&state, &id, "config_updated", true).await;
                 Ok(ApiResponse::ok_message(format!(
                     "strategy {id} updated (hot-applied to running instance)"
                 )))
@@ -1396,6 +1969,7 @@ async fn update_strategy(
                 // Strategy is stopped — just update the stored config.
                 s.config = new_config;
                 info!(strategy_id = %id, "strategy updated via API");
+                emit_strategy_lifecycle_event(&state, &id, "config_updated", false).await;
                 Ok(ApiResponse::ok_message(format!("strategy {id} updated")))
             }
         }
@@ -1481,13 +2055,14 @@ async fn patch_strategy_params(
 
             s.config = candidate_config;
             info!(strategy_id = %id, "strategy params patched via API");
+            emit_strategy_lifecycle_event(&state, &id, "config_updated", s.running).await;
             Ok(ApiResponse::ok(s.config.clone()))
         }
         None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
     }
 }
 
-fn build_strategy(config: &StrategyConfig) -> Result<Box<dyn Strategy>, String> {
+pub(crate) fn build_strategy(config: &StrategyConfig) -> Result<Box<dyn Strategy>, String> {
     build_strategy_from_config(config)
 }
 
@@ -1523,6 +2098,7 @@ async fn start_strategy(
                 s.started_at = Some(Utc::now());
                 s.stopped_at = None;
                 info!(strategy_id = %id, "strategy started via API");
+                emit_strategy_lifecycle_event(&state, &id, "started", true).await;
                 Ok(ApiResponse::ok_message(format!("strategy {id} started")))
             }
         }
@@ -1534,35 +2110,55 @@ async fn stop_strategy(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
-    let mut strategies = state.strategies.write().await;
+    let was_running = {
+        let strategies = state.strategies.read().await;
+        match strategies.iter().find(|s| s.config.strategy_id == id) {
+            Some(strategy) => strategy.running,
+            None => return Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
+        }
+    };
 
+    if !was_running {
+        info!(strategy_id = %id, "strategy already stopped");
+        return Ok(ApiResponse::ok_message(format!(
+            "strategy {id} is already stopped"
+        )));
+    }
+
+    let cancel_actions = if let Some(ref engine) = state.strategy_engine {
+        let mut engine_guard = engine.lock().await;
+        if let Some((_strategy, cancel_actions)) = engine_guard.remove_strategy(&id) {
+            info!(
+                strategy_id = %id,
+                cancel_actions = cancel_actions.len(),
+                "strategy removed from engine"
+            );
+            cancel_actions
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let queued_cancel_requests = route_strategy_stop_actions(&state, &id, cancel_actions).await;
+
+    let mut strategies = state.strategies.write().await;
     let strategy = strategies.iter_mut().find(|s| s.config.strategy_id == id);
 
     match strategy {
         Some(s) => {
-            if !s.running {
-                info!(strategy_id = %id, "strategy already stopped");
-                Ok(ApiResponse::ok_message(format!(
-                    "strategy {id} is already stopped"
-                )))
-            } else {
-                // Remove the strategy from the engine.
-                if let Some(ref engine) = state.strategy_engine {
-                    let mut engine_guard = engine.lock().await;
-                    if let Some((_strat, cancel_actions)) = engine_guard.remove_strategy(&id) {
-                        info!(
-                            strategy_id = %id,
-                            cancel_actions = cancel_actions.len(),
-                            "strategy removed from engine"
-                        );
-                    }
-                }
-
-                s.running = false;
-                s.stopped_at = Some(Utc::now());
-                info!(strategy_id = %id, "strategy stopped via API");
-                Ok(ApiResponse::ok_message(format!("strategy {id} stopped")))
-            }
+            s.running = false;
+            s.stopped_at = Some(Utc::now());
+            info!(
+                strategy_id = %id,
+                queued_cancel_requests,
+                "strategy stopped via API"
+            );
+            emit_strategy_lifecycle_event(&state, &id, "stopped", false).await;
+            Ok(ApiResponse::ok_message(format!(
+                "strategy {id} stopped; queued {queued_cancel_requests} cancel request(s)"
+            )))
         }
         None => Err(ApiResponse::not_found(format!("strategy not found: {id}"))),
     }
@@ -1571,6 +2167,37 @@ async fn stop_strategy(
 // ---------------------------------------------------------------------------
 // Strategy metrics
 // ---------------------------------------------------------------------------
+
+async fn get_strategy_detail(
+    State(state): State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiResponse<()>>)> {
+    let status = {
+        let strategies = state.strategies.read().await;
+        strategies
+            .iter()
+            .find(|strategy| strategy.config.strategy_id == id)
+            .cloned()
+    };
+
+    let Some(status) = status else {
+        return Err(ApiResponse::not_found(format!("strategy not found: {id}")));
+    };
+
+    let metrics = {
+        let strategy_metrics = state.strategy_metrics.read().await;
+        strategy_metrics.get(&id).cloned()
+    };
+
+    let detail = StrategyDetail {
+        risk_summary: build_strategy_risk_summary(&status, metrics.as_ref()),
+        lifecycle: build_strategy_lifecycle_info(&status),
+        status,
+        metrics,
+    };
+
+    Ok(ApiResponse::ok(detail))
+}
 
 async fn get_strategy_metrics(
     State(state): State<Arc<ApiState>>,
@@ -2098,6 +2725,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use mm_core::types::Symbol;
+    use mm_strategy::{build_strategy_from_config, StrategyEngine};
     use tower::ServiceExt;
 
     /// Helper to build a default StrategyConfig for tests.
@@ -2676,6 +3304,76 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/strategies/nonexistent/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_strategy_detail_returns_data() {
+        let state = ApiState::new();
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(test_running_strategy_status("detail-test-1"));
+        }
+        {
+            let mut metrics = state.strategy_metrics.write().await;
+            metrics.insert(
+                "detail-test-1".to_string(),
+                StrategyMetrics {
+                    strategy_id: "detail-test-1".to_string(),
+                    realized_pnl: rust_decimal::Decimal::new(500, 2),
+                    unrealized_pnl: rust_decimal::Decimal::new(-100, 2),
+                    total_fills: 10,
+                    total_orders_placed: 20,
+                    total_orders_cancelled: 5,
+                    total_orders_rejected: 1,
+                    avg_spread_captured_bps: rust_decimal::Decimal::new(15, 1),
+                    volume_traded: rust_decimal::Decimal::new(100000, 2),
+                    uptime_secs: 3600,
+                    last_fill_at: Some(Utc::now()),
+                },
+            );
+        }
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/strategies/detail-test-1/detail")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["data"]["status"]["config"]["strategy_id"], "detail-test-1");
+        assert_eq!(json["data"]["lifecycle"]["can_stop"], true);
+        assert!(json["data"]["risk_summary"]["posture"].is_string());
+        assert!(json["data"]["metrics"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_strategy_detail_not_found() {
+        let state = ApiState::new();
+        let app = rest_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/strategies/nonexistent/detail")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -5198,5 +5896,83 @@ mod tests {
             .expect("strategy should exist");
         assert!(!s.running, "strategy should be marked as stopped");
         assert!(s.stopped_at.is_some(), "stopped_at should be set");
+    }
+
+    #[tokio::test]
+    async fn test_stop_strategy_routes_cancel_actions() {
+        let metrics = Arc::new(MetricsRegistry::new().expect("metrics registry"));
+        let engine = Arc::new(tokio::sync::Mutex::new(StrategyEngine::new()));
+        let kill_switch = Arc::new(mm_risk::KillSwitch::new());
+        let (param_update_tx, _param_update_rx) = mpsc::channel(8);
+        let (command_tx, mut command_rx) = mpsc::channel(8);
+
+        let mut state = ApiState::with_param_updates(
+            metrics,
+            Arc::clone(&engine),
+            kill_switch,
+            param_update_tx,
+        );
+
+        if let Some(inner) = Arc::get_mut(&mut state) {
+            inner.order_command_tx = Some(command_tx);
+        }
+
+        let config = test_valid_strategy_config("stop-route-me");
+        engine
+            .lock()
+            .await
+            .add_strategy(build_strategy_from_config(&config).expect("valid strategy"))
+            .expect("strategy should register");
+
+        {
+            let mut strategies = state.strategies.write().await;
+            strategies.push(StrategyStatus {
+                config,
+                running: true,
+                started_at: Some(Utc::now()),
+                stopped_at: None,
+            });
+        }
+
+        let receiver = tokio::spawn(async move {
+            let command = command_rx.recv().await.expect("cancel command expected");
+            match command {
+                ApiOrderCommand::Cancel { response_tx, .. } => {
+                    let _ = response_tx.send(Ok(()));
+                }
+                ApiOrderCommand::CancelAll { response_tx, .. } => {
+                    let _ = response_tx.send(Ok(()));
+                }
+                ApiOrderCommand::Place { .. } => {
+                    panic!("stop should not queue new place orders");
+                }
+            }
+        });
+
+        let app = rest_router(state.clone());
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/strategies/stop-route-me/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        receiver.await.expect("receiver task should complete");
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert!(json["data"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("queued"));
     }
 }

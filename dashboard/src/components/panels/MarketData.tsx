@@ -3,10 +3,22 @@
 import { useDashboard } from "@/lib/store";
 
 export function MarketDataPanel() {
-  const { ticks } = useDashboard();
+  const { ticks, error, connectionStatus } = useDashboard();
   const entries = Object.entries(ticks);
 
   if (entries.length === 0) {
+    if (error) {
+      return (
+        <p className="text-accent-red text-sm">
+          Backend unavailable. Start trading-core on port 8080 to stream Alpaca data.
+        </p>
+      );
+    }
+
+    if (connectionStatus !== "connected") {
+      return <p className="text-text-muted text-sm">Connecting to the live Alpaca data stream...</p>;
+    }
+
     return <p className="text-text-muted text-sm">Waiting for market data ticks...</p>;
   }
 

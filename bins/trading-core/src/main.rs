@@ -36,8 +36,9 @@ use mm_execution::{
     IbExecutionConfig, IbExecutionConnector, KrakenExecutionConfig, KrakenExecutionConnector,
     OrderManager, OrderRouter, PositionReconciliation,
 };
+use mm_gateway::rest::StrategyStatus;
 use mm_gateway::ws::ServerMessage;
-use mm_gateway::{ApiState, DashboardBroadcaster, GatewayConfig, GatewayServer};
+use mm_gateway::{ApiOrderCommand, ApiState, DashboardBroadcaster, GatewayConfig, GatewayServer};
 use mm_market_data::{
     AlpacaConfig, AlpacaConnector, BinanceConnector, BinanceMarketDataConfig, CoinbaseConnector,
     IbConfig, IbConnector, KrakenConnector, MarketDataManager,
@@ -248,6 +249,8 @@ async fn main() -> Result<()> {
     // but we need to observe updates too).
     let (order_update_tx, mut order_update_rx) =
         mpsc::channel::<OrderUpdate>(ORDER_UPDATE_CHANNEL_CAPACITY);
+    let (api_order_tx, mut api_order_rx) =
+        mpsc::channel::<ApiOrderCommand>(ORDER_UPDATE_CHANNEL_CAPACITY);
 
     // Track which (exchange, symbols) pairs we're subscribed to.
     let mut subscribed_pairs: Vec<(Exchange, Vec<Symbol>)> = Vec::new();
@@ -374,15 +377,11 @@ async fn main() -> Result<()> {
 
     // ----- (h) Initialize strategy engine -----
     let strategy_engine_shared = Arc::new(tokio::sync::Mutex::new(StrategyEngine::new()));
+    let mut seeded_strategy_statuses = Vec::new();
 
     {
         let mut strategy_engine = strategy_engine_shared.lock().await;
         for strat_cfg in &cfg.strategies {
-            if !strat_cfg.enabled {
-                debug!(strategy_id = %strat_cfg.strategy_id, "strategy disabled, skipping");
-                continue;
-            }
-
             let exchange = match parse_exchange(&strat_cfg.exchange) {
                 Some(e) => e,
                 None => {
@@ -428,18 +427,41 @@ async fn main() -> Result<()> {
                 }
             };
 
-            match strategy_engine.add_strategy(strategy) {
-                Ok(()) => info!(
+            let mut status = StrategyStatus {
+                config: strategy_config,
+                running: false,
+                started_at: None,
+                stopped_at: None,
+            };
+
+            if strat_cfg.enabled {
+                match strategy_engine.add_strategy(strategy) {
+                    Ok(()) => {
+                        status.running = true;
+                        status.started_at = Some(Utc::now());
+                        info!(
+                            strategy_id = %strat_cfg.strategy_id,
+                            strategy_type = %strat_cfg.strategy_type,
+                            "strategy registered"
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            strategy_id = %strat_cfg.strategy_id,
+                            error = %e,
+                            "failed to register strategy"
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                debug!(
                     strategy_id = %strat_cfg.strategy_id,
-                    strategy_type = %strat_cfg.strategy_type,
-                    "strategy registered"
-                ),
-                Err(e) => error!(
-                    strategy_id = %strat_cfg.strategy_id,
-                    error = %e,
-                    "failed to register strategy"
-                ),
+                    "strategy validated and seeded in API state without auto-start"
+                );
             }
+
+            seeded_strategy_statuses.push(status);
         }
 
         info!(
@@ -502,16 +524,30 @@ async fn main() -> Result<()> {
 
     // ----- (j) Initialize gateway (REST API + WebSocket) -----
     let metrics = Arc::new(MetricsRegistry::new().expect("Failed to initialize metrics"));
-    let api_state = ApiState::with_param_updates(
+    let mut api_state = ApiState::with_param_updates(
         Arc::clone(&metrics),
         Arc::clone(&strategy_engine_shared),
         Arc::clone(&kill_switch),
         param_update_tx,
     );
+    if let Some(state) = Arc::get_mut(&mut api_state) {
+        state.order_command_tx = Some(api_order_tx);
+    } else {
+        warn!("failed to attach manual order command channel to API state");
+    }
+    {
+        let mut strategies = api_state.strategies.write().await;
+        *strategies = seeded_strategy_statuses;
+    }
 
     // Create the broadcaster externally so the main loop can publish events.
     let broadcaster = DashboardBroadcaster::new(4096, 1024);
     let broadcast_tx = broadcaster.sender();
+    if let Some(state) = Arc::get_mut(&mut api_state) {
+        state.dashboard_event_tx = Some(broadcast_tx.clone());
+    } else {
+        warn!("failed to attach dashboard event channel to API state");
+    }
 
     if cfg.gateway.enabled {
         let gw_config = GatewayConfig {
@@ -564,8 +600,12 @@ async fn main() -> Result<()> {
     // on every strategy tick in the hot path — Arc::clone is just a refcount bump.
     let mut latest_books: HashMap<(Exchange, String), Arc<OrderBook>> = HashMap::new();
     let mut latest_trades: HashMap<(Exchange, String), Trade> = HashMap::new();
-    // Track last order book receive time per exchange for disconnect detection.
-    let mut last_book_time: HashMap<Exchange, chrono::DateTime<Utc>> = HashMap::new();
+    // Give newly subscribed exchanges a startup grace window so the kill
+    // switch does not fire before the first market-data message arrives.
+    let mut last_book_time: HashMap<Exchange, chrono::DateTime<Utc>> = subscribed_pairs
+        .iter()
+        .map(|(exchange, _)| (*exchange, Utc::now()))
+        .collect();
 
     // ----- (k1) Position reconciliation timer -----
     let reconciliation_enabled = cfg.trading_loop.reconciliation_interval_secs > 0;
@@ -693,6 +733,96 @@ async fn main() -> Result<()> {
                     &metrics,
                     &broadcast_tx,
                 ).await;
+            }
+
+            // --- Manual order action from REST API ---
+            Some(command) = api_order_rx.recv() => {
+                match command {
+                    ApiOrderCommand::Place { mut order, response_tx } => {
+                        if kill_switch.is_active() {
+                            let _ = response_tx.send(Err("kill switch activated: manual order blocked".to_string()));
+                            continue;
+                        }
+
+                        let positions_vec = {
+                            let pos_snapshot = positions.read().await;
+                            pos_snapshot.values().cloned().collect::<Vec<_>>()
+                        };
+                        let current_daily_pnl = *daily_pnl.read().await;
+                        let portfolio_risk = RiskEngine::build_portfolio_risk(
+                            &positions_vec,
+                            current_daily_pnl,
+                        );
+
+                        let placement_result = match risk_engine
+                            .evaluate_order(&order, &portfolio_risk)
+                            .await
+                        {
+                            RiskAction::Allow => order_router.place_order(order.clone()).await,
+                            RiskAction::Reject { reason } => Err(mm_core::MmError::RiskLimitBreached {
+                                reason,
+                            }),
+                            RiskAction::ReduceSize { max_quantity, reason } => {
+                                if max_quantity <= Decimal::ZERO {
+                                    Err(mm_core::MmError::RiskLimitBreached {
+                                        reason: format!("{reason}; reduced quantity is zero"),
+                                    })
+                                } else {
+                                    info!(
+                                        requested_quantity = %order.quantity,
+                                        reduced_quantity = %max_quantity,
+                                        reason = %reason,
+                                        "risk engine reduced manual order size"
+                                    );
+                                    order.quantity = max_quantity;
+                                    order_router.place_order(order.clone()).await
+                                }
+                            }
+                            RiskAction::KillSwitch { reason } => {
+                                Err(mm_core::MmError::KillSwitchActivated { reason })
+                            }
+                        };
+
+                        match placement_result {
+                            Ok(placed) => {
+                                let _ = broadcast_tx.try_send(ServerMessage::OrderUpdate {
+                                    client_order_id: placed.client_order_id.clone(),
+                                    exchange: placed.exchange,
+                                    symbol: placed.symbol.clone(),
+                                    status: format!("{:?}", placed.status),
+                                    filled_quantity: placed.filled_quantity,
+                                    remaining_quantity: placed.remaining_quantity,
+                                });
+                                let _ = response_tx.send(Ok(placed));
+                            }
+                            Err(error) => {
+                                let _ = response_tx.send(Err(error.to_string()));
+                            }
+                        }
+                    }
+                    ApiOrderCommand::Cancel { cancel, response_tx } => {
+                        let cancel_result = order_router.cancel_order(cancel.clone()).await;
+
+                        if cancel_result.is_ok() {
+                            if let Some(order) = order_manager.get_order(&cancel.client_order_id) {
+                                let _ = broadcast_tx.try_send(ServerMessage::OrderUpdate {
+                                    client_order_id: order.client_order_id.clone(),
+                                    exchange: order.exchange,
+                                    symbol: order.symbol.clone(),
+                                    status: format!("{:?}", order.status),
+                                    filled_quantity: order.filled_quantity,
+                                    remaining_quantity: order.remaining_quantity,
+                                });
+                            }
+                        }
+
+                        let _ = response_tx.send(cancel_result.map_err(|error| error.to_string()));
+                    }
+                    ApiOrderCommand::CancelAll { cancel_all, response_tx } => {
+                        let cancel_all_result = order_router.cancel_all_orders(cancel_all).await;
+                        let _ = response_tx.send(cancel_all_result.map_err(|error| error.to_string()));
+                    }
+                }
             }
 
             // --- Tick interval: run strategy engine ---
@@ -1365,8 +1495,30 @@ async fn handle_order_update(
     metrics: &Arc<MetricsRegistry>,
     broadcast_tx: &mpsc::Sender<ServerMessage>,
 ) {
-    // Apply the update to the OMS.
-    let updated_order = order_manager.update_order(update);
+    // The router's internal update loop already applies connector updates to
+    // the OMS before forwarding them here. Reuse the latest OMS snapshot when
+    // it already matches this update, and only fall back to applying the
+    // update ourselves when needed.
+    let current_order = order_manager
+        .get_order(&update.client_order_id)
+        .or_else(|| {
+            update
+                .exchange_order_id
+                .as_deref()
+                .and_then(|exchange_order_id| order_manager.get_by_exchange_id(exchange_order_id))
+        });
+
+    let updated_order = match current_order {
+        Some(order)
+            if order.status == update.status
+                && order.filled_quantity == update.filled_quantity
+                && order.remaining_quantity == update.remaining_quantity
+                && order.average_fill_price == update.average_fill_price =>
+        {
+            Some(order)
+        }
+        _ => order_manager.update_order(update),
+    };
 
     if let Some(ref order) = updated_order {
         // Route order update to the owning strategy.

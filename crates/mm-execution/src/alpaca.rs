@@ -210,14 +210,11 @@ impl AlpacaExecutionConnector {
                 let (mut write, mut read) = ws_stream.split();
 
                 // --- Authenticate ---
-                // Alpaca streaming API expects:
-                // {"action": "authenticate", "data": {"key_id": "...", "secret_key": "..."}}
+                // Alpaca's trading stream expects `auth` with top-level key/secret.
                 let auth_msg = serde_json::json!({
-                    "action": "authenticate",
-                    "data": {
-                        "key_id": config.api_key,
-                        "secret_key": config.secret_key,
-                    }
+                    "action": "auth",
+                    "key": config.api_key,
+                    "secret": config.secret_key,
                 });
 
                 if let Err(e) = write.send(WsMessage::Text(auth_msg.to_string())).await {
@@ -239,62 +236,78 @@ impl AlpacaExecutionConnector {
                     continue;
                 }
 
-                // Wait for auth response.
-                match read.next().await {
-                    Some(Ok(WsMessage::Text(text))) => {
-                        let parsed: Result<serde_json::Value, _> = serde_json::from_str(&text);
-                        if let Ok(msg) = parsed {
-                            let stream = msg["stream"].as_str().unwrap_or("");
-                            let status = msg["data"]["status"].as_str().unwrap_or("");
-                            if stream == "authorization" && status == "authorized" {
-                                info!("Alpaca: WebSocket authenticated");
-                            } else if stream == "authorization" && status != "authorized" {
-                                error!(
-                                    response = %text,
-                                    "Alpaca: WebSocket authentication failed"
-                                );
-                                connected.store(false, Ordering::SeqCst);
-                                // Auth failure with valid credentials is not transient; do not retry.
+                let mut authorized = false;
+                let mut retryable_auth_failure = true;
+
+                while let Some(auth_result) = read.next().await {
+                    let message = match auth_result {
+                        Ok(message) => message,
+                        Err(e) => {
+                            warn!(error = %e, "Alpaca: error reading auth response");
+                            break;
+                        }
+                    };
+
+                    match Self::decode_ws_json(&message) {
+                        Ok(Some(msg)) => {
+                            if let Some(status) = Self::authorization_status(&msg) {
+                                if status == "authorized" {
+                                    authorized = true;
+                                    info!("Alpaca: WebSocket authenticated");
+                                } else {
+                                    error!(
+                                        response = %msg,
+                                        "Alpaca: WebSocket authentication failed"
+                                    );
+                                    retryable_auth_failure = false;
+                                }
                                 break;
                             }
-                        }
-                    }
-                    Some(Err(e)) => {
-                        warn!(error = %e, "Alpaca: error reading auth response");
-                        connected.store(false, Ordering::SeqCst);
 
-                        reconnect_attempts += 1;
-                        if reconnect_attempts > WS_MAX_RECONNECT_ATTEMPTS {
-                            error!("Alpaca: max WebSocket reconnection attempts exceeded");
+                            if let Some(error_message) = Self::stream_error_message(&msg) {
+                                warn!(error_message, "Alpaca: pre-auth stream error");
+                            }
+                        }
+                        Ok(None) => match message {
+                            WsMessage::Ping(data) => {
+                                if let Err(e) = write.send(WsMessage::Pong(data)).await {
+                                    warn!(error = %e, "Alpaca: failed to send pong");
+                                    break;
+                                }
+                            }
+                            WsMessage::Close(_) => {
+                                warn!("Alpaca: stream ended before auth response");
+                                break;
+                            }
+                            _ => {}
+                        },
+                        Err(e) => {
+                            warn!(error = %e, "Alpaca: invalid auth response");
                             break;
                         }
-                        let delay = ws_backoff_secs(reconnect_attempts - 1);
-                        info!(
-                            attempt = reconnect_attempts,
-                            delay_secs = delay,
-                            "Alpaca: reconnecting trade updates stream"
-                        );
-                        tokio::time::sleep(Duration::from_secs(delay)).await;
-                        continue;
                     }
-                    _ => {
-                        warn!("Alpaca: stream ended before auth response");
-                        connected.store(false, Ordering::SeqCst);
+                }
 
-                        reconnect_attempts += 1;
-                        if reconnect_attempts > WS_MAX_RECONNECT_ATTEMPTS {
-                            error!("Alpaca: max WebSocket reconnection attempts exceeded");
-                            break;
-                        }
-                        let delay = ws_backoff_secs(reconnect_attempts - 1);
-                        info!(
-                            attempt = reconnect_attempts,
-                            delay_secs = delay,
-                            "Alpaca: reconnecting trade updates stream"
-                        );
-                        tokio::time::sleep(Duration::from_secs(delay)).await;
-                        continue;
+                if !authorized {
+                    connected.store(false, Ordering::SeqCst);
+
+                    if !retryable_auth_failure {
+                        break;
                     }
+
+                    reconnect_attempts += 1;
+                    if reconnect_attempts > WS_MAX_RECONNECT_ATTEMPTS {
+                        error!("Alpaca: max WebSocket reconnection attempts exceeded");
+                        break;
+                    }
+                    let delay = ws_backoff_secs(reconnect_attempts - 1);
+                    info!(
+                        attempt = reconnect_attempts,
+                        delay_secs = delay,
+                        "Alpaca: reconnecting trade updates stream"
+                    );
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    continue;
                 }
 
                 // --- Subscribe to trade_updates ---
@@ -340,8 +353,33 @@ impl AlpacaExecutionConnector {
 
                     match msg {
                         WsMessage::Text(text) => {
-                            if let Err(e) = Self::handle_ws_message(&text, &update_tx).await {
-                                warn!(error = %e, "Alpaca: failed to process WS message");
+                            match serde_json::from_str(text.as_ref()).map_err(|e| MmError::Exchange {
+                                exchange: Exchange::Alpaca,
+                                message: format!("JSON parse error: {}", e),
+                            }) {
+                                Ok(value) => {
+                                    if let Err(e) = Self::handle_ws_json(value, &update_tx).await {
+                                        warn!(error = %e, "Alpaca: failed to process WS message");
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "Alpaca: failed to parse WS text frame");
+                                }
+                            }
+                        }
+                        WsMessage::Binary(payload) => {
+                            match serde_json::from_slice(payload.as_ref()).map_err(|e| MmError::Exchange {
+                                exchange: Exchange::Alpaca,
+                                message: format!("JSON parse error: {}", e),
+                            }) {
+                                Ok(value) => {
+                                    if let Err(e) = Self::handle_ws_json(value, &update_tx).await {
+                                        warn!(error = %e, "Alpaca: failed to process binary WS message");
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "Alpaca: failed to parse WS binary frame");
+                                }
                             }
                         }
                         WsMessage::Ping(data) => {
@@ -376,11 +414,52 @@ impl AlpacaExecutionConnector {
         })
     }
 
-    async fn handle_ws_message(text: &str, update_tx: &mpsc::Sender<OrderUpdate>) -> MmResult<()> {
-        let msg: serde_json::Value = serde_json::from_str(text).map_err(|e| MmError::Exchange {
-            exchange: Exchange::Alpaca,
-            message: format!("JSON parse error: {}", e),
-        })?;
+    fn decode_ws_json(message: &WsMessage) -> MmResult<Option<serde_json::Value>> {
+        match message {
+            WsMessage::Text(text) => serde_json::from_str(text.as_ref())
+                .map(Some)
+                .map_err(|e| MmError::Exchange {
+                    exchange: Exchange::Alpaca,
+                    message: format!("JSON parse error: {}", e),
+                }),
+            WsMessage::Binary(payload) => serde_json::from_slice(payload.as_ref())
+                .map(Some)
+                .map_err(|e| MmError::Exchange {
+                    exchange: Exchange::Alpaca,
+                    message: format!("JSON parse error: {}", e),
+                }),
+            _ => Ok(None),
+        }
+    }
+
+    fn authorization_status(message: &serde_json::Value) -> Option<&str> {
+        if message["stream"].as_str() == Some("authorization") {
+            message["data"]["status"].as_str()
+        } else {
+            None
+        }
+    }
+
+    fn stream_error_message(message: &serde_json::Value) -> Option<String> {
+        if message["action"].as_str() == Some("error") {
+            message["data"]["error_message"]
+                .as_str()
+                .map(std::string::ToString::to_string)
+        } else {
+            None
+        }
+    }
+
+    async fn handle_ws_json(
+        msg: serde_json::Value,
+        update_tx: &mpsc::Sender<OrderUpdate>,
+    ) -> MmResult<()> {
+        if let Some(error_message) = Self::stream_error_message(&msg) {
+            return Err(MmError::Exchange {
+                exchange: Exchange::Alpaca,
+                message: format!("stream error: {}", error_message),
+            });
+        }
 
         let stream = msg["stream"].as_str().unwrap_or("");
 

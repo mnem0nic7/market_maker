@@ -188,6 +188,21 @@ impl OrderRouter {
         Ok(())
     }
 
+    /// Place a single order and return the OMS-tracked order snapshot.
+    pub async fn place_order(&self, new_order: NewOrder) -> MmResult<Order> {
+        self.handle_place(new_order).await
+    }
+
+    /// Cancel a single order.
+    pub async fn cancel_order(&self, cancel: CancelOrder) -> MmResult<()> {
+        self.handle_cancel(cancel).await
+    }
+
+    /// Cancel all open orders, optionally filtered by exchange or symbol.
+    pub async fn cancel_all_orders(&self, cancel_all: CancelAllOrders) -> MmResult<()> {
+        self.handle_cancel_all(cancel_all).await
+    }
+
     /// Route a batch of order actions.
     pub async fn route_actions(&self, actions: Vec<OrderAction>) -> MmResult<()> {
         for action in actions {
@@ -226,8 +241,31 @@ impl OrderRouter {
                     exchange_returned_id = %returned_id,
                     "Router: order submitted to exchange"
                 );
-                self.oms.mark_submitted(&client_order_id);
-                Ok(order)
+                // Link the exchange order ID immediately so later venue updates
+                // can be correlated even when the exchange uses its own client ID.
+                let submitted_update = mm_core::OrderUpdate {
+                    client_order_id: client_order_id.clone(),
+                    exchange_order_id: Some(returned_id),
+                    exchange,
+                    symbol: new_order.symbol.clone(),
+                    status: mm_core::OrderStatus::Submitted,
+                    filled_quantity: rust_decimal::Decimal::ZERO,
+                    remaining_quantity: new_order.quantity,
+                    average_fill_price: rust_decimal::Decimal::ZERO,
+                    last_fill_price: None,
+                    last_fill_quantity: None,
+                    fee: None,
+                    fee_currency: None,
+                    timestamp: chrono::Utc::now(),
+                };
+
+                let submitted_order = self
+                    .oms
+                    .update_order(&submitted_update)
+                    .or_else(|| self.oms.mark_submitted(&client_order_id))
+                    .unwrap_or(order);
+
+                Ok(submitted_order)
             }
             Err(e) => {
                 error!(%client_order_id, error = %e, "Router: order submission failed");

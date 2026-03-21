@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import type { Exchange, Side, OrderType } from "@/lib/types";
 import { api } from "@/lib/api";
-
-const EXCHANGES: Exchange[] = ["Binance", "Coinbase", "Kraken", "Alpaca", "Simulated"];
+import { useDashboard, useDashboardDispatch } from "@/lib/store";
 
 export function OrderEntryPanel() {
-  const [exchange, setExchange] = useState<Exchange>("Binance");
+  const { ticks, orders } = useDashboard();
+  const dispatch = useDashboardDispatch();
+  const [exchange, setExchange] = useState<Exchange>("Alpaca");
   const [symbol, setSymbol] = useState("");
   const [side, setSide] = useState<Side>("Buy");
   const [orderType, setOrderType] = useState<OrderType>("Limit");
@@ -18,6 +19,58 @@ export function OrderEntryPanel() {
     type: "success" | "error";
     message: string;
   } | null>(null);
+
+  const tickKeys = Object.keys(ticks);
+  const liveExchanges = useMemo(() => {
+    const values = new Set<Exchange>();
+    for (const key of tickKeys) {
+      const tick = ticks[key];
+      if (tick) values.add(tick.exchange);
+    }
+    return Array.from(values).sort();
+  }, [tickKeys, ticks]);
+
+  const availableExchanges = useMemo<Exchange[]>(
+    () => (liveExchanges.length > 0 ? liveExchanges : ["Alpaca"]),
+    [liveExchanges],
+  );
+
+  const preferredExchange = useMemo<Exchange>(
+    () => (
+      availableExchanges.includes("Alpaca")
+        ? "Alpaca"
+        : availableExchanges[0]
+    ),
+    [availableExchanges],
+  );
+
+  const liveSymbols = useMemo(() => {
+    const values = new Set<string>();
+    for (const key of tickKeys) {
+      const tick = ticks[key];
+      if (tick && tick.exchange === exchange) {
+        values.add(`${tick.symbol.base}/${tick.symbol.quote}`);
+      }
+    }
+    return Array.from(values).sort();
+  }, [exchange, tickKeys, ticks]);
+
+  const availableSymbols = useMemo(
+    () => (liveSymbols.length > 0 ? liveSymbols : ["AAPL/USD"]),
+    [liveSymbols],
+  );
+
+  useEffect(() => {
+    if (!availableExchanges.includes(exchange)) {
+      setExchange(preferredExchange);
+    }
+  }, [availableExchanges, exchange, preferredExchange]);
+
+  useEffect(() => {
+    if (!symbol || (liveSymbols.length > 0 && !availableSymbols.includes(symbol))) {
+      setSymbol(availableSymbols[0] ?? "AAPL/USD");
+    }
+  }, [availableSymbols, liveSymbols.length, symbol]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -34,6 +87,14 @@ export function OrderEntryPanel() {
           price: orderType === "Limit" ? price : null,
           quantity,
         });
+
+        const nextOrders = orders.some((existingOrder) => existingOrder.client_order_id === order.client_order_id)
+          ? orders.map((existingOrder) =>
+            existingOrder.client_order_id === order.client_order_id ? order : existingOrder,
+          )
+          : [...orders, order];
+        dispatch({ type: "SET_ORDERS", orders: nextOrders });
+
         setFeedback({
           type: "success",
           message: `Order placed: ${order.client_order_id}`,
@@ -51,7 +112,7 @@ export function OrderEntryPanel() {
         setTimeout(() => setFeedback(null), 4000);
       }
     },
-    [exchange, symbol, side, orderType, price, quantity]
+    [dispatch, exchange, orders, symbol, side, orderType, price, quantity]
   );
 
   return (
@@ -64,7 +125,7 @@ export function OrderEntryPanel() {
           onChange={(e) => setExchange(e.target.value as Exchange)}
           className="bg-bg-primary border border-border-panel rounded px-2 py-1.5 text-text-primary font-mono focus:outline-none focus:border-accent-cyan"
         >
-          {EXCHANGES.map((ex) => (
+          {availableExchanges.map((ex) => (
             <option key={ex} value={ex}>
               {ex}
             </option>
@@ -75,13 +136,27 @@ export function OrderEntryPanel() {
       {/* Symbol */}
       <div className="flex flex-col gap-1">
         <label className="text-text-secondary">Symbol</label>
-        <input
-          type="text"
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          placeholder="BTC/USDT"
-          className="bg-bg-primary border border-border-panel rounded px-2 py-1.5 text-text-primary font-mono placeholder:text-text-muted focus:outline-none focus:border-accent-cyan"
-        />
+        {liveSymbols.length > 0 ? (
+          <select
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            className="bg-bg-primary border border-border-panel rounded px-2 py-1.5 text-text-primary font-mono focus:outline-none focus:border-accent-cyan"
+          >
+            {availableSymbols.map((availableSymbol) => (
+              <option key={availableSymbol} value={availableSymbol}>
+                {availableSymbol}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            placeholder="AAPL/USD"
+            className="bg-bg-primary border border-border-panel rounded px-2 py-1.5 text-text-primary font-mono placeholder:text-text-muted focus:outline-none focus:border-accent-cyan"
+          />
+        )}
       </div>
 
       {/* Side toggle */}

@@ -28,6 +28,15 @@ pub struct StrategyMetrics {
     /// Current unrealized profit/loss (set externally from position data).
     pub unrealized_pnl: Decimal,
 
+    /// Current signed strategy position (positive = long, negative = short).
+    pub current_position: Decimal,
+
+    /// High-water mark for total PnL observed so far.
+    pub peak_total_pnl: Decimal,
+
+    /// Maximum drawdown in total PnL terms observed so far.
+    pub max_drawdown: Decimal,
+
     /// Total number of fills received.
     pub total_fills: u64,
 
@@ -60,6 +69,9 @@ impl StrategyMetrics {
             strategy_id: strategy_id.into(),
             realized_pnl: Decimal::ZERO,
             unrealized_pnl: Decimal::ZERO,
+            current_position: Decimal::ZERO,
+            peak_total_pnl: Decimal::ZERO,
+            max_drawdown: Decimal::ZERO,
             total_fills: 0,
             total_orders_placed: 0,
             total_orders_cancelled: 0,
@@ -174,6 +186,8 @@ impl StrategyMetricsTracker {
         }
 
         *position = new_position;
+        metrics.current_position = new_position;
+        self.update_peak_values(strategy_id);
     }
 
     /// Record that an order was placed for the given strategy.
@@ -211,6 +225,26 @@ impl StrategyMetricsTracker {
     pub fn update_unrealized_pnl(&mut self, strategy_id: &str, pnl: Decimal) {
         if let Some(m) = self.metrics.get_mut(strategy_id) {
             m.unrealized_pnl = pnl;
+            if let Some(position) = self.positions.get(strategy_id) {
+                m.current_position = *position;
+            }
+        }
+        self.update_peak_values(strategy_id);
+    }
+
+    fn update_peak_values(&mut self, strategy_id: &str) {
+        let Some(m) = self.metrics.get_mut(strategy_id) else {
+            return;
+        };
+
+        let total_pnl = m.realized_pnl + m.unrealized_pnl;
+        if total_pnl > m.peak_total_pnl {
+            m.peak_total_pnl = total_pnl;
+        }
+
+        let drawdown = m.peak_total_pnl - total_pnl;
+        if drawdown > m.max_drawdown {
+            m.max_drawdown = drawdown;
         }
     }
 
@@ -297,6 +331,7 @@ mod tests {
 
         let m = tracker.get("s1").unwrap();
         assert_eq!(m.realized_pnl, dec!(1000));
+        assert_eq!(m.current_position, dec!(0));
         assert_eq!(m.total_fills, 2);
     }
 
@@ -386,5 +421,20 @@ mod tests {
 
         let m = tracker.get("s1").unwrap();
         assert_eq!(m.unrealized_pnl, dec!(500));
+        assert_eq!(m.peak_total_pnl, dec!(500));
+        assert_eq!(m.max_drawdown, dec!(0));
+    }
+
+    #[test]
+    fn update_peak_values_tracks_drawdown() {
+        let mut tracker = StrategyMetricsTracker::new();
+        tracker.register_strategy("s1");
+
+        tracker.update_unrealized_pnl("s1", dec!(300));
+        tracker.update_unrealized_pnl("s1", dec!(100));
+
+        let m = tracker.get("s1").unwrap();
+        assert_eq!(m.peak_total_pnl, dec!(300));
+        assert_eq!(m.max_drawdown, dec!(200));
     }
 }

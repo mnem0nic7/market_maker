@@ -124,6 +124,10 @@ impl GatewayServer {
             1024, // broadcast capacity
         );
 
+        if let Some(inner) = Arc::get_mut(&mut state) {
+            inner.dashboard_event_tx = Some(broadcaster.sender());
+        }
+
         Self {
             config,
             state,
@@ -135,9 +139,13 @@ impl GatewayServer {
     /// Create a server with an externally constructed broadcaster.
     pub fn with_broadcaster(
         config: GatewayConfig,
-        state: Arc<ApiState>,
+        mut state: Arc<ApiState>,
         broadcaster: Arc<DashboardBroadcaster>,
     ) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut state) {
+            inner.dashboard_event_tx = Some(broadcaster.sender());
+        }
+
         Self {
             config,
             state,

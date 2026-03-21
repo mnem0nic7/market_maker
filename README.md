@@ -86,6 +86,7 @@ docker compose -f docker/docker-compose.yml up -d
 | TimescaleDB | 5432 | Time-series persistence |
 | Prometheus | 9090 | Metrics collection |
 | Grafana | 3000 | Metrics dashboards |
+| Dashboard | 3002 | Next.js trading UI |
 
 ### Configure Exchanges
 
@@ -120,7 +121,8 @@ cargo run --bin backtester       # Historical backtesting
 ## Dashboard
 
 The project includes a Next.js dashboard for real-time monitoring of positions,
-orders, P&L, and strategy state. It connects to the gateway over WebSocket.
+orders, P&L, and strategy state. It connects to the embedded gateway inside
+`trading-core` over WebSocket.
 
 ```bash
 cd dashboard
@@ -129,7 +131,28 @@ npm run dev
 ```
 
 The dashboard starts at `http://localhost:3000` by default. Make sure the
-gateway binary is running on port 8080 (the default).
+`trading-core` binary is running with its gateway enabled on port 8080
+(the default).
+
+To run the Alpaca paper dashboard path in Docker:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build trading-core dashboard
+```
+
+That publishes the dashboard at `http://localhost:3002` and proxies its HTTP
+API traffic to the embedded gateway in the `trading-core` service. The
+standalone `gateway` service remains available for NATS-fed deployments, but
+it is no longer the default dashboard backend.
+
+For Alpaca paper trading, the default config now seeds eight disabled
+templates: `spread`, `mean_reversion`, `grid`, `twap`, and `vwap` on
+`AAPL/USD`; `avellaneda` and `momentum` on `MSFT/USD`; and a seeded
+`stat_arb` pair on `AAPL/USD` vs `MSFT/USD`. `mean_reversion` is still the
+recommended first directional strategy to try, `spread` and `avellaneda` are
+the best market-making follow-ups, and `twap` / `vwap` are the cleanest
+execution tests. Quiet sessions and after-hours periods may produce no orders
+for long stretches; that is expected behavior rather than a failure state.
 
 ## Strategies
 
@@ -146,6 +169,16 @@ gateway binary is running on port 8080 (the default).
 
 All strategies implement the `Strategy` trait and can be configured in
 `config/default.toml` under the `[[strategies]]` array.
+
+For Alpaca paper trading, `mean_reversion` is a good first directional strategy
+to test on `AAPL/USD`. It only trades when price moves outside its rolling
+bands, so it can remain idle for extended periods when the market is calm or
+the data feed is quiet.
+
+The dashboard create flow supports every strategy above except `stat_arb`.
+`stat_arb` remains available in the engine and is seeded in the default config,
+but for now it is intended to be started from its prebuilt template rather than
+created through the single-symbol form.
 
 ## Backtesting
 
@@ -184,18 +217,25 @@ symbols = ["BTC/USDT", "ETH/USDT"]
 
 ```toml
 [[strategies]]
-strategy_id = "spread-btc-binance"
-strategy_type = "spread"
-exchange = "binance"
-symbol = "BTC/USDT"
-enabled = true
+strategy_id = "mean_reversion-aapl-alpaca-paper"
+strategy_type = "mean_reversion"
+exchange = "alpaca"
+symbol = "AAPL/USD"
+enabled = false
 
 [strategies.params]
-spread_bps = "10"
-order_size = "0.01"
-num_levels = 3
-refresh_interval_ms = 1000
+window_periods = 30
+num_std_dev = "2.5"
+order_size = "1"
+max_position = "1"
+exit_at_mean = true
 ```
+
+The default file also includes seeded templates for all other supported
+strategies. The `stat_arb-aapl-msft-alpaca-paper` template keeps its pair
+definition under `params.leg_a_*` and `params.leg_b_*`, while the outer
+`exchange` / `symbol` fields remain compatibility placeholders for the generic
+strategy envelope.
 
 ### Risk Limits
 
