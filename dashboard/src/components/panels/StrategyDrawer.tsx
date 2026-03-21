@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "@/lib/api";
 import {
   getStrategyTypeInfo,
@@ -257,12 +258,43 @@ export function StrategyDrawer({
   onRefresh,
   onOptimize,
 }: StrategyDrawerProps) {
+  const drawerRef = useRef<HTMLElement | null>(null);
   const [detail, setDetail] = useState<StrategyDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [draftValues, setDraftValues] = useState<DraftValues>({});
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [actionState, setActionState] = useState<"idle" | "starting" | "stopping">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => {
+      setMounted(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mounted || !strategy) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    drawerRef.current?.focus();
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mounted, onClose, strategy]);
 
   useEffect(() => {
     if (!strategy) return;
@@ -312,6 +344,10 @@ export function StrategyDrawer({
   );
 
   if (!activeStatus || !strategyInfo) {
+    return null;
+  }
+
+  if (!mounted) {
     return null;
   }
 
@@ -375,10 +411,18 @@ export function StrategyDrawer({
     ? (Number.parseFloat(activeMetrics.realized_pnl) + Number.parseFloat(activeMetrics.unrealized_pnl)).toFixed(4)
     : null;
 
-  return (
+  const drawer = (
     <>
-      <div className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-sm" onClick={onClose} />
-      <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl overflow-y-auto border-l border-border-panel bg-bg-panel shadow-2xl">
+      <div className="fixed inset-0 z-[200] bg-slate-950/70 backdrop-blur-md" onClick={onClose} />
+      <aside
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Strategy details"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        className="fixed inset-y-0 right-0 z-[210] w-full max-w-2xl overflow-y-auto border-l border-border-panel bg-bg-panel shadow-2xl outline-none"
+      >
         <div className="sticky top-0 z-10 border-b border-border-panel bg-bg-panel/95 px-5 py-4 backdrop-blur">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -647,4 +691,6 @@ export function StrategyDrawer({
       </aside>
     </>
   );
+
+  return createPortal(drawer, document.body);
 }
