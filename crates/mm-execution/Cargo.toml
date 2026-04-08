@@ -53,7 +53,7 @@ anyhow = { workspace = true }
 base64 = "0.22"
 
 # JWT auth (needed for Coinbase CDP keys)
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 rand = "0.8"
 
 # EC key handling (SEC1 → PKCS#8 conversion for Coinbase CDP keys)
