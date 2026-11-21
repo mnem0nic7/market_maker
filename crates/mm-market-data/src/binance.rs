@@ -32,12 +32,14 @@
 //! }
 //! ```
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
+use crypto_orderbook::{BookSync, DepthUpdate, Market, Outcome, SyncState};
 use futures::stream::StreamExt;
 use futures::SinkExt;
 use rust_decimal::Decimal;
@@ -60,6 +62,13 @@ use crate::normalizer;
 const WS_RECONNECT_DELAY_SECS: u64 = 5;
 const WS_MAX_BACKOFF_SECS: u64 = 300; // cap at 5 minutes
 const WS_READ_TIMEOUT_SECS: u64 = 30;
+/// Levels in the REST snapshot that seeds each local book.
+const SNAPSHOT_LIMIT: usize = 1000;
+/// Levels per side published on `book_tx`.
+const BOOK_DEPTH: usize = 50;
+
+/// Local book per raw symbol, kept in sequence by crypto-orderbook's `BookSync`.
+type SyncedBooks = HashMap<String, (crypto_orderbook::OrderBook, BookSync)>;
 
 // ---------------------------------------------------------------------------
 // Binance WebSocket message types (deserialization)
@@ -222,6 +231,8 @@ impl MarketDataConnector for BinanceConnector {
 
         let connected = self.connected.clone();
         let symbols_owned: Vec<Symbol> = symbols.to_vec();
+        let http = self.http.clone();
+        let rest_url = self.config.rest_url.clone();
 
         let handle = tokio::spawn(async move {
             let mut reconnect_attempts: u32 = 0;
@@ -234,6 +245,7 @@ impl MarketDataConnector for BinanceConnector {
                         info!("Binance WebSocket connected");
 
                         let (mut _write, mut read) = ws_stream.split();
+                        let mut books = SyncedBooks::new();
 
                         loop {
                             match tokio::time::timeout(
@@ -244,15 +256,29 @@ impl MarketDataConnector for BinanceConnector {
                             {
                                 Ok(Some(Ok(Message::Text(text)))) => {
                                     reconnect_attempts = 0;
-                                    if let Err(e) = handle_binance_message(
+                                    match handle_binance_message(
                                         &text,
                                         &book_tx,
                                         &trade_tx,
                                         &symbols_owned,
+                                        &mut books,
                                     )
                                     .await
                                     {
-                                        warn!(error = %e, "failed to handle Binance message");
+                                        Ok(Some(raw)) => {
+                                            if let Err(e) = sync_snapshot(
+                                                &http, &rest_url, &raw, &mut books, &book_tx,
+                                            )
+                                            .await
+                                            {
+                                                warn!(error = %e, "Binance depth snapshot failed, reconnecting");
+                                                break;
+                                            }
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            warn!(error = %e, "failed to handle Binance message");
+                                        }
                                     }
                                 }
                                 Ok(Some(Ok(Message::Ping(data)))) => {
@@ -389,12 +415,14 @@ struct BinanceCombinedStream {
     data: serde_json::Value,
 }
 
+/// Returns the raw symbol whose local book needs a REST snapshot, if any.
 async fn handle_binance_message(
     text: &str,
     book_tx: &mpsc::Sender<OrderBook>,
     trade_tx: &mpsc::Sender<Trade>,
     symbols: &[Symbol],
-) -> Result<(), MmError> {
+    books: &mut SyncedBooks,
+) -> Result<Option<String>, MmError> {
     // Combined streams wrap messages in {"stream": "...", "data": {...}}.
     let combined: BinanceCombinedStream =
         serde_json::from_str(text).map_err(|e| MmError::Exchange {
@@ -416,7 +444,7 @@ async fn handle_binance_message(
                     exchange: Exchange::Binance,
                     message: format!("failed to parse depthUpdate: {}", e),
                 })?;
-            handle_depth_update(depth, book_tx, symbols).await?;
+            return handle_depth_update(depth, book_tx, symbols, books).await;
         }
         "trade" => {
             let trade: BinanceTrade =
@@ -431,28 +459,107 @@ async fn handle_binance_message(
         }
     }
 
-    Ok(())
+    Ok(None)
 }
 
 async fn handle_depth_update(
     depth: BinanceDepthUpdate,
     book_tx: &mpsc::Sender<OrderBook>,
     _symbols: &[Symbol],
+    books: &mut SyncedBooks,
+) -> Result<Option<String>, MmError> {
+    let update = DepthUpdate {
+        first_update_id: depth.first_update_id,
+        last_update_id: depth.last_update_id,
+        prev_last_update_id: None,
+        bids: to_sync_levels(&depth.bids),
+        asks: to_sync_levels(&depth.asks),
+    };
+
+    let (book, sync) = books.entry(depth.symbol.clone()).or_insert_with(|| {
+        (
+            crypto_orderbook::OrderBook::new(),
+            BookSync::new(Market::Spot),
+        )
+    });
+
+    if let Outcome::Resync(reason) = sync.on_event(book, update) {
+        warn!(symbol = %depth.symbol, ?reason, "Binance depth stream gap, resyncing");
+    }
+
+    if sync.needs_snapshot() {
+        return Ok(Some(depth.symbol));
+    }
+
+    publish_book(
+        book_tx,
+        &depth.symbol,
+        book,
+        sync,
+        millis_to_datetime(depth.event_time),
+    )
+    .await?;
+    Ok(None)
+}
+
+/// Fetch a REST snapshot for `raw_symbol` and replay the buffered diffs onto it.
+async fn sync_snapshot(
+    http: &reqwest::Client,
+    rest_url: &str,
+    raw_symbol: &str,
+    books: &mut SyncedBooks,
+    book_tx: &mpsc::Sender<OrderBook>,
 ) -> Result<(), MmError> {
-    let symbol = normalizer::from_exchange_symbol(Exchange::Binance, &depth.symbol)
-        .unwrap_or_else(|| Symbol::new(&depth.symbol, "UNKNOWN"));
+    let err = |message: String| MmError::Exchange {
+        exchange: Exchange::Binance,
+        message,
+    };
+    let url = format!(
+        "{}/api/v3/depth?symbol={}&limit={}",
+        rest_url, raw_symbol, SNAPSHOT_LIMIT
+    );
+    let body = http
+        .get(&url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| err(format!("REST snapshot request failed: {}", e)))?
+        .text()
+        .await
+        .map_err(|e| err(format!("REST snapshot read failed: {}", e)))?;
+    let snapshot = crypto_orderbook::parse_depth_snapshot(&body)
+        .map_err(|e| err(format!("failed to parse order book snapshot: {}", e)))?;
 
-    let timestamp = millis_to_datetime(depth.event_time);
-    let bids = parse_price_levels(&depth.bids);
-    let asks = parse_price_levels(&depth.asks);
+    if let Some((book, sync)) = books.get_mut(raw_symbol) {
+        sync.on_snapshot(book, snapshot);
+        publish_book(book_tx, raw_symbol, book, sync, Utc::now()).await?;
+    }
+    Ok(())
+}
 
+/// Send the top of a synced book on `book_tx`. Does nothing until the book is live.
+async fn publish_book(
+    book_tx: &mpsc::Sender<OrderBook>,
+    raw_symbol: &str,
+    book: &crypto_orderbook::OrderBook,
+    sync: &BookSync,
+    timestamp: DateTime<Utc>,
+) -> Result<(), MmError> {
+    let SyncState::Live { last_update_id } = sync.state() else {
+        return Ok(());
+    };
+    let level = |l: crypto_orderbook::orderbook::book::PriceLevel| PriceLevel {
+        price: l.price,
+        quantity: l.quantity,
+    };
     let order_book = OrderBook {
         exchange: Exchange::Binance,
-        symbol,
-        bids,
-        asks,
+        symbol: normalizer::from_exchange_symbol(Exchange::Binance, raw_symbol)
+            .unwrap_or_else(|| Symbol::new(raw_symbol, "UNKNOWN")),
+        bids: book.top_bids(BOOK_DEPTH).into_iter().map(level).collect(),
+        asks: book.top_asks(BOOK_DEPTH).into_iter().map(level).collect(),
         timestamp,
-        sequence: depth.last_update_id,
+        sequence: last_update_id,
     };
 
     book_tx
@@ -521,6 +628,16 @@ fn parse_price_levels(raw: &[[String; 2]]) -> Vec<PriceLevel> {
             let price = pair[0].parse::<Decimal>().ok()?;
             let quantity = pair[1].parse::<Decimal>().ok()?;
             Some(PriceLevel { price, quantity })
+        })
+        .collect()
+}
+
+fn to_sync_levels(raw: &[[String; 2]]) -> Vec<crypto_orderbook::PriceLevel> {
+    parse_price_levels(raw)
+        .into_iter()
+        .map(|l| crypto_orderbook::PriceLevel {
+            price: l.price,
+            quantity: l.quantity,
         })
         .collect()
 }
@@ -762,21 +879,70 @@ mod tests {
         let (book_tx, mut book_rx) = mpsc::channel(10);
         let (trade_tx, _trade_rx) = mpsc::channel(10);
         let symbols = vec![Symbol::new("BTC", "USDT")];
+        let mut books = SyncedBooks::new();
 
-        handle_binance_message(json, &book_tx, &trade_tx, &symbols)
+        // A diff is not a book: it is buffered and a snapshot is requested.
+        let need = handle_binance_message(json, &book_tx, &trade_tx, &symbols, &mut books)
+            .await
+            .unwrap();
+        assert_eq!(need.as_deref(), Some("BTCUSDT"));
+        assert!(book_rx.try_recv().is_err());
+
+        let snapshot = crypto_orderbook::parse_depth_snapshot(
+            r#"{"lastUpdateId":101,"bids":[["25000.00","3.0"]],"asks":[["25000.20","9.9"]]}"#,
+        )
+        .unwrap();
+        let (book, sync) = books.get_mut("BTCUSDT").unwrap();
+        sync.on_snapshot(book, snapshot);
+        publish_book(&book_tx, "BTCUSDT", book, sync, Utc::now())
             .await
             .unwrap();
 
+        // The buffered diff is replayed onto the snapshot, so the full book is published.
         let book = book_rx.recv().await.unwrap();
         assert_eq!(book.exchange, Exchange::Binance);
         assert_eq!(book.symbol.base, "BTC");
         assert_eq!(book.symbol.quote, "USDT");
-        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.bids.len(), 2);
         assert_eq!(book.bids[0].price, dec!(25000.10));
         assert_eq!(book.bids[0].quantity, dec!(1.500));
+        assert_eq!(book.bids[1].price, dec!(25000.00));
         assert_eq!(book.asks.len(), 2);
         assert_eq!(book.asks[0].price, dec!(25000.20));
+        assert_eq!(book.asks[0].quantity, dec!(2.100));
         assert_eq!(book.sequence, 105);
+    }
+
+    #[tokio::test]
+    async fn depth_gap_clears_book_and_requests_snapshot() {
+        let diff = |first: u64, last: u64| {
+            format!(
+                r#"{{"stream":"btcusdt@depth@100ms","data":{{"e":"depthUpdate","E":1672531200000,"s":"BTCUSDT","U":{first},"u":{last},"b":[["25000.10","0"]],"a":[]}}}}"#
+            )
+        };
+        let (book_tx, mut book_rx) = mpsc::channel(10);
+        let (trade_tx, _trade_rx) = mpsc::channel(10);
+        let symbols = vec![Symbol::new("BTC", "USDT")];
+        let mut books = SyncedBooks::new();
+
+        handle_binance_message(&diff(101, 102), &book_tx, &trade_tx, &symbols, &mut books)
+            .await
+            .unwrap();
+        let snapshot = crypto_orderbook::parse_depth_snapshot(
+            r#"{"lastUpdateId":100,"bids":[["25000.00","3.0"]],"asks":[["25000.20","9.9"]]}"#,
+        )
+        .unwrap();
+        let (book, sync) = books.get_mut("BTCUSDT").unwrap();
+        sync.on_snapshot(book, snapshot);
+        assert!(sync.is_live());
+
+        // 103..=104 is dropped; 105 must not be applied on top of a stale book.
+        let need =
+            handle_binance_message(&diff(105, 105), &book_tx, &trade_tx, &symbols, &mut books)
+                .await
+                .unwrap();
+        assert_eq!(need.as_deref(), Some("BTCUSDT"));
+        assert!(book_rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -799,7 +965,7 @@ mod tests {
         let (trade_tx, mut trade_rx) = mpsc::channel(10);
         let symbols = vec![Symbol::new("BTC", "USDT")];
 
-        handle_binance_message(json, &book_tx, &trade_tx, &symbols)
+        handle_binance_message(json, &book_tx, &trade_tx, &symbols, &mut SyncedBooks::new())
             .await
             .unwrap();
 
@@ -833,7 +999,7 @@ mod tests {
         let (trade_tx, mut trade_rx) = mpsc::channel(10);
         let symbols = vec![Symbol::new("ETH", "USDT")];
 
-        handle_binance_message(json, &book_tx, &trade_tx, &symbols)
+        handle_binance_message(json, &book_tx, &trade_tx, &symbols, &mut SyncedBooks::new())
             .await
             .unwrap();
 
@@ -859,7 +1025,9 @@ mod tests {
         let symbols = vec![Symbol::new("BTC", "USDT")];
 
         // Unknown event types should be silently ignored (just a warning log).
-        let result = handle_binance_message(json, &book_tx, &trade_tx, &symbols).await;
+        let result =
+            handle_binance_message(json, &book_tx, &trade_tx, &symbols, &mut SyncedBooks::new())
+                .await;
         assert!(result.is_ok());
     }
 
@@ -871,7 +1039,9 @@ mod tests {
         let (trade_tx, _trade_rx) = mpsc::channel(10);
         let symbols = vec![Symbol::new("BTC", "USDT")];
 
-        let result = handle_binance_message(json, &book_tx, &trade_tx, &symbols).await;
+        let result =
+            handle_binance_message(json, &book_tx, &trade_tx, &symbols, &mut SyncedBooks::new())
+                .await;
         assert!(result.is_err());
     }
 

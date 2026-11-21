@@ -39,6 +39,7 @@ hex = { workspace = true }
 
 # Misc
 dashmap = { workspace = true }
+crypto-orderbook = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
